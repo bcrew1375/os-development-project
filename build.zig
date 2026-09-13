@@ -100,7 +100,7 @@ fn createAbiModule(
     optimize: std.builtin.OptimizeMode,
 ) *std.Build.Module {
     return b.createModule(.{
-        .root_source_file = .{ .cwd_relative = b.pathFromRoot("../OS-ABI-Library/src/abi/main.zig") },
+        .root_source_file = .{ .cwd_relative = b.pathFromRoot("../os-abi-library/src/abi/main.zig") },
         .target = target,
         .optimize = optimize,
     });
