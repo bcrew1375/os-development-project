@@ -84,19 +84,19 @@ pub fn resolveRootTaskArtifact(b: *std.Build, config: BuildConfig) RootTaskArtif
     }
 
     return .{
-        .path = addRootTaskSubmoduleBuild(b, config),
+        .path = addRootTaskComponentBuild(b, config),
         .install_name = ROOT_TASK_INSTALL_NAME,
     };
 }
 
-fn addRootTaskSubmoduleBuild(b: *std.Build, config: BuildConfig) std.Build.LazyPath {
+fn addRootTaskComponentBuild(b: *std.Build, config: BuildConfig) std.Build.LazyPath {
     const script =
         \\set -eu
         \\architecture="$1"
         \\output="$2"
         \\zig_exe="$3"
         \\
-        \\cd dependencies/os-root-task
+        \\cd components/os-root-task
         \\"$zig_exe" build -Darch="$architecture"
         \\mkdir -p "$(dirname "$output")"
         \\cp "zig-out/$architecture/bin/root_process.elf" "$output"

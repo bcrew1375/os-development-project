@@ -13,6 +13,11 @@ const BuildConfig = struct {
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
+    const abi_path = b.option(
+        []const u8,
+        "abi-path",
+        "Path to the shared ABI module entry point",
+    ) orelse "../os-abi-library/src/abi/main.zig";
     const architecture = b.option(
         Architecture,
         "arch",
@@ -20,8 +25,8 @@ pub fn build(b: *std.Build) void {
     ) orelse .x86_64;
 
     const config = resolveConfig(b, architecture);
-    addRootTask(b, config, optimize);
-    addTests(b, optimize);
+    addRootTask(b, config, optimize, abi_path);
+    addTests(b, optimize, abi_path);
 }
 
 fn resolveConfig(b: *std.Build, architecture: Architecture) BuildConfig {
@@ -51,8 +56,9 @@ fn addRootTask(
     b: *std.Build,
     config: BuildConfig,
     optimize: std.builtin.OptimizeMode,
+    abi_path: []const u8,
 ) void {
-    const abi = createAbiModule(b, config.target, optimize);
+    const abi = createAbiModule(b, config.target, optimize, abi_path);
 
     const root_task = b.addExecutable(.{
         .name = "root_process.elf",
@@ -75,8 +81,12 @@ fn addRootTask(
     b.getInstallStep().dependOn(&install_root_task.step);
 }
 
-fn addTests(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
-    const abi = createAbiModule(b, b.graph.host, optimize);
+fn addTests(
+    b: *std.Build,
+    optimize: std.builtin.OptimizeMode,
+    abi_path: []const u8,
+) void {
+    const abi = createAbiModule(b, b.graph.host, optimize, abi_path);
 
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -98,9 +108,10 @@ fn createAbiModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    abi_path: []const u8,
 ) *std.Build.Module {
     return b.createModule(.{
-        .root_source_file = .{ .cwd_relative = b.pathFromRoot("../os-abi-library/src/abi/main.zig") },
+        .root_source_file = .{ .cwd_relative = b.pathFromRoot(abi_path) },
         .target = target,
         .optimize = optimize,
     });
