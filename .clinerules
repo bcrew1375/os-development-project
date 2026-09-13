@@ -28,3 +28,219 @@ performance-critical paths (e.g., context switching, MMU hot-paths) where effici
 - The mock architecture should be capable of testing any arch-independent and common code.
 - The mock architecture must maintain 1:1 interface parity with physical architecture implementations.
 - Mock architecture functions and code should always be kept in a related component folder managed by a main.zig file.
+
+# Kernel / OS Dev Code Organization: Best Practices & Justifications
+
+A synthesis of best practices for organizing operating system / kernel source code, drawn from Linux kernel documentation, the OSDev wiki, and microkernel design literature (seL4).
+
+---
+
+## 1. Separate architecture-independent code from architecture/machine-specific code
+
+The most consistent piece of advice across kernel projects is to draw a hard line between generic logic and hardware-targeted code early. Separating sources so targeted functions live in a different location than generic ones creates an abstraction layer between hardware drivers and pure software, so porting to a new platform only requires rewriting the targeted functions while generic code runs on top unchanged.
+
+This is usually split two ways:
+
+- **Architecture-specific**: differs between processor architectures — e.g. I/O, trap dispatching, and paging.
+- **Machine-specific**: differs between machines sharing the same architecture — e.g. IRQ controllers, system timers, real-time clocks, multiprocessor information. Often consolidated into a **Hardware Abstraction Layer (HAL)**, a pattern the NT kernel formalized as a dedicated module.
+
+**Justification**: Linux embodies this via its `arch/` directory, which isolates per-CPU code from the rest of the tree. Where something spans both (e.g. memory management), each architecture provides a set of functions with the same name across all archs that arch-independent code can call — e.g. scheduling algorithms are hardware-independent, but timer configuration is not. The payoff: portability without a rewrite, and bugs in generic logic get fixed once instead of once per platform.
+
+## 2. Interface/implementation separation is structural, not optional
+
+The interface must be completely independent of the implementation, so a second HAL implementation for a different platform can be written later without changing the interface. The kernel's interface should avoid depending on fixed-width types directly — if a fixed width is genuinely required, it should go through a platform-specific typedef rather than leaking into shared code.
+
+**Justification**: This is what makes the abstraction load-bearing rather than cosmetic. If "generic" code secretly depends on a specific platform's struct layout or word size, you don't have real portability — porting will break the moment it's attempted.
+
+## 3. Organize by subsystem, not by file type
+
+Linux's tree structure maps top-level directories to subsystems (`mm/`, `net/`, `fs/`, `drivers/`, `kernel/`, `arch/`) rather than to code "kind." Each directory has a clear purpose, and `Documentation/` holds design guidelines, subsystem overviews, and best practices alongside the code they describe.
+
+**Justification**: Subsystem-based organization matches how contributors actually reason about kernel code — a networking bug and a filesystem bug are cognitively unrelated even though both are "C files." Grouping by domain minimizes the context a contributor needs to hold in their head, and it's a prerequisite for clean ownership boundaries (see #4).
+
+## 4. Ownership boundaries should mirror code boundaries (distributed maintainership)
+
+Linux pairs its directory structure with a `MAINTAINERS` file mapping subsystems to responsible people. It's impossible for a single person to keep up with something as complex as an OS kernel — the distributed model assigns portions (networking, wireless, device drivers, etc.) to individuals based on domain familiarity, enabling review and integration across thousands of areas without compromising stability.
+
+**Justification**: This is a direct consequence of #3 — clean subsystem boundaries are what make distributed ownership possible. Without them, every change requires global context and no one can meaningfully "own" a slice of the code.
+
+## 5. A strict, low-personal-preference coding style, applied uniformly
+
+Linux enforces an opinionated style (8-character tabs, short functions, kernel-doc comments) for scale, not taste. Because the number of developers who read the code is very large, a consistent style guideline makes it easier to understand for a first-time reader and for the original author revisiting old code months later — and lets others read, fix, and enhance the code, which is one of open source's core strengths. This is grounded in research showing that knowledge of programming conventions significantly affects program comprehension.
+
+Style is a tool, not dogma: the coding style document isn't absolute law — if a rule makes code meaningfully less readable in a specific case, you break it. But at kernel scale, uniform style is required for developers to quickly understand any part of the codebase; there's no longer room for idiosyncratically formatted code, and non-conforming contributions typically get bounced before review even starts.
+
+**Justification**: Kernel code has an unusually long lifetime and many more readers than authors, so optimizing for read-time comprehension over write-time convenience is the rational trade.
+
+## 6. Concurrency/locking discipline must be designed in, not bolted on
+
+Any resource — data structures, hardware registers — that could be accessed concurrently by more than one thread must be protected by a lock, and new code should be written with this in mind, since retrofitting locking after the fact is much harder than designing for it upfront.
+
+**Justification**: This argues for organizing modules around clear ownership of shared state (who locks what, in what order) as a first-class part of code layout, not just a function-level concern — ambiguous ownership of shared state is disproportionately expensive to fix later.
+
+## 7. Minimality as an architectural stance (microkernel philosophy)
+
+At the far end of the spectrum from Linux's monolithic-but-modular approach is the microkernel principle, exemplified by seL4. Minimality and policy freedom combined with high performance have been the defining design principle of the L4 microkernel family since the mid-1990s. seL4 pushes this further than most: it doesn't manage physical memory itself — it has no heap, and user-level managers must supply the kernel with memory for its own metadata, meaning userland memory-partitioning policy extends into the kernel and makes isolation easier to reason about. Functionally, the microkernel provides only minimal core functionality — threads, IPC, virtual memory, capability-based access control, and interrupt control — leaving device drivers and filesystems to run in user space.
+
+**Justification**: A smaller trusted core is dramatically easier to verify, audit, and reason about. With truly small kernels it becomes possible to guarantee the absence of bugs via formal, machine-checked verification — structurally impossible at monolithic-kernel scale. This is a direct tradeoff against Linux's approach: monolithic organization optimizes for driver/subsystem development velocity and in-kernel performance (no IPC overhead), while microkernel organization optimizes for isolation and provable correctness at the cost of more IPC and userspace complexity. The right choice depends on whether the priority is throughput/ecosystem breadth (Linux) or assurance/attack-surface minimization (seL4, and similarly Zircon/Fuchsia, QNX).
+
+## 8. Configuration and build structure should mirror feature boundaries
+
+Linux couples its directory layout to its build/config system directly: Makefiles define build rules while Kconfig files define configuration options selectable via tools like `make menuconfig`, so a subsystem's buildability and optionality live next to its code rather than in a separate global config.
+
+**Justification**: This keeps "can this feature be compiled in/out" decisions local to the feature's owner, rather than requiring central coordination every time a subsystem wants to add a config knob — another instance of structure enabling distributed ownership.
+
+---
+
+## The underlying thread
+
+Almost every practice above reduces to one idea: **make the code's physical/directory structure reflect its logical ownership and coupling boundaries.** Generic vs. hardware-specific, subsystem vs. subsystem, interface vs. implementation, even kernel-core vs. everything-else in the microkernel case — in each one, the organizational boundary exists so that changes on one side don't require anyone to understand or touch the other side. The specific choices (monolithic vs. micro, strict style vs. flexible) differ by project priorities, but the goal of minimizing the context a contributor or reviewer needs to hold in their head at once is constant.
+
+### Practical starting checklist for a new kernel project
+
+1. Separate `arch/`-style hardware code from generic logic on day one — retrofitting this later is painful.
+2. Define stable interfaces before writing multiple implementations against them.
+3. Organize directories by subsystem, not file type.
+4. Decide early where you sit on the monolithic-vs-microkernel spectrum, since it determines almost everything else about how modules relate to each other.
+5. Design locking/ownership of shared state into the module boundaries from the start.
+6. Tie build/config options (Kconfig-style) to the subsystem they belong to.
+
+---
+
+## Sources
+
+- [Linux Kernel Development Best Practices — Packt_Pub (Medium)](https://medium.com/@Packt_Pub/linux-kernel-development-best-practices-11c1474704d6)
+- [Linux Kernel Source Tree Explained — DEV Community](https://dev.to/darshan_rathod/anatomy-of-the-linux-kernel-source-tree-3hnb)
+- [Kernel Source Code and Organization — bootlin/training-materials (DeepWiki)](https://deepwiki.com/bootlin/training-materials/3.1-kernel-source-code-and-organization)
+- [How do you organize your kernel's code? — OSDev.org forum](https://forum.osdev.org/viewtopic.php?f=1&t=30351)
+- [Documentation/CodingStyle and Beyond — Greg Kroah-Hartman (kernel.org)](https://www.kernel.org/doc/ols/2002/ols2002-pages-250-259.pdf)
+- [Proper Linux Kernel Coding Style — Linux Journal](https://www.linuxjournal.com/article/5780)
+- [4. Getting the code right — The Linux Kernel documentation](https://dri.freedesktop.org/docs/drm/development-process/4.Coding.html)
+- [Linux kernel coding style — kernel.org docs](https://www.kernel.org/doc/html/v4.10/process/coding-style.html)
+- [Linux kernel coding style — docs.kernel.org](https://docs.kernel.org/process/coding-style.html)
+- [Re: [PATCH] 0/3 coding standards documentation/code updates — Linus Torvalds (LKML)](https://lkml.iu.edu/hypermail/linux/kernel/0709.3/2404.html)
+- [Portability — OSDev Wiki](https://wiki.osdev.org/Portability)
+- [Code Management — OSDev Wiki](https://wiki.osdev.org/Code_Management)
+- [Separating Architecture Specific Code — OSDev.org forum](https://forum.osdev.org/viewtopic.php?t=15836)
+- [On Hardware Abstraction Layers — OSDev.org forum](https://forum.osdev.org/viewtopic.php?f=15&t=18628)
+- [Hardware Abstraction Layer — OSDev.org forum](https://f.osdev.org/viewtopic.php?t=27450)
+- [Hardware Abstraction Layer — OSDev Wiki](https://wiki.osdev.org/Hardware_Abstraction_Layer)
+- [Abstraction layer — Wikipedia](https://en.wikipedia.org/wiki/Abstraction_layer)
+- [seL4 in Australia — Communications of the ACM](https://cacm.acm.org/research/sel4-in-australia/)
+- [seL4: Formal Verification of an OS Kernel (PDF)](https://plsyssec.github.io/cse227-spring25/papers/sel4.pdf)
+- [seL4 Design Principles — microkerneldude](https://microkerneldude.org/2020/03/11/sel4-design-principles/)
+- [It's Time: OS Mechanisms for Enforcing Asymmetric Temporal Integrity (arXiv)](https://arxiv.org/pdf/1606.00111)
+- [seL4 Microkernel for virtualization use-cases (arXiv)](https://arxiv.org/pdf/2210.04328)
+- [seL4 - Open Source RTOS](https://osrtos.com/rtos/sel4/)
+- [From L3 to seL4: What Have We Learnt in 20 Years of L4 Microkernels? (PDF)](https://flint.cs.yale.edu/cs428/doc/L3toseL4.pdf)
+- [HYDRA: HYbrid Design for Remote Attestation Using a Formally Verified Microkernel (arXiv)](https://arxiv.org/pdf/1703.02688)
+- [PARseL: Towards a Verified Root-of-Trust over seL4 (arXiv)](https://arxiv.org/pdf/2308.11921)
+
+# Zig Code Structure: File Length, Function Size, Interfaces & Decomposition
+
+A focused follow-up on *micro*-level code structure in Zig — as opposed to the previous document's macro-level (subsystem/directory) organization. Draws primarily on the official Zig style guide, TigerBeetle's `TIGER_STYLE.md` (one of the most detailed public style guides for systems-level Zig, written by the team building a financial-transactions database in Zig), and community writing on Zig's interface patterns.
+
+---
+
+## 1. File length & file organization
+
+**Zig has a language-level convention that shapes file size: every source file is implicitly a struct.**
+
+Every Zig source file is implicitly a struct, with the keyword `struct` and curly braces omitted — meaning you can literally `@import("tea.zig")` and use the result as a struct type. The community convention that follows from this: **one file generally corresponds to one primary type or one cohesive namespace of related functionality**, not an arbitrary bucket of loosely related functions. The official style guide even splits file-naming into two cases — `TitleCase` when the file has top-level fields (i.e. it's "a struct with data"), and `snake_case`/lowercase when it's a namespace of functions with no fields.
+
+**Justification**: because `@import` returns the file-as-struct directly, a file that tries to hold multiple unrelated types forces awkward nested access patterns and makes the file's "identity" ambiguous to a reader opening it cold. Keeping one primary type per file makes the import graph double as a fairly accurate dependency/ownership graph — you can often guess what a file contains just from its name, the same way you'd guess what a class does in a single-class-per-file OOP codebase.
+
+**On line length specifically**: TigerBeetle hard-limits all lines to at most 100 columns, without exception, for a good typographic "measure" — the reasoning given is physical: **100 columns is just enough to fit two files side-by-side on a screen**, so nothing is ever hidden by a horizontal scrollbar. `zig fmt` combined with a trailing comma on a wrapped list, struct, or call will auto-format to respect this.
+
+There's no equivalent hard *file*-length rule in these sources — the discipline comes indirectly, from keeping functions short (below) and keeping one type per file, which naturally caps how large a file gets before it's screaming for a split.
+
+---
+
+## 2. Function size — including "can a function be too small?"
+
+This is where TigerStyle is most concrete and most opinionated, and it directly engages with your question of whether there's a lower bound as well as an upper one.
+
+### The upper bound: a hard 70-line limit, and why
+
+There's a sharp discontinuity between a function fitting on a screen and having to scroll to see how long it is — for this physical reason, TigerBeetle enforces **a hard limit of 70 lines per function**. The justification is deliberately non-abstract: it's about what a reader can hold in view (and therefore in working memory) at once, not an aesthetic preference.
+
+Rules of thumb offered for *how* to split a large function once you hit that limit:
+
+- **Good function shape is often the inverse of an hourglass**: a few parameters, a simple return type, and a lot of meaty logic in between.
+- **Centralize control flow.** When splitting a large function, keep all `switch`/`if` statements in the "parent" function, and move non-branchy logic fragments out to helper functions — all control flow should be handled by *one* function, and the rest shouldn't care about control flow at all. This is summarized elsewhere as ["push `if`s up and `for`s down."](https://matklad.github.io/2023/11/15/push-ifs-up-and-fors-down.html)
+- **Centralize state manipulation similarly**: let the parent function hold all relevant state in local variables, and use helper functions to *compute* what needs to change rather than applying the change directly — keep leaf functions pure.
+
+### Is there such a thing as "too small"?
+
+The sources don't set a hard lower-bound line count, but they do articulate real costs to over-fragmenting, which functions as a practical floor:
+
+- **Splitting for its own sake fights the "centralize control flow" rule above.** If you extract a fragment that contains its *own* branching decision, you've now spread control flow across two functions instead of one, which is explicitly what TigerStyle says to avoid — the goal of decomposition is to *concentrate* decision-making in one place, not scatter it.
+- **Dimensionality is viral.** Use simpler function signatures and return types to reduce the number of branches that need to be handled at the call site — `void` beats `bool`, `bool` beats `u64`, `u64` beats `?u64`, and `?u64` beats `!u64`. A function extracted purely to shrink line count, but which now needs to communicate a new error or optional state back to its caller, pushes complexity *outward* to every call site instead of removing it — often a net loss even though the original function got shorter.
+- **Over-abstraction has a real, non-zero cost in Zig's own design philosophy.** Abstractions are never zero-cost, and every abstraction introduces the risk of a leaky abstraction — so the guidance is to use only a minimum of excellent abstractions, and only where they make the best sense of the domain. A function extracted with no real conceptual identity of its own (it's not "a thing," it's just "the second half of a bigger thing") is exactly this kind of low-value abstraction: it adds an indirection and a name to remember without adding a boundary that means anything.
+- **Practically**, in compiled, systems-level Zig this also has a mechanical dimension: very small functions that are called across a module boundary or through a function pointer/vtable can't be inlined by the optimizer, so fragmenting hot code into many tiny cross-boundary calls can cost real cycles (see the "Be explicit" performance guidance below). Zig's `inline fn` exists specifically to let you force inlining when you do want a small helper to disappear at the call site, precisely because the compiler doesn't always do this automatically for every call, especially through pointers.
+
+**Net synthesis**: the floor for function size isn't a line count — it's *conceptual*. Split when the resulting piece has its own name-worthy responsibility and doesn't require re-exporting new branching or error states to its caller. Don't split merely to satisfy a line-count aesthetic; that just relocates complexity instead of removing it.
+
+---
+
+## 3. Should interfaces be used as much as possible? (No — and Zig is built to make you feel that cost)
+
+This is probably the single biggest divergence from mainstream OOP-language advice, and it's a deliberate language design choice, not just a style preference.
+
+**Zig has no `interface` keyword at all.** Where other languages hand you an abstraction for free, Zig requires you to build it yourself out of three distinct mechanisms, each with different costs:
+
+| Mechanism | What it's for | Cost |
+|---|---|---|
+| **Comptime duck typing / generics (`anytype`)** | Static polymorphism — the concrete type is known at compile time | Zero runtime cost, fully inlinable |
+| **Tagged unions** | A *closed*, known set of implementing types | Compile-time exhaustiveness checking, no indirection, but the type set can't grow without touching the union |
+| **Vtables (fat pointers: `*anyopaque` + function-pointer struct)** | True runtime polymorphism across an *open*, heterogeneous set of types | Indirect call (no inlining), 2-pointer-per-value memory overhead, more boilerplate |
+
+The standard library itself is built almost entirely on vtable interfaces for the few places it truly needs runtime dispatch — `std.mem.Allocator`, `std.Io.Reader`, and `std.Io.Writer` are the canonical examples, each storing a *pointer* to a static, read-only vtable (not the vtable inline) specifically so that every interface value stays exactly two machine words regardless of how many methods the vtable grows to.
+
+### The explicit "when should I reach for one" test
+
+For callers known at compile time, comptime duck typing is preferred for zero runtime cost and full inlining — vtables are reserved for genuine runtime dispatch. A concrete decision framework distilled from community guidance:
+
+Ask yourself, before reaching for a vtable interface:
+1. Do multiple types genuinely share the same behavior?
+2. Do I need to decide *between* them at runtime (not just at compile time)?
+3. Do I want to hide implementation details from the caller?
+
+If the answer is yes to all three, an interface may be appropriate. If not, keep it concrete. Avoid interfaces when there's only one implementation, when the call sits in a hot inner loop, or when compile-time dispatch would do the job — in those cases, prefer generics, tagged unions, direct function pointers, or just a concrete type.
+
+**Justification, in the language's own terms**: Zig makes the cost of dispatch fully visible at the call site — `allocator.vtable.alloc(allocator.ptr, ...)` — rather than hiding it behind an implicit interface keyword the way Go or Java do. This is a deliberate design stance: the language doesn't want you to reach for polymorphism casually, because every abstraction is a real, paid cost (extra indirection, lost inlining opportunities, more boilerplate, and lifetime/ownership bookkeeping that Zig would otherwise let the compiler ignore). It's not "avoid abstraction," it's "be honest about what abstraction costs, and only pay it where you get real value back" — which tracks directly with TigerStyle's broader principle that abstractions are never zero cost and should be used only where they make the best sense of the domain, with only a minimum of excellent ones.
+
+---
+
+## 4. How much should a single concern be broken down?
+
+This question spans several TigerStyle principles that all push toward the same answer: **decompose along data/scope boundaries, not along arbitrary size boundaries — and keep decomposed pieces small enough to reason about in isolation.**
+
+- **Shrink the scope.** Declare variables at the smallest possible scope and minimize the number of variables in scope at once, to reduce the probability that a variable is misused — a direct, mechanical rule for how "big" a unit of code should be allowed to get before it's broken up: as soon as a variable's necessary lifetime ends, its scope should too.
+- **Calculate or check values close to where they're used.** Don't introduce variables before they're needed, and don't leave them lingering after. This reduces the "semantic gap" between where a value is validated and where it's used — a wider gap (in either time or code distance) is harder to verify correct and is explicitly called out as a bug-prone pattern (a distant cousin of TOCTOU).
+- **Assertion density as a proxy for "is this concern well-scoped."** The assertion density of the code must average a minimum of two assertions per function, checking pre/postconditions and invariants — a function that can't be meaningfully assigned two assertions about its own inputs/outputs is often a signal that it's either doing too little to be worth being its own function, or doing too much to state a clean contract about.
+- **Split compound conditions and compound assertions.** Prefer `assert(a); assert(b);` over `assert(a and b)`, and split complex `else if` chains into nested `if { }` trees — the stated reason is that this makes it possible to verify all cases are handled, and gives more precise failure information than a single blob. This is the same "decompose along independently-verifiable boundaries" logic applied at the statement level, not just the function level.
+- **All memory statically allocated at startup** (no dynamic allocation/free after init) is presented as more than a safety rule — as a second-order effect, this constraint tends to produce more efficient, simpler designs because it forces you to consider all possible memory usage patterns upfront, as part of decomposing the design, rather than deferring that decomposition to runtime.
+
+**Overall justification tying this together**: TigerStyle explicitly ranks its priorities as *safety, then performance, then developer experience, in that order* — and states plainly that style is not pursued for its own sake but only because it advances those three goals. Applied to "how much should I break a concern down": break it down exactly as far as it takes to (a) make every piece independently assertable/verifiable, and (b) keep each piece's scope and lifetime as short as its actual use requires — and no further, because each additional abstraction boundary is a place where a leaky abstraction or an indirect call can hide a bug or cost a cycle.
+
+---
+
+## Sources
+
+- [TigerStyle — `TIGER_STYLE.md`, tigerbeetle/tigerbeetle (main branch)](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md)
+- [TigerStyle Guidelines — DeepWiki summary of tigerbeetle/tigerbeetle](https://deepwiki.com/tigerbeetle/tigerbeetle/5.5-tigerstyle-guidelines)
+- [The Tiger Style — Backend.how](https://backend.how/posts/the-tiger-style/)
+- [Documentation — The Zig Programming Language (official docs, "every file is implicitly a struct")](https://ziglang.org/documentation/master/)
+- [File naming conventions — Ziggit (Zig community forum)](https://ziggit.dev/t/file-naming-conventions/10751)
+- [Zig Quirks — openmymind.net (files-as-structs explanation)](https://www.openmymind.net/Zig-Quirks/)
+- [Learning Zig - Style Guide — openmymind.net](https://www.openmymind.net/learning_zig/style_guide/)
+- [Interfaces and Vtables — LearningZig.org](https://learningzig.org/lessons/22-interfaces-and-vtables)
+- [Interfaces in Zig — BradCypert.com](https://www.bradcypert.com/interfaces-in-zig/)
+- [Zig Interface Revisited — Software Fragments (William Wong)](https://williamw520.github.io/2025/07/13/zig-interface-revisited.html)
+- [Interfaces in Zig: Five Patterns You Should Know — Medium (Alabi Temitope David)](https://medium.com/@trinitietp/interfaces-in-zig-five-patterns-you-should-know-5600acf3cfad)
+- [Interfaces in Zig — Gist (fidelicura)](https://gist.github.com/fidelicura/9b1f55d312ae6fc3974cf45848285b2a)
+- [Interfaces in ziglang — GitHub (yglcode/zig_interfaces)](https://github.com/yglcode/zig_interfaces)
+- [comptime interfaces · Issue #1268 — ziglang/zig](https://github.com/ziglang/zig/issues/1268)
+- [Push ifs up and fors down — matklad.github.io](https://matklad.github.io/2023/11/15/push-ifs-up-and-fors-down.html)
+- [Understand best Practices in Zig Development — StudyRaid](https://app.studyraid.com/en/read/2423/48952/best-practices-in-zig-development)
