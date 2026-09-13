@@ -28,13 +28,13 @@ pub fn createCommonModules(
     });
 
     const shared = b.createModule(.{
-        .root_source_file = b.path("dependencies/OS-ABI-Library/src/main.zig"),
+        .root_source_file = b.path("dependencies/os-abi-library/src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     const abi = b.createModule(.{
-        .root_source_file = b.path("dependencies/OS-ABI-Library/src/abi/main.zig"),
+        .root_source_file = b.path("dependencies/os-abi-library/src/abi/main.zig"),
         .target = target,
         .optimize = optimize,
     });

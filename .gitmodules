@@ -1,8 +1,8 @@
-[submodule "OS-ABI-Library"]
-	path = dependencies/OS-ABI-Library
-	url = https://github.com/bcrew1375/OS-ABI-Library.git
+[submodule "os-abi-library"]
+	path = dependencies/os-abi-library
+	url = https://github.com/bcrew1375/os-abi-library.git
 	branch = main
-[submodule "OS-Root-Task"]
-	path = dependencies/OS-Root-Task
-	url = https://github.com/bcrew1375/OS-Root-Task.git
+[submodule "os-root-task"]
+	path = dependencies/os-root-task
+	url = https://github.com/bcrew1375/os-root-task.git
 	branch = main

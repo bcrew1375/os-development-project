@@ -29,5 +29,6 @@
         "files.useExperimentalFileWatcher": false
       }
     }
-  }
+  },
+  "postCreateCommand": "git submodule update --init --recursive"
 }

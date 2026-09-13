@@ -2,22 +2,22 @@
 
 The project is split into three repositories:
 
-- `OS-Development-Project`: the kernel, architecture code, kernel subsystems, kernel tests,
+- `os-development-project`: the kernel, architecture code, kernel subsystems, kernel tests,
   and boot-image packaging.
-- `OS-ABI-Library`: stable user/kernel ABI definitions and implementation helpers
+- `os-abi-library`: stable user/kernel ABI definitions and implementation helpers
   usable from both kernel and userspace.
-- `OS-Root-Task`: the initial userspace root task, built independently as a
+- `os-root-task`: the initial userspace root task, built independently as a
   freestanding ELF executable.
 
 ## Dependency direction
 
 ```text
-OS-ABI-Library
+os-abi-library
   ^
   |
-  +-- OS-Development-Project
+  +-- os-development-project
   |
-  +-- OS-Root-Task
+  +-- os-root-task
 ```
 
 The kernel consumes the root task as an ELF artifact. It must not compile the
@@ -25,19 +25,19 @@ root task from source.
 
 ## Submodule checkout
 
-`OS-ABI-Library` and `OS-Root-Task` are tracked by the kernel repository as Git
+`os-abi-library` and `os-root-task` are tracked by the kernel repository as Git
 submodules:
 
 ```text
-/workspace/OS-Development-Project
-/workspace/dependencies/OS-ABI-Library
-/workspace/dependencies/OS-Root-Task
+/workspace/os-development-project
+/workspace/os-development-project/dependencies/os-abi-library
+/workspace/os-development-project/dependencies/os-root-task
 ```
 
 Clone with submodules:
 
 ```sh
-git clone --recurse-submodules https://github.com/bcrew1375/OS-Development-Project.git
+git clone --recurse-submodules https://github.com/bcrew1375/os-development-project.git
 ```
 
 Initialize submodules in an existing checkout:
@@ -56,19 +56,19 @@ git submodule update --remote --merge
 Build order:
 
 ```sh
-cd /workspace/dependencies/OS-ABI-Library
+cd /workspace/os-development-project/dependencies/os-abi-library
 zig build tests
 
-cd /workspace/dependencies/OS-Root-Task
+cd /workspace/os-development-project/dependencies/os-root-task
 zig build -Darch=x86_64
 zig build -Darch=x86_32
 
-cd /workspace
+cd /workspace/os-development-project
 zig build -Darch=x86_64
 zig build -Darch=x86_32
 ```
 
-The kernel build automatically builds the `OS-Root-Task` submodule when
+The kernel build automatically builds the `os-root-task` submodule when
 `-Droot-task` is not supplied, so a clean checkout can run `zig build` directly
 after submodules are initialized.
 
@@ -76,7 +76,7 @@ The kernel can also consume an explicit root-task artifact path:
 
 ```sh
 zig build -Darch=x86_64 \
-  -Droot-task=/workspace/dependencies/OS-Root-Task/zig-out/x86_64/bin/root_process.elf
+  -Droot-task=/workspace/os-development-project/dependencies/os-root-task/zig-out/x86_64/bin/root_process.elf
 ```
 
 ## Future package-release step

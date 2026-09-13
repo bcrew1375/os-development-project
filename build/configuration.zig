@@ -96,7 +96,7 @@ fn addRootTaskSubmoduleBuild(b: *std.Build, config: BuildConfig) std.Build.LazyP
         \\output="$2"
         \\zig_exe="$3"
         \\
-        \\cd dependencies/OS-Root-Task
+        \\cd dependencies/os-root-task
         \\"$zig_exe" build -Darch="$architecture"
         \\mkdir -p "$(dirname "$output")"
         \\cp "zig-out/$architecture/bin/root_process.elf" "$output"
