@@ -28,6 +28,13 @@
         },
         "files.useExperimentalFileWatcher": false
       }
+    },
+    "codespaces": {
+      "repositories": {
+        "bcrew1375/*": {
+          "permissions": "write-all"
+        }
+      }
     }
   },
   "postCreateCommand": "git submodule update --init --recursive"
