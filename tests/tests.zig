@@ -5,4 +5,5 @@ test {
     _ = @import("vmm_tests.zig");
     _ = @import("process_tests.zig");
     _ = @import("capability_tests.zig");
+    _ = @import("coverage_tests.zig");
 }

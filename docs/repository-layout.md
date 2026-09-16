@@ -15,6 +15,11 @@ also repository-shaped: it owns its build definition, source, tests,
 documentation, and license. See [Component Workflow](component-workflow.md)
 for extraction and reintegration instructions.
 
+## Project status
+
+See the [current kernel assessment](../kernel_analysis.md) for implementation
+maturity, known architectural limitations, and the priority-ordered roadmap.
+
 ## Dependency direction
 
 ```text
@@ -41,6 +46,25 @@ Run every component's unit tests from the repository root:
 ```sh
 zig build tests
 ```
+
+Measure line coverage of architecture-independent kernel code with the native
+mock-architecture test suite:
+
+```sh
+zig build coverage
+```
+
+The coverage report includes every Zig file under `src/common`. A line is
+coverable when Zig's LLVM backend emits a sanitizer-coverage program point for
+that source line, and it is covered when any program point on the line executes
+during the test suite. Blank lines, comments, declarations without runtime
+code, and static data are not part of the denominator. Files with no emitted
+runtime locations are reported as `N/A`.
+
+Zig compiles declarations lazily, so entirely unreferenced functions may not be
+present in the test executable and cannot be included in the compiler-derived
+denominator. The command is a reporting tool and does not currently enforce a
+minimum coverage percentage.
 
 Build the kernel and root-task artifacts for either architecture:
 

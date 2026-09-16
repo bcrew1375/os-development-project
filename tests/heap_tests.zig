@@ -3,7 +3,7 @@ const kernel = @import("kernel_common");
 const heap = kernel.heap;
 
 const HEAP_TEST_SIZE: usize = 1024 * 1024; // 1 MB test heap
-const test_heap_memory: [HEAP_TEST_SIZE]u8 align(16) = undefined;
+var test_heap_memory: [HEAP_TEST_SIZE]u8 align(16) = undefined;
 
 test "heap initialize creates a valid free block" {
     const test_heap = heap.Heap.initialize(@intFromPtr(&test_heap_memory), HEAP_TEST_SIZE);

@@ -25,6 +25,7 @@ pub fn build(b: *std.Build) void {
     const kernel_artifacts = artifacts.addKernelAndRootTask(b, config, optimize, root_task);
 
     unit_tests.addStep(b, optimize);
+    unit_tests.addCoverageStep(b);
     documentation.addSteps(b, optimize);
     run.addStep(b, config, kernel_artifacts.kernel, kernel_artifacts.root_task);
 }

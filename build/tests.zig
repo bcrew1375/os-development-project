@@ -10,6 +10,44 @@ pub fn addStep(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
     addComponentTests(b, tests_step, "components/os-root-task");
 }
 
+pub fn addCoverageStep(b: *std.Build) void {
+    const coverage_step = b.step("coverage", "Measure line coverage of common kernel code");
+    const common_modules = modules.createCommonModules(b, b.graph.host, .Debug, false);
+    const coverage_report = b.createModule(.{
+        .root_source_file = b.path("tools/coverage/report.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
+    const tests = b.addTest(.{
+        .name = "coverage-tests",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/tests.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+            .code_model = .normal,
+            .fuzz = true,
+        }),
+        .test_runner = .{
+            .path = b.path("tools/coverage/main.zig"),
+            .mode = .simple,
+        },
+        .use_llvm = true,
+        .use_lld = true,
+    });
+
+    common_modules.arch.fuzz = true;
+    common_modules.kernel_common.fuzz = true;
+    modules.addCommonImports(tests.root_module, common_modules);
+    tests.root_module.addImport("coverage_report", coverage_report);
+    tests.root_module.error_tracing = true;
+
+    const run_coverage = b.addRunArtifact(tests);
+    run_coverage.setCwd(b.path("."));
+    run_coverage.addArg(b.pathFromRoot("src/common"));
+    run_coverage.has_side_effects = true;
+    coverage_step.dependOn(&run_coverage.step);
+}
+
 fn addKernelTests(
     b: *std.Build,
     optimize: std.builtin.OptimizeMode,
@@ -26,6 +64,11 @@ fn addKernelTests(
     });
 
     modules.addCommonImports(tests.root_module, common_modules);
+    tests.root_module.addImport("coverage_report", b.createModule(.{
+        .root_source_file = b.path("tools/coverage/report.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    }));
     tests.root_module.error_tracing = true;
 
     const run_tests = b.addRunArtifact(tests);
