@@ -4,4 +4,6 @@ qemu.log
 .qemu.pid
 serial.log
 *.o
+__pycache__/
+*.pyc
 /QEMU-VNC-Extension/

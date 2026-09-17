@@ -6,6 +6,14 @@ pub const SourcePoint = struct {
     covered: bool,
 };
 
+pub const Scope = struct {
+    pub const Kind = enum { file, directory };
+
+    absolute_path: []const u8,
+    display_path: []const u8,
+    kind: Kind,
+};
+
 pub const FileCoverage = struct {
     path: []const u8,
     covered_lines: usize,
@@ -57,8 +65,37 @@ pub fn summarize(
     common_root: []const u8,
     points: []const SourcePoint,
 ) !Summary {
-    const normalized_root = try normalizePath(allocator, common_root);
-    defer allocator.free(normalized_root);
+    return summarizeScopes(allocator, &.{.{
+        .absolute_path = common_root,
+        .display_path = "src/common",
+        .kind = .directory,
+    }}, points);
+}
+
+pub fn summarizeScopes(
+    allocator: std.mem.Allocator,
+    scopes: []const Scope,
+    points: []const SourcePoint,
+) !Summary {
+    const NormalizedScope = struct {
+        absolute_path: []u8,
+        display_path: []const u8,
+        kind: Scope.Kind,
+    };
+    const normalized_scopes = try allocator.alloc(NormalizedScope, scopes.len);
+    defer allocator.free(normalized_scopes);
+    var initialized_scopes: usize = 0;
+    defer for (normalized_scopes[0..initialized_scopes]) |scope| {
+        allocator.free(scope.absolute_path);
+    };
+    for (scopes, normalized_scopes) |scope, *normalized| {
+        normalized.* = .{
+            .absolute_path = try normalizePath(allocator, scope.absolute_path),
+            .display_path = scope.display_path,
+            .kind = scope.kind,
+        };
+        initialized_scopes += 1;
+    }
 
     var states: std.StringArrayHashMapUnmanaged(FileState) = .empty;
     defer {
@@ -69,15 +106,18 @@ pub fn summarize(
         states.deinit(allocator);
     }
 
-    try inventoryFiles(allocator, normalized_root, &states);
+    for (normalized_scopes) |scope| {
+        try inventoryScope(allocator, scope, &states);
+    }
 
     for (points) |point| {
         if (point.line == 0) continue;
         const normalized_path = try normalizePath(allocator, point.path);
         defer allocator.free(normalized_path);
 
-        const relative_path = relativeCommonPath(normalized_root, normalized_path) orelse continue;
-        const state = states.getPtr(relative_path) orelse continue;
+        const display_path = try pointDisplayPath(allocator, normalized_scopes, normalized_path) orelse continue;
+        defer allocator.free(display_path);
+        const state = states.getPtr(display_path) orelse continue;
         const result = try state.lines.getOrPut(allocator, point.line);
         if (!result.found_existing) result.value_ptr.* = .{};
         result.value_ptr.coverable = true;
@@ -103,7 +143,7 @@ pub fn summarize(
         }
 
         files[index] = .{
-            .path = try std.fs.path.join(allocator, &.{ "src/common", path }),
+            .path = try allocator.dupe(u8, path),
             .covered_lines = covered,
             .coverable_lines = coverable,
         };
@@ -127,7 +167,11 @@ pub fn summarize(
 
 pub fn write(writer: *std.Io.Writer, summary: Summary) !void {
     try writer.writeAll("Common code coverage\n\n");
-    try writer.print("{s:<52} {s:>9} {s:>10} {s:>10}\n", .{
+    try writeTable(writer, summary);
+}
+
+pub fn writeTable(writer: *std.Io.Writer, summary: Summary) !void {
+    try writer.print("{s:<52} {s:>9} {s:>10} {s:>12}\n", .{
         "File", "Covered", "Coverable", "Coverage",
     });
 
@@ -140,11 +184,11 @@ pub fn write(writer: *std.Io.Writer, summary: Summary) !void {
                 percentage,
             });
         } else {
-            try writer.print("{s:<52} {d:>9} {d:>10} {s:>10}\n", .{
+            try writer.print("{s:<52} {d:>9} {d:>10} {s:>12}\n", .{
                 file.path,
                 file.covered_lines,
                 file.coverable_lines,
-                "N/A",
+                "not emitted",
             });
         }
     }
@@ -158,38 +202,63 @@ pub fn write(writer: *std.Io.Writer, summary: Summary) !void {
             percentage,
         });
     } else {
-        try writer.print("{s:<52} {d:>9} {d:>10} {s:>10}\n", .{
+        try writer.print("{s:<52} {d:>9} {d:>10} {s:>12}\n", .{
             "TOTAL",
             summary.covered_lines,
             summary.coverable_lines,
-            "N/A",
+            "not emitted",
         });
     }
 }
 
-fn inventoryFiles(
+fn inventoryScope(
     allocator: std.mem.Allocator,
-    common_root: []const u8,
+    scope: anytype,
     states: *std.StringArrayHashMapUnmanaged(FileState),
 ) !void {
-    var directory = try std.fs.openDirAbsolute(common_root, .{ .iterate = true });
+    if (scope.kind == .file) {
+        const path = try allocator.dupe(u8, scope.display_path);
+        errdefer allocator.free(path);
+        try states.put(allocator, path, .{});
+        return;
+    }
+
+    var directory = try std.fs.openDirAbsolute(scope.absolute_path, .{ .iterate = true });
     defer directory.close();
 
     var walker = try directory.walk(allocator);
     defer walker.deinit();
     while (try walker.next()) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".zig")) continue;
-        const path = try allocator.dupe(u8, entry.path);
+        const path = try std.fs.path.join(allocator, &.{ scope.display_path, entry.path });
         errdefer allocator.free(path);
         try states.put(allocator, path, .{});
     }
 }
 
-fn relativeCommonPath(common_root: []const u8, path: []const u8) ?[]const u8 {
-    if (!std.mem.startsWith(u8, path, common_root)) return null;
-    if (path.len == common_root.len) return null;
-    if (path[common_root.len] != '/') return null;
-    return path[common_root.len + 1 ..];
+fn pointDisplayPath(
+    allocator: std.mem.Allocator,
+    scopes: anytype,
+    path: []const u8,
+) !?[]u8 {
+    for (scopes) |scope| switch (scope.kind) {
+        .file => {
+            if (std.mem.eql(u8, path, scope.absolute_path)) {
+                return try allocator.dupe(u8, scope.display_path);
+            }
+        },
+        .directory => {
+            if (!std.mem.startsWith(u8, path, scope.absolute_path)) continue;
+            if (path.len == scope.absolute_path.len) continue;
+            if (path[scope.absolute_path.len] != '/') continue;
+            return try std.fmt.allocPrint(
+                allocator,
+                "{s}/{s}",
+                .{ scope.display_path, path[scope.absolute_path.len + 1 ..] },
+            );
+        },
+    };
+    return null;
 }
 
 fn normalizePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {

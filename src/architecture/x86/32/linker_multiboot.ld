@@ -10,7 +10,7 @@ SECTIONS
 
 	.multiboot.header ALIGN(4): AT (ADDR (.multiboot.header)) {
 		_multiboot_header_start = .;
-		*(.multiboot.header .multiboot.header.*)
+		KEEP(*(.multiboot.header .multiboot.header.*))
 		_multiboot_header_end = .;
 	}
 	.multiboot.text ALIGN (4K) : AT (ADDR (.multiboot.text)) {

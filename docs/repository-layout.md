@@ -59,12 +59,60 @@ coverable when Zig's LLVM backend emits a sanitizer-coverage program point for
 that source line, and it is covered when any program point on the line executes
 during the test suite. Blank lines, comments, declarations without runtime
 code, and static data are not part of the denominator. Files with no emitted
-runtime locations are reported as `N/A`.
+runtime locations are reported as `not emitted`.
 
 Zig compiles declarations lazily, so entirely unreferenced functions may not be
 present in the test executable and cannot be included in the compiler-derived
 denominator. The command is a reporting tool and does not currently enforce a
 minimum coverage percentage.
+
+Run architecture-dependent tests against the production x86 implementations
+under headless QEMU:
+
+```sh
+zig build architecture-tests -Darch=x86_64
+zig build architecture-tests -Darch=x86_32
+```
+
+Unlike `zig build tests`, these tests are a freestanding test kernel rather
+than Zig `test` declarations, so `builtin.is_test` does not select the mock
+architecture. The runner emits versioned `QEMU-TEST` records over COM1 and
+uses QEMU's `isa-debug-exit` device for an authoritative result. The host kills
+tests that run longer than 60 seconds. Override this when diagnosing a slow
+environment with `-Darchitecture-test-timeout=<seconds>`. Tests currently share
+one booted machine and must restore any hardware state they modify; destructive
+fault and context switch tests should use isolated QEMU instances when added.
+
+The x86-32 runner always uses QEMU's direct Multiboot loader, independently of
+the production `-Dbootloader` selection. This keeps architecture tests
+deterministic and avoids making them depend on ISO and Limine tooling. The
+x86-64 runner uses Limine because QEMU has no equivalent direct 64-bit kernel
+loader for this kernel's boot protocol.
+
+Measure x86-64 architecture line coverage with:
+
+```sh
+zig build architecture-coverage -Darch=x86_64
+```
+
+This builds a separate ReleaseFast test kernel with LLVM trace-pc-guard
+instrumentation. The guest sends the total instrumentation-point count and
+a covered-guard bitmap over a binary `isa-debugcon` channel. A host collector
+derives guarded basic blocks from the exact emitted LLVM IR. Every debug-mapped
+source line containing an instruction in a block is coverable, and all such
+lines become covered when that block's guard executes. The collector then
+reuses `tools/coverage/report.zig` for per-file totals. Zig lazy compilation
+still limits the denominator to code emitted into that test kernel.
+Namespace-only files, compile-time data, unused implementations, and helpers
+fully eliminated or inlined by the ReleaseFast coverage kernel may therefore
+appear as `not emitted`; this is not reported as either 0% or 100% coverage.
+
+Architecture coverage is currently unavailable for x86-32. Zig 0.15.2's
+hosted `-ffuzz` runtime cannot target freestanding kernels, while its supported
+trace-pc-guard mode inserts stack-depth state that is incompatible with the
+x86-32 pre-paging bootstrap. `architecture-tests -Darch=x86_32` remains the
+physical correctness test for that target. The existing `coverage` step remains
+the native mock-architecture report for `src/common`.
 
 Build the kernel and root-task artifacts for either architecture:
 

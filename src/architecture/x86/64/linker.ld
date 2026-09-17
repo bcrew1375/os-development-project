@@ -29,6 +29,11 @@ SECTIONS
 		*(.data .data.*)
 		_data_end = .;
 	}
+	.sancov_guards ALIGN (8) : AT (ADDR (.sancov_guards) - KERNEL_VIRTUAL_ADDRESS) {
+		__start___sancov_guards = .;
+		KEEP(*(__sancov_guards))
+		__stop___sancov_guards = .;
+	}
 	.bss ALIGN (4K) : AT (ADDR (.bss) - KERNEL_VIRTUAL_ADDRESS) {
 		_bss_start = .;
 		*(.bss .bss.*)

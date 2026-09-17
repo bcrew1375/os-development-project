@@ -1,6 +1,8 @@
 // Modified from OS Dev: https://wiki.osdev.org/Zig_Bare_Bones
 const std = @import("std");
 
+const architecture_tests = @import("build/architecture_tests.zig");
+const architecture_coverage = @import("build/architecture_coverage.zig");
 const artifacts = @import("build/artifacts.zig");
 const configuration = @import("build/configuration.zig");
 const documentation = @import("build/documentation.zig");
@@ -26,6 +28,8 @@ pub fn build(b: *std.Build) void {
 
     unit_tests.addStep(b, optimize);
     unit_tests.addCoverageStep(b);
+    architecture_tests.addStep(b, config);
+    architecture_coverage.addSteps(b, config);
     documentation.addSteps(b, optimize);
     run.addStep(b, config, kernel_artifacts.kernel, kernel_artifacts.root_task);
 }

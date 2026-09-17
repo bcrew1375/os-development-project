@@ -6,6 +6,9 @@ pub fn addStep(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
     const tests_step = b.step("tests", "Run all monorepo unit tests");
 
     addKernelTests(b, optimize, tests_step);
+    const coverage_tool_tests = b.addSystemCommand(&.{"python3"});
+    coverage_tool_tests.addFileArg(b.path("tests/architecture_coverage_tests.py"));
+    tests_step.dependOn(&coverage_tool_tests.step);
     addComponentTests(b, tests_step, "components/os-abi-library");
     addComponentTests(b, tests_step, "components/os-root-task");
 }
