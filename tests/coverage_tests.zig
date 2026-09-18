@@ -71,7 +71,10 @@ test "coverage report inventories uninstrumented common files" {
 test "coverage report sorts files and aggregates totals" {
     const common_root = try std.fs.cwd().realpathAlloc(std.testing.allocator, "src/common");
     defer std.testing.allocator.free(common_root);
-    const process_path = try std.fs.path.join(std.testing.allocator, &.{ common_root, "process/main.zig" });
+    const process_path = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ common_root, "process/main.zig" },
+    );
     defer std.testing.allocator.free(process_path);
 
     const points = [_]report.SourcePoint{
@@ -109,12 +112,12 @@ test "coverage report supports file and directory scopes" {
     const scopes = [_]report.Scope{
         .{
             .absolute_path = architecture_file,
-            .display_path = "src/architecture/architecture.zig",
+            .display_path = "architecture.zig",
             .kind = .file,
         },
         .{
             .absolute_path = common_directory,
-            .display_path = "src/architecture/x86/common",
+            .display_path = "x86/common",
             .kind = .directory,
         },
     };
@@ -131,11 +134,11 @@ test "coverage report supports file and directory scopes" {
 
     const architecture = findFile(
         summary.files,
-        "src/architecture/architecture.zig",
+        "architecture.zig",
     ).?;
     const vectors = findFile(
         summary.files,
-        "src/architecture/x86/common/interrupts/vectors.zig",
+        "x86/common/interrupts/vectors.zig",
     ).?;
     try std.testing.expectEqual(@as(usize, 1), architecture.covered_lines);
     try std.testing.expectEqual(@as(usize, 1), architecture.coverable_lines);
@@ -168,7 +171,7 @@ test "coverage report rejects duplicate scopes" {
     );
 }
 
-test "coverage table keeps columns aligned for long paths" {
+test "coverage table keeps architecture paths distinct within 100 columns" {
     const files = [_]report.FileCoverage{
         .{
             .path = "short.zig",
@@ -176,20 +179,25 @@ test "coverage table keeps columns aligned for long paths" {
             .coverable_lines = 2,
         },
         .{
-            .path = "src/architecture/x86/64/interrupts/interrupt_descriptor_table.zig",
+            .path = "x86/32/interrupts/interrupt_descriptor_table.zig",
+            .covered_lines = 14,
+            .coverable_lines = 14,
+        },
+        .{
+            .path = "x86/64/interrupts/interrupt_descriptor_table.zig",
             .covered_lines = 18,
             .coverable_lines = 18,
         },
         .{
-            .path = "src/architecture/namespace.zig",
+            .path = "namespace.zig",
             .covered_lines = 0,
             .coverable_lines = 0,
         },
     };
     const summary: report.Summary = .{
         .files = @constCast(&files),
-        .covered_lines = 19,
-        .coverable_lines = 20,
+        .covered_lines = 33,
+        .coverable_lines = 34,
     };
 
     var output_buffer: [1024]u8 = undefined;
@@ -201,12 +209,21 @@ test "coverage table keeps columns aligned for long paths" {
     var line_count: usize = 0;
     while (lines.next()) |line| {
         if (line.len == 0) continue;
-        try std.testing.expectEqual(@as(usize, 77), line.len);
+        try std.testing.expectEqual(@as(usize, 100), line.len);
         line_count += 1;
     }
-    try std.testing.expectEqual(@as(usize, 6), line_count);
-    try std.testing.expect(std.mem.indexOf(u8, output, "src/architecture/x8...descriptor_table.zig") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "95.00%") != null);
+    try std.testing.expectEqual(@as(usize, 7), line_count);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        output,
+        "x86/32/interrupts/interrupt_descriptor_table.zig",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        output,
+        "x86/64/interrupts/interrupt_descriptor_table.zig",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "97.06%") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "no emitted code") != null);
 }
 

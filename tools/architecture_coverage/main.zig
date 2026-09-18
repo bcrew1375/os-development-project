@@ -2,6 +2,8 @@ const std = @import("std");
 const coverage_points_file = @import("coverage_points_file");
 const coverage_report = @import("coverage_report");
 
+const architecture_source_prefix = "src/architecture/";
+
 const CommandArguments = struct {
     points_file_path: []const u8,
     repository_root: []const u8,
@@ -95,12 +97,15 @@ fn createScope(
     repository_path: []const u8,
     kind: coverage_report.Scope.Kind,
 ) !coverage_report.Scope {
+    if (!std.mem.startsWith(u8, repository_path, architecture_source_prefix)) {
+        return error.InvalidArchitectureSourcePath;
+    }
     return .{
         .absolute_path = try std.fs.path.join(
             allocator,
             &.{ repository_root, repository_path },
         ),
-        .display_path = repository_path,
+        .display_path = repository_path[architecture_source_prefix.len..],
         .kind = kind,
     };
 }

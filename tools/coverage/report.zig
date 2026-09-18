@@ -116,7 +116,11 @@ pub fn summarizeScopes(
         const normalized_path = try normalizePath(allocator, point.path);
         defer allocator.free(normalized_path);
 
-        const display_path = try pointDisplayPath(allocator, normalized_scopes, normalized_path) orelse continue;
+        const display_path = try pointDisplayPath(
+            allocator,
+            normalized_scopes,
+            normalized_path,
+        ) orelse continue;
         defer allocator.free(display_path);
         const state = states.getPtr(display_path) orelse continue;
         const result = try state.lines.getOrPut(allocator, point.line);
@@ -172,7 +176,7 @@ pub fn write(writer: *std.Io.Writer, summary: Summary) !void {
 }
 
 pub fn writeTable(writer: *std.Io.Writer, summary: Summary) !void {
-    const path_width = 42;
+    const path_width = 65;
     const table_width = path_width + 1 + 8 + 1 + 9 + 1 + 15;
 
     try writePathColumn(writer, "File", path_width);
