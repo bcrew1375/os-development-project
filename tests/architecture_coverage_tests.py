@@ -222,11 +222,11 @@ Other:
     def test_qemu_protocol_accepts_complete_success(self) -> None:
         summary = ARCHITECTURE_TEST_RUNNER.validate_protocol(
             "ordinary serial diagnostic\n"
-            "QEMU-TEST protocol=1 arch=x86_64 tests=2\n"
-            'QEMU-TEST RUN name="first test"\n'
-            'QEMU-TEST PASS name="first test"\n'
-            'QEMU-TEST RUN name="second test"\n'
-            'QEMU-TEST PASS name="second test"\n'
+            "QEMU-TEST protocol=2 arch=x86_64 mode=shared_machine tests=2\n"
+            'QEMU-TEST RUN id=first_test name="first test"\n'
+            "QEMU-TEST PASS id=first_test\n"
+            'QEMU-TEST RUN id=second_test name="second test"\n'
+            "QEMU-TEST PASS id=second_test\n"
             "QEMU-TEST SUMMARY passed=2 failed=0\n",
             "x86_64",
         )
@@ -236,7 +236,7 @@ Other:
 
     def test_qemu_protocol_rejects_wrong_architecture(self) -> None:
         transcript = (
-            "QEMU-TEST protocol=1 arch=x86_32 tests=0\n"
+            "QEMU-TEST protocol=2 arch=x86_32 mode=shared_machine tests=0\n"
             "QEMU-TEST SUMMARY passed=0 failed=0\n"
         )
         with self.assertRaisesRegex(ValueError, "architecture mismatch"):
@@ -244,9 +244,9 @@ Other:
 
     def test_qemu_protocol_rejects_record_before_header(self) -> None:
         transcript = (
-            'QEMU-TEST RUN name="test"\n'
-            "QEMU-TEST protocol=1 arch=x86_64 tests=1\n"
-            'QEMU-TEST PASS name="test"\n'
+            'QEMU-TEST RUN id=test name="test"\n'
+            "QEMU-TEST protocol=2 arch=x86_64 mode=shared_machine tests=1\n"
+            "QEMU-TEST PASS id=test\n"
             "QEMU-TEST SUMMARY passed=1 failed=0\n"
         )
         with self.assertRaisesRegex(ValueError, "before protocol header"):
@@ -254,7 +254,7 @@ Other:
 
     def test_qemu_protocol_rejects_unknown_version(self) -> None:
         transcript = (
-            "QEMU-TEST protocol=2 arch=x86_64 tests=0\n"
+            "QEMU-TEST protocol=3 arch=x86_64 mode=shared_machine tests=0\n"
             "QEMU-TEST SUMMARY passed=0 failed=0\n"
         )
         with self.assertRaisesRegex(ValueError, "protocol version"):
@@ -262,10 +262,10 @@ Other:
 
     def test_qemu_protocol_rejects_duplicate_result(self) -> None:
         transcript = (
-            "QEMU-TEST protocol=1 arch=x86_64 tests=1\n"
-            'QEMU-TEST RUN name="test"\n'
-            'QEMU-TEST PASS name="test"\n'
-            'QEMU-TEST PASS name="test"\n'
+            "QEMU-TEST protocol=2 arch=x86_64 mode=shared_machine tests=1\n"
+            'QEMU-TEST RUN id=test name="test"\n'
+            "QEMU-TEST PASS id=test\n"
+            "QEMU-TEST PASS id=test\n"
             "QEMU-TEST SUMMARY passed=1 failed=0\n"
         )
         with self.assertRaisesRegex(ValueError, "duplicate test result"):
@@ -273,8 +273,8 @@ Other:
 
     def test_qemu_protocol_rejects_result_without_start(self) -> None:
         transcript = (
-            "QEMU-TEST protocol=1 arch=x86_64 tests=1\n"
-            'QEMU-TEST PASS name="test"\n'
+            "QEMU-TEST protocol=2 arch=x86_64 mode=shared_machine tests=1\n"
+            "QEMU-TEST PASS id=test\n"
             "QEMU-TEST SUMMARY passed=1 failed=0\n"
         )
         with self.assertRaisesRegex(ValueError, "before start"):
@@ -282,8 +282,8 @@ Other:
 
     def test_qemu_protocol_rejects_missing_result(self) -> None:
         transcript = (
-            "QEMU-TEST protocol=1 arch=x86_64 tests=1\n"
-            'QEMU-TEST RUN name="test"\n'
+            "QEMU-TEST protocol=2 arch=x86_64 mode=shared_machine tests=1\n"
+            'QEMU-TEST RUN id=test name="test"\n'
             "QEMU-TEST SUMMARY passed=1 failed=0\n"
         )
         with self.assertRaisesRegex(ValueError, "without results"):
@@ -291,9 +291,9 @@ Other:
 
     def test_qemu_protocol_rejects_contradictory_summary(self) -> None:
         transcript = (
-            "QEMU-TEST protocol=1 arch=x86_64 tests=1\n"
-            'QEMU-TEST RUN name="test"\n'
-            'QEMU-TEST FAIL name="test" error=ExpectationFailed\n'
+            "QEMU-TEST protocol=2 arch=x86_64 mode=shared_machine tests=1\n"
+            'QEMU-TEST RUN id=test name="test"\n'
+            "QEMU-TEST FAIL id=test error=ExpectationFailed\n"
             "QEMU-TEST SUMMARY passed=1 failed=0\n"
         )
         with self.assertRaisesRegex(ValueError, "contradicts"):
@@ -301,7 +301,7 @@ Other:
 
     def test_qemu_protocol_rejects_malformed_record(self) -> None:
         transcript = (
-            "QEMU-TEST protocol=1 arch=x86_64 tests=1\n"
+            "QEMU-TEST protocol=2 arch=x86_64 mode=shared_machine tests=1\n"
             "QEMU-TEST RUN broken\n"
             "QEMU-TEST SUMMARY passed=0 failed=0\n"
         )
@@ -310,11 +310,79 @@ Other:
 
     def test_qemu_protocol_rejects_kernel_panic(self) -> None:
         transcript = (
-            "QEMU-TEST protocol=1 arch=x86_64 tests=0\n"
+            "QEMU-TEST protocol=2 arch=x86_64 mode=shared_machine tests=0\n"
             'QEMU-TEST PANIC message="failure"\n'
         )
         with self.assertRaisesRegex(ValueError, "panicked"):
             ARCHITECTURE_TEST_RUNNER.validate_protocol(transcript, "x86_64")
+
+    def test_qemu_protocol_accepts_authoritative_expected_fault(self) -> None:
+        summary = ARCHITECTURE_TEST_RUNNER.validate_protocol(
+            "QEMU-TEST protocol=2 arch=x86_64 mode=expected_fault tests=1\n"
+            'QEMU-TEST RUN id=write_fault name="write fault"\n'
+            "QEMU-TEST FAULT id=write_fault vector=14 error_code=0x3 "
+            "instruction_pointer=0xffffffff80001234 cr2=0x4000 present=1 "
+            "write=1 user=0 reserved=0 instruction_fetch=0\n",
+            "x86_64",
+            "expected_fault",
+            "write_fault",
+            14,
+            0x7,
+            0x3,
+            0x4000,
+        )
+        self.assertTrue(summary.expected_fault_observed)
+        self.assertEqual(1, summary.passed)
+
+    def test_qemu_protocol_rejects_wrong_fault_vector(self) -> None:
+        transcript = (
+            "QEMU-TEST protocol=2 arch=x86_64 mode=expected_fault tests=1\n"
+            'QEMU-TEST RUN id=fault name="fault"\n'
+            "QEMU-TEST FAULT id=fault vector=13 error_code=0x0 "
+            "instruction_pointer=0x1000 cr2=0x0 present=0 write=0 user=0 "
+            "reserved=0 instruction_fetch=0\n"
+        )
+        with self.assertRaisesRegex(ValueError, "vector mismatch"):
+            ARCHITECTURE_TEST_RUNNER.validate_protocol(
+                transcript,
+                "x86_64",
+                "expected_fault",
+                "fault",
+                14,
+            )
+
+    def test_qemu_protocol_rejects_fault_flag_disagreement(self) -> None:
+        transcript = (
+            "QEMU-TEST protocol=2 arch=x86_64 mode=expected_fault tests=1\n"
+            'QEMU-TEST RUN id=fault name="fault"\n'
+            "QEMU-TEST FAULT id=fault vector=14 error_code=0x2 "
+            "instruction_pointer=0x1000 cr2=0x2000 present=0 write=0 user=0 "
+            "reserved=0 instruction_fetch=0\n"
+        )
+        with self.assertRaisesRegex(ValueError, "write flag"):
+            ARCHITECTURE_TEST_RUNNER.validate_protocol(
+                transcript,
+                "x86_64",
+                "expected_fault",
+                "fault",
+                14,
+            )
+
+    def test_qemu_protocol_rejects_summary_for_expected_fault(self) -> None:
+        transcript = (
+            "QEMU-TEST protocol=2 arch=x86_64 mode=expected_fault tests=1\n"
+            'QEMU-TEST RUN id=fault name="fault"\n'
+            "QEMU-TEST PASS id=fault\n"
+            "QEMU-TEST SUMMARY passed=1 failed=0\n"
+        )
+        with self.assertRaisesRegex(ValueError, "terminate with a fault"):
+            ARCHITECTURE_TEST_RUNNER.validate_protocol(
+                transcript,
+                "x86_64",
+                "expected_fault",
+                "fault",
+                14,
+            )
 
 
 if __name__ == "__main__":

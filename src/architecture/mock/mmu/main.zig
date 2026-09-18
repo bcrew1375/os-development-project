@@ -40,8 +40,10 @@ var pageMappingCount: usize = 0;
 const FailureInjection = struct {
     fail_table_mapping_call: ?usize = null,
     fail_page_mapping_call: ?usize = null,
+    fail_physical_lookup_call: ?usize = null,
     table_mapping_calls: usize = 0,
     page_mapping_calls: usize = 0,
+    physical_lookup_calls: usize = 0,
 };
 var failureInjection: FailureInjection = .{};
 
@@ -64,6 +66,11 @@ pub fn getPhysicalAddress(virtualAddress: usize) ?usize {
 }
 
 pub fn getPhysicalAddressInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize) ?usize {
+    failureInjection.physical_lookup_calls += 1;
+    if (failureInjection.fail_physical_lookup_call == failureInjection.physical_lookup_calls) {
+        return null;
+    }
+
     const pageSize = getPageSize();
     const virtualPage = virtualAddress & ~(pageSize - 1);
     const pageOffset = virtualAddress & (pageSize - 1);
@@ -261,12 +268,47 @@ pub fn getHostVirtualAddressForTest(physical_address: usize) usize {
     return @intFromPtr(backing.ptr) + physical_address;
 }
 
+pub fn writePhysicalMemoryForTest(physical_address: usize, source: []const u8) !void {
+    const destination = try physicalMemorySliceForTest(physical_address, source.len);
+    @memcpy(destination, source);
+}
+
+pub fn readPhysicalMemoryForTest(physical_address: usize, destination: []u8) !void {
+    const source = try physicalMemorySliceForTest(physical_address, destination.len);
+    @memcpy(destination, source);
+}
+
+pub fn readVirtualMemoryInAddressSpaceForTest(
+    root: arch.AddressSpaceRoot,
+    virtual_address: usize,
+    destination: []u8,
+) !void {
+    var copied: usize = 0;
+    while (copied < destination.len) {
+        const current_virtual_address = std.math.add(usize, virtual_address, copied) catch {
+            return error.InvalidVirtualRange;
+        };
+        const physical_address = getPhysicalAddressInAddressSpace(root, current_virtual_address) orelse {
+            return error.VirtualAddressNotMapped;
+        };
+        const page_remaining = getPageSize() - (current_virtual_address & (getPageSize() - 1));
+        const copy_size = @min(page_remaining, destination.len - copied);
+        const source = try physicalMemorySliceForTest(physical_address, copy_size);
+        @memcpy(destination[copied..][0..copy_size], source);
+        copied += copy_size;
+    }
+}
+
 pub fn isMemoryFixtureInitializedForTest() bool {
     return memoryBacking != null;
 }
 
 pub fn getMappedPageForTest(virtualAddress: usize) ?MockPageMapping {
     return getMappedPageInAddressSpaceForTest(currentAddressSpaceRoot, virtualAddress);
+}
+
+pub fn getCurrentAddressSpaceRootForTest() arch.AddressSpaceRoot {
+    return currentAddressSpaceRoot;
 }
 
 pub fn getMappedPageInAddressSpaceForTest(
@@ -291,6 +333,11 @@ pub fn failTableMappingCallForTest(call: ?usize) void {
 pub fn failPageMappingCallForTest(call: ?usize) void {
     failureInjection.fail_page_mapping_call = call;
     failureInjection.page_mapping_calls = 0;
+}
+
+pub fn failPhysicalLookupCallForTest(call: ?usize) void {
+    failureInjection.fail_physical_lookup_call = call;
+    failureInjection.physical_lookup_calls = 0;
 }
 
 pub fn getMaxAvailableAddress() u64 {
@@ -327,4 +374,12 @@ pub fn getPageTableRegionSize() usize {
 
 fn requireMemoryFixture() []u8 {
     return memoryBacking orelse @panic("mock MMU memory fixture is not initialized");
+}
+
+fn physicalMemorySliceForTest(physical_address: usize, length: usize) ![]u8 {
+    const backing = requireMemoryFixture();
+    if (physical_address > backing.len or length > backing.len - physical_address) {
+        return error.InvalidPhysicalRange;
+    }
+    return backing[physical_address..][0..length];
 }

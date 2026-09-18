@@ -59,6 +59,12 @@ fn addRootTask(
     abi_path: []const u8,
 ) void {
     const abi = createAbiModule(b, config.target, optimize, abi_path);
+    const memory_manager = b.createModule(.{
+        .root_source_file = b.path("src/memory_manager.zig"),
+        .target = config.target,
+        .optimize = optimize,
+    });
+    memory_manager.addImport("abi", abi);
 
     const root_task = b.addExecutable(.{
         .name = "root_process.elf",
@@ -73,6 +79,7 @@ fn addRootTask(
     });
 
     root_task.root_module.addImport("abi", abi);
+    root_task.root_module.addImport("memory_manager", memory_manager);
     root_task.setLinkerScript(b.path(config.linker_script));
 
     const install_root_task = b.addInstallArtifact(root_task, .{
@@ -96,6 +103,21 @@ fn addTests(
         }),
     });
     tests.root_module.addImport("abi", abi);
+    const memory_manager = b.createModule(.{
+        .root_source_file = b.path("src/memory_manager.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    });
+    memory_manager.addImport("abi", abi);
+    tests.root_module.addImport("memory_manager", memory_manager);
+    const startup = b.createModule(.{
+        .root_source_file = b.path("src/startup.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    });
+    startup.addImport("abi", abi);
+    startup.addImport("memory_manager", memory_manager);
+    tests.root_module.addImport("startup", startup);
 
     const run_tests = b.addRunArtifact(tests);
     run_tests.has_side_effects = true;

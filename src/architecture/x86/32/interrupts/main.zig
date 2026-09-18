@@ -1,4 +1,5 @@
 const arch = @import("arch");
+const root = @import("root");
 const kernel_common = @import("kernel_common");
 const abi = @import("abi");
 
@@ -27,6 +28,14 @@ pub fn acknowledgeInterrupt(vector: usize) void {
 
 pub fn interruptHandler(vector: usize, stack_pointer: usize) callconv(.c) void {
     const trap_frame: *TrapFrame = @ptrFromInt(stack_pointer);
+    if (comptime @hasDecl(root, "architectureTestObserveException")) {
+        if (root.architectureTestObserveException(
+            vector,
+            trap_frame.error_code,
+            trap_frame.instruction_pointer,
+            readCr2(),
+        )) return;
+    }
     const diagnostic = diagnostic_state.recordInterrupt(vector);
     if (diagnostic.print) {
         arch.platform.writer().print("Interrupt 0x{x}: ", .{vector}) catch {};
@@ -189,18 +198,21 @@ fn rightsFromMapFlags(permission_flags: u32) abi.capability.Rights {
 }
 
 fn readPageFaultInfo(trap_frame: *const TrapFrame) arch.FaultInfo {
-    const virtual_address = asm volatile ("mov %%cr2, %[out]"
-        : [out] "=r" (-> u32),
-    );
     const error_code: usize = @intCast(trap_frame.error_code);
 
     return .{
-        .address = virtual_address,
+        .address = readCr2(),
         .present = (error_code & 0x1) != 0,
         .write = (error_code & 0x2) != 0,
         .user = (error_code & 0x4) != 0,
         .instruction_fetch = (error_code & 0x10) != 0,
     };
+}
+
+fn readCr2() usize {
+    return asm volatile ("mov %%cr2, %[out]"
+        : [out] "=r" (-> u32),
+    );
 }
 
 const TrapFrame = extern struct {

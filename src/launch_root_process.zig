@@ -8,16 +8,16 @@ const vmm = kernel_common.memory_management.virtual_memory;
 const elf_loader = shared.executable.elf;
 
 const ROOT_PROCESS_BOOT_MODULE_INDEX = 0;
-const MAX_BOOT_INFO_MODULES = 16;
+pub const MAX_BOOT_INFO_MODULES = 16;
 
-const RootProcessLayout = struct {
-    const boot_info_start: u64 = 0x0010_0000;
-    const boot_info_size: u64 = 0x1000;
-    const boot_info_end: u64 = boot_info_start + boot_info_size;
+pub const RootProcessLayout = struct {
+    pub const boot_info_start: u64 = 0x0010_0000;
+    pub const boot_info_size: u64 = 0x1000;
+    pub const boot_info_end: u64 = boot_info_start + boot_info_size;
 
-    const initial_stack_committed_size: u64 = 0x1000;
-    const initial_stack_top: u64 = 0x00C0_0000;
-    const initial_stack_start: u64 = initial_stack_top - initial_stack_committed_size;
+    pub const initial_stack_committed_size: u64 = 0x1000;
+    pub const initial_stack_top: u64 = 0x00C0_0000;
+    pub const initial_stack_start: u64 = initial_stack_top - initial_stack_committed_size;
 };
 
 const RootProcessLaunchError = error{
@@ -294,6 +294,13 @@ fn getRootProcessModule() RootProcessLaunchError!arch.BootModule {
 
 fn validateBootModuleRange(boot_module: arch.BootModule) RootProcessLaunchError!void {
     if (boot_module.physical_start >= boot_module.physical_end) {
+        return RootProcessLaunchError.InvalidBootModuleRange;
+    }
+
+    const direct_map_size = arch.mmu.getDirectMapMaxSize();
+    if (boot_module.physical_start >= direct_map_size or
+        boot_module.physical_end > direct_map_size)
+    {
         return RootProcessLaunchError.InvalidBootModuleRange;
     }
 

@@ -13,6 +13,8 @@ pub const Options = struct {
     entry_point_source: []const u8,
     optimization: std.builtin.OptimizeMode,
     instrumentation: Instrumentation = .none,
+    execution_mode: []const u8 = "shared_machine",
+    selected_test_id: []const u8 = "",
 };
 
 pub fn addKernel(
@@ -39,6 +41,10 @@ pub fn addKernel(
         .use_lld = true,
     });
     modules.addCommonImports(root_module, common_modules);
+    const architecture_test_options = build.addOptions();
+    architecture_test_options.addOption([]const u8, "execution_mode", options.execution_mode);
+    architecture_test_options.addOption([]const u8, "selected_test_id", options.selected_test_id);
+    root_module.addOptions("architecture_test_options", architecture_test_options);
 
     if (options.instrumentation == .sanitizer_guards) {
         const coverage_runtime = build.createModule(.{

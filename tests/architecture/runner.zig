@@ -7,7 +7,12 @@ const std = @import("std");
 
 pub fn run() framework.Summary {
     transport.initialize();
-    return framework.runAll(transport.writer(), registry.architecture_name, &registry.tests);
+    return framework.runAll(
+        transport.writer(),
+        registry.architecture_name,
+        registry.execution_mode,
+        &registry.tests,
+    );
 }
 
 pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, return_address: ?usize) noreturn {

@@ -12,4 +12,6 @@ test {
     _ = @import("mock_architecture_tests.zig");
     _ = @import("early_allocator_tests.zig");
     _ = @import("interrupt_diagnostics_tests.zig");
+    _ = @import("root_process_tests.zig");
+    _ = @import("kernel_initialization_tests.zig");
 }

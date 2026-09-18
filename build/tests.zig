@@ -41,6 +41,7 @@ pub fn addCoverageStep(b: *std.Build) void {
     common_modules.arch.fuzz = true;
     common_modules.kernel_common.fuzz = true;
     modules.addCommonImports(tests.root_module, common_modules);
+    addKernelTestImports(b, tests.root_module, common_modules, .Debug);
     tests.root_module.addImport("coverage_report", coverage_report);
     const architecture_points_file = b.createModule(.{
         .root_source_file = b.path("tools/architecture_coverage/points_file.zig"),
@@ -74,6 +75,7 @@ fn addKernelTests(
     });
 
     modules.addCommonImports(tests.root_module, common_modules);
+    addKernelTestImports(b, tests.root_module, common_modules, optimize);
     const coverage_report = b.createModule(.{
         .root_source_file = b.path("tools/coverage/report.zig"),
         .target = b.graph.host,
@@ -93,6 +95,35 @@ fn addKernelTests(
     run_tests.has_side_effects = true;
 
     tests_step.dependOn(&run_tests.step);
+}
+
+fn addKernelTestImports(
+    b: *std.Build,
+    root_module: *std.Build.Module,
+    common_modules: modules.CommonModules,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    const launch_root_process = b.createModule(.{
+        .root_source_file = b.path("src/launch_root_process.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    });
+    modules.addCommonImports(launch_root_process, common_modules);
+    root_module.addImport("launch_root_process", launch_root_process);
+
+    const elf_fixture = b.createModule(.{
+        .root_source_file = b.path("components/os-abi-library/tests/elf_fixture.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    });
+    root_module.addImport("elf_fixture", elf_fixture);
+
+    const kernel_initialization = b.createModule(.{
+        .root_source_file = b.path("src/kernel_initialization.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    });
+    root_module.addImport("kernel_initialization", kernel_initialization);
 }
 
 fn addComponentTests(

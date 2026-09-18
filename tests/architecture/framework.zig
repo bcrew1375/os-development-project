@@ -1,7 +1,13 @@
 pub const TestFunction = *const fn () anyerror!void;
 
+pub const manifest = @import("manifest.zig");
+pub const ExecutionMode = manifest.ExecutionMode;
+pub const TestId = manifest.TestId;
+
 pub const TestCase = struct {
+    id: TestId,
     name: []const u8,
+    mode: ExecutionMode,
     function: TestFunction,
 };
 
@@ -26,27 +32,32 @@ pub fn expectEqual(expected: anytype, actual: @TypeOf(expected)) TestError!void 
 pub fn runAll(
     writer: anytype,
     architecture_name: []const u8,
+    execution_mode: ExecutionMode,
     test_cases: []const TestCase,
 ) Summary {
-    writer.print("QEMU-TEST protocol=1 arch={s} tests={d}\n", .{
+    writer.print("QEMU-TEST protocol=2 arch={s} mode={s} tests={d}\n", .{
         architecture_name,
+        @tagName(execution_mode),
         test_cases.len,
     }) catch {};
 
     var summary: Summary = .{};
     for (test_cases) |test_case| {
-        writer.print("QEMU-TEST RUN name=\"{s}\"\n", .{test_case.name}) catch {};
+        writer.print("QEMU-TEST RUN id={s} name=\"{s}\"\n", .{
+            @tagName(test_case.id),
+            test_case.name,
+        }) catch {};
         test_case.function() catch |err| {
             summary.failed += 1;
-            writer.print("QEMU-TEST FAIL name=\"{s}\" error={s}\n", .{
-                test_case.name,
+            writer.print("QEMU-TEST FAIL id={s} error={s}\n", .{
+                @tagName(test_case.id),
                 @errorName(err),
             }) catch {};
             continue;
         };
 
         summary.passed += 1;
-        writer.print("QEMU-TEST PASS name=\"{s}\"\n", .{test_case.name}) catch {};
+        writer.print("QEMU-TEST PASS id={s}\n", .{@tagName(test_case.id)}) catch {};
     }
 
     writer.print("QEMU-TEST SUMMARY passed={d} failed={d}\n", .{

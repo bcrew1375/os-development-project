@@ -1,26 +1,18 @@
 const arch = @import("arch");
 const framework = @import("../framework.zig");
 
-pub const tests = [_]framework.TestCase{
-    .{ .name = "page size is 4 KiB", .function = pageSizeIsFourKiB },
-    .{ .name = "page table region is page aligned", .function = pageTableRegionIsAligned },
-    .{ .name = "boot memory map contains available memory", .function = memoryMapContainsAvailableMemory },
-    .{ .name = "maximum available address covers available regions", .function = maximumAddressCoversAvailableRegions },
-    .{ .name = "kernel symbol has a physical mapping", .function = kernelSymbolHasPhysicalMapping },
-};
-
-fn pageSizeIsFourKiB() !void {
+pub fn pageSizeIsFourKiB() !void {
     try framework.expectEqual(@as(usize, 4096), arch.mmu.getPageSize());
 }
 
-fn pageTableRegionIsAligned() !void {
+pub fn pageTableRegionIsAligned() !void {
     const page_size = arch.mmu.getPageSize();
     const region_size = arch.mmu.getPageTableRegionSize();
     try framework.expect(region_size >= page_size);
     try framework.expect(region_size % page_size == 0);
 }
 
-fn memoryMapContainsAvailableMemory() !void {
+pub fn memoryMapContainsAvailableMemory() !void {
     const memory_map = arch.mmu.getMemoryMap();
     try framework.expect(memory_map.length > 0);
     try framework.expect(memory_map.length <= arch.MAX_MEMORY_MAP_ENTRIES);
@@ -31,7 +23,7 @@ fn memoryMapContainsAvailableMemory() !void {
     return framework.TestError.ExpectationFailed;
 }
 
-fn maximumAddressCoversAvailableRegions() !void {
+pub fn maximumAddressCoversAvailableRegions() !void {
     const maximum_address = arch.mmu.getMaxAvailableAddress();
     try framework.expect(maximum_address > 0);
 
@@ -42,7 +34,7 @@ fn maximumAddressCoversAvailableRegions() !void {
     }
 }
 
-fn kernelSymbolHasPhysicalMapping() !void {
+pub fn kernelSymbolHasPhysicalMapping() !void {
     const virtual_address = @intFromPtr(&kernelSymbolHasPhysicalMapping);
     const physical_address = arch.mmu.getPhysicalAddress(virtual_address) orelse
         return framework.TestError.ExpectationFailed;

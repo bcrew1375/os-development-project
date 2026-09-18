@@ -19,6 +19,7 @@ pub fn add(
         .entry_point_source = "tests/architecture/coverage_main.zig",
         .optimization = coverage_optimization,
         .instrumentation = .sanitizer_guards,
+        .execution_mode = "shared_machine",
     });
     const original_llvm_ir = compiler_output.getEmittedLlvmIr();
     return .{

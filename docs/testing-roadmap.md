@@ -442,7 +442,13 @@ fields, and an empty point list.
 **Objective:** Test root-process preparation and root-task policy natively while
 keeping non-returning hardware boundaries thin.
 
-### [ ] T3.1 Add configurable boot modules to the mock
+### [x] T3.1 Add configurable boot modules to the mock
+
+- Completed: 2026-09-18
+- Validation: `zig build tests`
+- Notes: Raw ranges remain configurable for invalid-input tests; byte-backed
+  modules use bounded mock physical storage. Reset clears descriptors and boot
+  finalization without deallocating the shared memory fixture.
 
 **File:** `src/architecture/mock/boot/main.zig`
 
@@ -454,7 +460,13 @@ without modifying production architecture interfaces.
 
 **Validation:** `zig build tests`
 
-### [ ] T3.2 Add deterministic direct-map backing
+### [x] T3.2 Add deterministic direct-map backing
+
+- Completed: 2026-09-18
+- Validation: `zig build tests`; `zig build coverage`
+- Notes: Mock-owned helpers provide bounded physical reads/writes, explicit-root
+  virtual reads across page boundaries, permission inspection, root isolation,
+  and deterministic physical-lookup failure injection.
 
 **Depends on:** T1.3.
 
@@ -472,7 +484,14 @@ user address space.
 
 **Validation:** `zig build tests`
 
-### [ ] T3.3 Add root-process preparation tests
+### [x] T3.3 Add root-process preparation tests
+
+- Completed: 2026-09-18
+- Validation: `zig build tests`; `zig build coverage`; both production builds.
+- Notes: Native tests cover ELF copying/BSS, permissions, boot information,
+  cdecl stack construction, invalid modules, and missing mappings. Production
+  boot-module validation now rejects ranges beyond the direct-map backing.
+  `enterPreparedRootProcess()` remains non-returning and is not invoked natively.
 
 **Depends on:** T3.1, T3.2, and T2.5.
 
@@ -502,7 +521,14 @@ and leave the non-returning transition to physical integration tests.
 
 **Validation:** `zig build tests`
 
-### [ ] T3.4 Inject a static userspace syscall transport
+### [x] T3.4 Inject a static userspace syscall transport
+
+- Completed: 2026-09-18
+- Validation: `cd components/os-root-task && zig build tests`; both root-task
+  architecture builds.
+- Notes: `MemoryManager(comptime Transport)` provides static dispatch with no
+  vtable or allocation. Tests cover syscall numbers, argument order, all mapping
+  permission combinations, valid/invalid capabilities, and result conversion.
 
 **Files:**
 
@@ -523,7 +549,14 @@ cd components/os-root-task
 zig build tests
 ```
 
-### [ ] T3.5 Extract root-task startup policy from `_start`
+### [x] T3.5 Extract root-task startup policy from `_start`
+
+- Completed: 2026-09-18
+- Validation: `cd components/os-root-task && zig build tests`; `zig build
+  -Darch=x86_32`; `zig build -Darch=x86_64`.
+- Notes: Returning startup policy uses a comptime environment for syscalls and
+  diagnostics. `_start` remains the thin non-returning exit boundary. Invalid
+  boot information and each intermediate failure stop subsequent operations.
 
 **Depends on:** T3.4.
 
@@ -548,7 +581,15 @@ zig build -Darch=x86_32
 zig build -Darch=x86_64
 ```
 
-### [ ] T3.6 Add kernel initialization orchestration tests
+### [x] T3.6 Add kernel initialization orchestration tests
+
+- Completed: 2026-09-18
+- Validation: `zig build tests`; both production builds; both QEMU architecture
+  test and architecture-coverage commands.
+- Notes: `kernel_initialization.initialize()` stages terminal setup, root-process
+  preparation, boot finalization, and interrupt initialization/enabling through
+  static services. `kernelMain()` retains unrecoverable failure handling and the
+  non-returning user-mode transition.
 
 **Related assessment:** P3.3 and P7.4 in `kernel_analysis.md`.
 
@@ -565,18 +606,28 @@ policy can be tested with observable mocks.
 
 ### Phase 3 exit gate
 
-- [ ] Root-process preparation has native tests.
-- [ ] Userspace memory wrappers have transport-level tests.
-- [ ] Root-task startup policy runs under component tests.
-- [ ] Kernel initialization order can be asserted with mocks.
-- [ ] Production non-returning boundaries retain their semantics.
+- [x] Root-process preparation has native tests.
+- [x] Userspace memory wrappers have transport-level tests.
+- [x] Root-task startup policy runs under component tests.
+- [x] Kernel initialization order can be asserted with mocks.
+- [x] Production non-returning boundaries retain their semantics.
 
 ## Phase 4 — Deepen physical architecture testing
 
 **Objective:** Safely test destructive and hardware-sensitive behavior under
 QEMU.
 
-### [ ] T4.1 Add physical test execution modes
+### [x] T4.1 Add physical test execution modes
+
+- Completed: 2026-09-18
+- Validation: `zig build tests`; both `architecture-tests` commands; both
+  `architecture-coverage-kernel` commands; both production builds.
+- Notes: Protocol version 2 identifies tests by stable IDs and records execution
+  mode. Descriptor-table and timer initialization smoke tests now run in
+  separate QEMU instances. Expected-fault kernels use a compile-time-selected,
+  test-only exception observer and structured vector, error-code, instruction-
+  pointer, CR2, and decoded page-fault metadata. Actual fault scenarios remain
+  T4.3. Architecture coverage includes only shared-machine tests.
 
 **Files:**
 
