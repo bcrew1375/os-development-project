@@ -20,3 +20,7 @@ pub fn reserve(address: usize, size: usize, entry_type: arch.ReservedMapRegionTy
 pub fn getReservedMap() *arch.ReservedMap {
     return &reservedMap;
 }
+
+pub fn resetForTest() void {
+    reservedMap = arch.ReservedMap{};
+}

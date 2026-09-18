@@ -57,7 +57,12 @@ pub fn initialize() !void {
     totalFrames = @truncate(try std.math.divFloor(u64, arch.mmu.getMaxAvailableAddress(), FRAME_SIZE));
 
     const frameMapPtr: *allowzero anyopaque = try arch.early_allocator.allocate(totalFrames * @sizeOf(FrameInfo), FRAME_SIZE, arch.ReservedMapRegionType.PERSISTENT);
-    frameMap = @as([*]allowzero FrameInfo, @ptrCast(@alignCast(frameMapPtr)))[0..totalFrames];
+    const frame_map_virtual_address =
+        @as(usize, @intCast(arch.mmu.getDirectMapVirtualAddress())) + @intFromPtr(frameMapPtr);
+    frameMap = @as(
+        [*]allowzero FrameInfo,
+        @ptrFromInt(frame_map_virtual_address),
+    )[0..totalFrames];
 
     for (memory_map.entries[0..memory_map.length]) |region| {
         const region_start_frame: usize = @truncate(try std.math.divCeil(u64, region.address, FRAME_SIZE));

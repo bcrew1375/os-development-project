@@ -17,6 +17,24 @@ test "Process: createAddressSpace returns tracked address space object" {
     try std.testing.expect(address_space.virtual_memory_areas.len > 0);
 }
 
+test "Process: owner-aware creation preserves object ownership" {
+    testSetup();
+    const owner: kernel.process.ProcessHandle = 42;
+    const address_space = try kernel.process.createAddressSpaceForOwner(owner);
+    const memory_object = try kernel.process.createMemoryObjectForOwner(owner, 0x1000);
+
+    try std.testing.expectEqual(owner, try kernel.process.getAddressSpaceOwner(address_space));
+    try std.testing.expectEqual(owner, try kernel.process.getMemoryObjectOwner(memory_object));
+    try std.testing.expectError(
+        error.InvalidAddressSpaceHandle,
+        kernel.process.getAddressSpaceOwner(abi.syscall.INVALID_HANDLE),
+    );
+    try std.testing.expectError(
+        error.InvalidMemoryObjectHandle,
+        kernel.process.getMemoryObjectOwner(abi.syscall.INVALID_HANDLE),
+    );
+}
+
 test "Process: invalid address space handle is rejected" {
     testSetup();
 
@@ -143,6 +161,69 @@ test "Process: mapMemoryObject converts execute-only permission flags" {
     try std.testing.expect(!mapped_area.permissions.writeable);
     try std.testing.expect(mapped_area.permissions.executable);
     try std.testing.expect(mapped_area.permissions.user_accessible);
+}
+
+test "Process: mapMemoryObject supports every nonempty permission combination" {
+    testSetup();
+    const address_space_handle = try kernel.process.createAddressSpace();
+    const memory_object_handle = try kernel.process.createMemoryObject(7 * 0x1000);
+
+    for (1..8) |flags| {
+        const index = flags - 1;
+        try kernel.process.mapMemoryObject(
+            address_space_handle,
+            memory_object_handle,
+            0x0500_0000 + index * 0x1000,
+            index * 0x1000,
+            0x1000,
+            @intCast(flags),
+        );
+    }
+
+    const address_space = try kernel.process.getAddressSpace(address_space_handle);
+    try std.testing.expectEqual(@as(usize, 7), address_space.length);
+    for (address_space.virtual_memory_areas[0..address_space.length], 1..) |area, flags| {
+        try std.testing.expectEqual((flags & abi.syscall.MAP_READ) != 0, area.permissions.readable);
+        try std.testing.expectEqual((flags & abi.syscall.MAP_WRITE) != 0, area.permissions.writeable);
+        try std.testing.expectEqual((flags & abi.syscall.MAP_EXECUTE) != 0, area.permissions.executable);
+    }
+}
+
+test "Process: mapMemoryObject propagates overlap and object range overflow" {
+    testSetup();
+    const address_space_handle = try kernel.process.createAddressSpace();
+    const memory_object_handle = try kernel.process.createMemoryObject(std.math.maxInt(u64) & ~@as(u64, 0xfff));
+
+    try kernel.process.mapMemoryObject(
+        address_space_handle,
+        memory_object_handle,
+        0x0600_0000,
+        0,
+        0x1000,
+        abi.syscall.MAP_READ,
+    );
+    try std.testing.expectError(
+        error.OverlappingVirtualMemoryArea,
+        kernel.process.mapMemoryObject(
+            address_space_handle,
+            memory_object_handle,
+            0x0600_0000,
+            0x1000,
+            0x1000,
+            abi.syscall.MAP_READ,
+        ),
+    );
+    try std.testing.expectError(
+        error.ObjectRangeOverflow,
+        kernel.process.mapMemoryObject(
+            address_space_handle,
+            memory_object_handle,
+            0x0700_0000,
+            std.math.maxInt(u64) - 0xfff,
+            0x2000,
+            abi.syscall.MAP_READ,
+        ),
+    );
 }
 
 test "Process: mapMemoryObject rejects invalid handles and ranges" {

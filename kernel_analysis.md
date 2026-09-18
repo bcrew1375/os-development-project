@@ -661,6 +661,12 @@ without the interrupt handler invoking driver policy.
 
 ### Priority 5: verification and test fidelity
 
+The phased implementation checklist for this priority and related testing work
+is maintained in [`docs/testing-roadmap.md`](docs/testing-roadmap.md). This
+assessment remains the source for architectural motivation and priority; the
+roadmap records execution status, dependencies, acceptance criteria, and
+validation commands.
+
 #### P5.1 Stabilize mock memory lifecycle
 
 **Problem:** Mock `getMemoryMap()` allocates a new 64 MiB host region on each

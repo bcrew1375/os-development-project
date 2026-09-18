@@ -83,6 +83,14 @@ pub fn getAddressSpace(handle: AddressSpaceHandle) ProcessError!*vmm.AddressSpac
     return &slot.address_space;
 }
 
+/// Returns the process that owns the address space referenced by `handle`.
+pub fn getAddressSpaceOwner(handle: AddressSpaceHandle) ProcessError!ProcessHandle {
+    const slot = findAddressSpaceSlot(handle) orelse {
+        return ProcessError.InvalidAddressSpaceHandle;
+    };
+    return slot.owner_process_handle;
+}
+
 /// Creates a page-aligned memory object owned by the root process.
 pub fn createMemoryObject(size_in_bytes: u64) ProcessError!MemoryObjectHandle {
     return createMemoryObjectForOwner(ROOT_PROCESS_HANDLE, size_in_bytes);
@@ -112,6 +120,14 @@ pub fn createMemoryObjectForOwner(owner_process_handle: ProcessHandle, size_in_b
     };
 
     return handle;
+}
+
+/// Returns the process that owns the memory object referenced by `handle`.
+pub fn getMemoryObjectOwner(handle: MemoryObjectHandle) ProcessError!ProcessHandle {
+    const slot = findMemoryObjectSlot(handle) orelse {
+        return ProcessError.InvalidMemoryObjectHandle;
+    };
+    return slot.owner_process_handle;
 }
 
 /// Maps a range of a memory object into an address space.

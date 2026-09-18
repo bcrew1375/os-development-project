@@ -18,6 +18,25 @@ pub const BuildConfig = struct {
     kernel_code_model: std.builtin.CodeModel,
 };
 
+pub fn targetTriple(architecture: Architecture) []const u8 {
+    return switch (architecture) {
+        .x86_32 => "x86-freestanding-none",
+        .x86_64 => "x86_64-freestanding-none",
+    };
+}
+
+pub fn cpuFeatures(_: Architecture) []const u8 {
+    return "baseline-avx-avx2-mmx+soft_float-sse-sse2";
+}
+
+pub fn codeModelArgument(code_model: std.builtin.CodeModel) ?[]const u8 {
+    return switch (code_model) {
+        .kernel => "-mcmodel=kernel",
+        .default => null,
+        else => std.debug.panic("unsupported kernel code model: {s}", .{@tagName(code_model)}),
+    };
+}
+
 pub const RootTaskArtifact = struct {
     path: std.Build.LazyPath,
     install_name: []const u8,

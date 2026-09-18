@@ -63,6 +63,9 @@ const ProgramHeader = struct {
 
 /// Validates `image` and returns aggregate load information for all loadable segments.
 pub fn parseLoadableImage(image: []const u8, page_size: u64) ElfLoadError!LoadableImage {
+    if (page_size == 0 or !std.math.isPowerOfTwo(page_size)) {
+        return ElfLoadError.InvalidLoadSegment;
+    }
     const elf_header = try readElfHeader(image);
     try validateElfHeader(elf_header);
 
@@ -82,7 +85,12 @@ pub fn parseLoadableImage(image: []const u8, page_size: u64) ElfLoadError!Loadab
         const virtual_end = std.math.add(u64, virtual_start, program_header.p_memsz) catch return ElfLoadError.InvalidLoadSegment;
 
         image_start = @min(image_start, std.mem.alignBackward(u64, virtual_start, page_size));
-        image_end = @max(image_end, std.mem.alignForward(u64, virtual_end, page_size));
+        const aligned_virtual_end = std.math.add(
+            u64,
+            virtual_end,
+            page_size - 1,
+        ) catch return ElfLoadError.InvalidLoadSegment;
+        image_end = @max(image_end, aligned_virtual_end & ~(page_size - 1));
         loadable_segment_count += 1;
     }
 
@@ -176,7 +184,10 @@ fn readElf64Header(image: []const u8) ElfLoadError!ElfHeader {
 fn readProgramHeader(image: []const u8, elf_header: ElfHeader, program_header_index: usize) ElfLoadError!ProgramHeader {
     if (program_header_index >= elf_header.program_header_count) return ElfLoadError.InvalidProgramHeaderTable;
 
-    const program_header_offset: usize = @intCast(elf_header.program_header_offset);
+    const program_header_offset = std.math.cast(
+        usize,
+        elf_header.program_header_offset,
+    ) orelse return ElfLoadError.InvalidProgramHeaderTable;
     const program_header_entry_size: usize = @intCast(elf_header.program_header_entry_size);
     const program_header_table_size = std.math.mul(usize, @as(usize, elf_header.program_header_count), program_header_entry_size) catch return ElfLoadError.InvalidProgramHeaderTable;
     const program_header_table_end = std.math.add(usize, program_header_offset, program_header_table_size) catch return ElfLoadError.InvalidProgramHeaderTable;
@@ -216,8 +227,14 @@ fn validateLoadableProgramHeader(image: []const u8, program_header: ProgramHeade
     if (program_header.p_memsz == 0) return ElfLoadError.EmptyLoadSegment;
     if (program_header.p_filesz > program_header.p_memsz) return ElfLoadError.InvalidLoadSegment;
 
-    const file_offset: usize = @intCast(program_header.p_offset);
-    const file_size: usize = @intCast(program_header.p_filesz);
+    const file_offset = std.math.cast(
+        usize,
+        program_header.p_offset,
+    ) orelse return ElfLoadError.InvalidLoadSegment;
+    const file_size = std.math.cast(
+        usize,
+        program_header.p_filesz,
+    ) orelse return ElfLoadError.InvalidLoadSegment;
     const file_end = std.math.add(usize, file_offset, file_size) catch return ElfLoadError.InvalidLoadSegment;
     if (file_end > image.len) return ElfLoadError.InvalidLoadSegment;
 }
@@ -226,8 +243,8 @@ fn loadableSegmentFromProgramHeader(program_header: ProgramHeader) LoadableSegme
     return .{
         .virtual_address = program_header.p_vaddr,
         .memory_size = program_header.p_memsz,
-        .file_offset = @intCast(program_header.p_offset),
-        .file_size = @intCast(program_header.p_filesz),
+        .file_offset = std.math.cast(usize, program_header.p_offset).?,
+        .file_size = std.math.cast(usize, program_header.p_filesz).?,
         .permissions = .{
             .readable = (program_header.p_flags & ELF_PROGRAM_HEADER_READABLE) != 0,
             .writeable = (program_header.p_flags & ELF_PROGRAM_HEADER_WRITABLE) != 0,

@@ -5,6 +5,7 @@ const abi = @import("abi");
 const diagnostics = @import("../../common/interrupts/diagnostics.zig");
 const vectors = @import("../../common/interrupts/vectors.zig");
 const keyboard = @import("../../common/platform/io/keyboard.zig");
+var diagnostic_state: diagnostics.State = .{};
 
 pub const idt = @import("interrupt_descriptor_table.zig");
 pub const pic = @import("../../common/interrupts/pic.zig");
@@ -27,7 +28,7 @@ pub fn acknowledgeInterrupt(vector: usize) void {
 
 pub fn interruptHandler(vector: u8, stack_pointer: usize) callconv(.c) void {
     const trap_frame: *TrapFrame = @ptrFromInt(stack_pointer);
-    const diagnostic = diagnostics.recordInterrupt(vector);
+    const diagnostic = diagnostic_state.recordInterrupt(vector);
     if (diagnostic.print) {
         arch.platform.writer().print("Interrupt 0x{x}: ", .{vector}) catch {};
     }

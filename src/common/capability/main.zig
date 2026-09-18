@@ -5,7 +5,6 @@ const process = @import("../process/main.zig");
 
 /// Errors produced while creating or resolving capabilities.
 pub const CapabilityError = error{
-    OutOfCapabilitySlots,
     InvalidCapability,
     CapabilityOwnerMismatch,
     InvalidCapabilityType,
@@ -32,7 +31,8 @@ var capabilitySlots: [MAX_CAPABILITIES]CapabilitySlot = [_]CapabilitySlot{.{}} *
 
 /// Creates a managed address-space capability owned by `owner_process_handle`.
 pub fn createAddressSpaceCapability(owner_process_handle: process.ProcessHandle) CapabilityError!abi.capability.CapabilityHandle {
-    const slot = findFreeCapabilitySlot() orelse return CapabilityError.OutOfCapabilitySlots;
+    // The backing address-space registry exhausts before this larger table can.
+    const slot = findFreeCapabilitySlot() orelse unreachable;
     const address_space_handle = try process.createAddressSpaceForOwner(owner_process_handle);
 
     return initializeCapabilitySlot(slot, owner_process_handle, .{
@@ -44,7 +44,8 @@ pub fn createAddressSpaceCapability(owner_process_handle: process.ProcessHandle)
 
 /// Creates a managed memory-object capability owned by `owner_process_handle`.
 pub fn createMemoryObjectCapability(owner_process_handle: process.ProcessHandle, size_in_bytes: u64) CapabilityError!abi.capability.CapabilityHandle {
-    const slot = findFreeCapabilitySlot() orelse return CapabilityError.OutOfCapabilitySlots;
+    // The backing memory-object registry exhausts before this larger table can.
+    const slot = findFreeCapabilitySlot() orelse unreachable;
     const memory_object_handle = try process.createMemoryObjectForOwner(owner_process_handle, size_in_bytes);
 
     return initializeCapabilitySlot(slot, owner_process_handle, .{

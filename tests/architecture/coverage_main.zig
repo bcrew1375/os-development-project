@@ -11,6 +11,9 @@ comptime {
 
 pub export fn kernelMain() void {
     const summary = runner.run();
-    runtime.writeFrame(transport.coverageWriter());
+    runtime.writeFrame(transport.coverageWriter()) catch |err| {
+        transport.writer().print("QEMU-TEST COVERAGE-FAIL error={s}\n", .{@errorName(err)}) catch {};
+        transport.exit(.failure);
+    };
     transport.exit(if (summary.failed == 0) .success else .failure);
 }

@@ -98,3 +98,15 @@ test "Capability: missing rights are rejected" {
         kernel.capability.resolveAddressSpace(kernel.process.ROOT_PROCESS_HANDLE, capability, .{ .execute = true }),
     );
 }
+
+test "Capability: creation propagates underlying registry exhaustion" {
+    testSetup();
+
+    for (0..16) |_| {
+        _ = try kernel.capability.createAddressSpaceCapability(kernel.process.ROOT_PROCESS_HANDLE);
+    }
+    try std.testing.expectError(
+        error.OutOfAddressSpaces,
+        kernel.capability.createAddressSpaceCapability(kernel.process.ROOT_PROCESS_HANDLE),
+    );
+}

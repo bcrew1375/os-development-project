@@ -2,16 +2,13 @@ const std = @import("std");
 const arch = @import("arch");
 const kernel = @import("kernel_common");
 
-fn testSetup() void {
-    arch.earlyAllocatorActive = true;
-    arch.mmu.resetForTest();
-    arch.early_allocator.initialize() catch {
-        std.debug.print("Test initialization failed.", .{});
-    };
+fn testSetup() !void {
+    try arch.impl.test_support.initializeDefaultMemoryFixture();
+    try arch.early_allocator.initialize();
 }
 
 test "Virtual Memory Manager: Map Region Adds Virtual Memory Area" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     var vmaBacking: [2]kernel.vmm.VirtualMemoryArea = undefined;
@@ -35,7 +32,7 @@ test "Virtual Memory Manager: Map Region Adds Virtual Memory Area" {
 }
 
 test "Virtual Memory Manager: Overlapping Region Returns Error" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     var vmaBacking: [2]kernel.vmm.VirtualMemoryArea = undefined;
@@ -58,7 +55,7 @@ test "Virtual Memory Manager: Overlapping Region Returns Error" {
 }
 
 test "Virtual Memory Manager: Undefined Address Space Returns Error" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     var vmaBacking: [0]kernel.vmm.VirtualMemoryArea = undefined;
@@ -80,7 +77,7 @@ test "Virtual Memory Manager: Undefined Address Space Returns Error" {
 }
 
 test "Virtual Memory Manager: Full Address Space Returns Error" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     var vmaBacking: [1]kernel.vmm.VirtualMemoryArea = undefined;
@@ -103,7 +100,7 @@ test "Virtual Memory Manager: Full Address Space Returns Error" {
 }
 
 test "Virtual Memory Manager: Invalid Range Returns Error" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     var vmaBacking: [1]kernel.vmm.VirtualMemoryArea = undefined;
@@ -128,7 +125,7 @@ test "Virtual Memory Manager: Invalid Range Returns Error" {
 }
 
 test "Virtual Memory Manager: Unaligned Range Returns Error" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     var vmaBacking: [1]kernel.vmm.VirtualMemoryArea = undefined;
@@ -153,7 +150,7 @@ test "Virtual Memory Manager: Unaligned Range Returns Error" {
 }
 
 test "Virtual Memory Manager: Unmap Removes Virtual Memory Area" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     var vmaBacking: [2]kernel.vmm.VirtualMemoryArea = undefined;
@@ -180,7 +177,7 @@ test "Virtual Memory Manager: Unmap Removes Virtual Memory Area" {
 }
 
 test "Virtual Memory Manager: Unmap Non-Existent Region Does Nothing" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     var vmaBacking: [2]kernel.vmm.VirtualMemoryArea = undefined;
@@ -203,10 +200,12 @@ test "Virtual Memory Manager: Unmap Non-Existent Region Does Nothing" {
 }
 
 test "VMM mapEager: uses early allocator before PMM initialization" {
-    testSetup();
+    try testSetup();
 
     const memoryMap = arch.mmu.getMemoryMap();
-    const regionBase = memoryMap.entries[0].address;
+    const regionBase = arch.mmu.getHostVirtualAddressForTest(
+        @intCast(memoryMap.entries[0].address),
+    );
     const pageSize: u64 = arch.mmu.getPageSize();
     const vmaStart = regionBase + 0x100000;
     const vmaEnd = vmaStart + pageSize * 2;
@@ -238,28 +237,218 @@ test "VMM mapEager: uses early allocator before PMM initialization" {
     try std.testing.expectEqual(@as(u8, 0), secondPage[0]);
 }
 
+test "VMM explicit-root eager mapping is isolated and preserves protection" {
+    try testSetup();
+    const root = try arch.mmu.createAddressSpaceRoot();
+    const other_root = try arch.mmu.createAddressSpaceRoot();
+    const page_size: u64 = arch.mmu.getPageSize();
+    const start: u64 = 0x2000_0000;
+
+    var backing: [1]kernel.vmm.VirtualMemoryArea = undefined;
+    var address_space = kernel.vmm.AddressSpace{ .virtual_memory_areas = &backing };
+    const permissions = kernel.vmm.MemoryPermissions{
+        .readable = true,
+        .writeable = false,
+        .executable = true,
+        .user_accessible = true,
+    };
+    try kernel.vmm.mapEagerInAddressSpace(
+        root,
+        &address_space,
+        start,
+        start + 2 * page_size,
+        permissions,
+    );
+
+    const first = arch.mmu.getMappedPageInAddressSpaceForTest(root, @intCast(start)).?;
+    try std.testing.expect(!first.protection.write);
+    try std.testing.expect(first.protection.user);
+    try std.testing.expect(first.protection.execute);
+    try std.testing.expectEqual(
+        @as(?usize, null),
+        arch.mmu.getPhysicalAddressInAddressSpace(other_root, @intCast(start)),
+    );
+}
+
+test "VMM bootstrap contiguous mapping uses sequential physical pages" {
+    try testSetup();
+    const root = try arch.mmu.createAddressSpaceRoot();
+    const page_size: u64 = arch.mmu.getPageSize();
+    const start: u64 = 0x2400_0000;
+    var backing: [1]kernel.vmm.VirtualMemoryArea = undefined;
+    var address_space = kernel.vmm.AddressSpace{ .virtual_memory_areas = &backing };
+
+    try kernel.vmm.mapBootstrapContiguousInAddressSpace(
+        root,
+        &address_space,
+        start,
+        start + 2 * page_size,
+        .{ .readable = true, .writeable = true, .executable = false, .user_accessible = false },
+    );
+
+    const first = arch.mmu.getMappedPageInAddressSpaceForTest(root, @intCast(start)).?;
+    const second = arch.mmu.getMappedPageInAddressSpaceForTest(root, @intCast(start + page_size)).?;
+    try std.testing.expectEqual(first.physical_page + @as(usize, @intCast(page_size)), second.physical_page);
+}
+
+test "VMM protect updates mapped pages and rejects missing ranges" {
+    try testSetup();
+    const root = try arch.mmu.createAddressSpaceRoot();
+    const page_size: u64 = arch.mmu.getPageSize();
+    const start: u64 = 0x2800_0000;
+    var backing: [1]kernel.vmm.VirtualMemoryArea = undefined;
+    var address_space = kernel.vmm.AddressSpace{ .virtual_memory_areas = &backing };
+    const initial = kernel.vmm.MemoryPermissions{
+        .readable = true,
+        .writeable = true,
+        .executable = false,
+        .user_accessible = false,
+    };
+    try kernel.vmm.mapEagerInAddressSpace(root, &address_space, start, start + page_size, initial);
+
+    const updated = kernel.vmm.MemoryPermissions{
+        .readable = true,
+        .writeable = false,
+        .executable = true,
+        .user_accessible = true,
+    };
+    try kernel.vmm.protectInAddressSpace(root, &address_space, start, start + page_size, updated);
+    const mapping = arch.mmu.getMappedPageInAddressSpaceForTest(root, @intCast(start)).?;
+    try std.testing.expect(!mapping.protection.write);
+    try std.testing.expect(mapping.protection.user);
+    try std.testing.expect(mapping.protection.execute);
+    try std.testing.expectEqual(updated, address_space.virtual_memory_areas[0].permissions);
+    try std.testing.expectError(
+        error.UndefinedVirtualMemoryArea,
+        kernel.vmm.protectInAddressSpace(root, &address_space, start + page_size, start + 2 * page_size, updated),
+    );
+}
+
+test "VMM current-root protect delegates to the active address space root" {
+    try testSetup();
+    const root = try arch.mmu.createAddressSpaceRoot();
+    const page_size: u64 = arch.mmu.getPageSize();
+    const start: u64 = 0x2a00_0000;
+    var backing: [1]kernel.vmm.VirtualMemoryArea = undefined;
+    var address_space = kernel.vmm.AddressSpace{ .virtual_memory_areas = &backing };
+    try kernel.vmm.mapEagerInAddressSpace(
+        root,
+        &address_space,
+        start,
+        start + page_size,
+        .{ .readable = true, .writeable = true, .executable = false, .user_accessible = false },
+    );
+    arch.mmu.switchAddressSpaceRoot(root);
+
+    try kernel.vmm.protect(
+        &address_space,
+        start,
+        start + page_size,
+        .{ .readable = true, .writeable = false, .executable = true, .user_accessible = false },
+    );
+    const mapping = arch.mmu.getMappedPageInAddressSpaceForTest(root, @intCast(start)).?;
+    try std.testing.expect(!mapping.protection.write);
+    try std.testing.expect(mapping.protection.execute);
+}
+
+test "VMM table mapping failure preserves VMA without mapped pages" {
+    try testSetup();
+    const root = try arch.mmu.createAddressSpaceRoot();
+    const page_size: u64 = arch.mmu.getPageSize();
+    const start: u64 = 0x2b00_0000;
+    var backing: [1]kernel.vmm.VirtualMemoryArea = undefined;
+    var address_space = kernel.vmm.AddressSpace{ .virtual_memory_areas = &backing };
+    arch.mmu.failTableMappingCallForTest(1);
+
+    try std.testing.expectError(
+        error.MappingFailed,
+        kernel.vmm.mapEagerInAddressSpace(
+            root,
+            &address_space,
+            start,
+            start + page_size,
+            .{ .readable = true, .writeable = true, .executable = false, .user_accessible = false },
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 1), address_space.length);
+    try std.testing.expect(!arch.mmu.isTablePresentInAddressSpace(root, @intCast(start)));
+    try std.testing.expect(arch.mmu.getMappedPageInAddressSpaceForTest(root, @intCast(start)) == null);
+}
+
+test "VMM eager mapping failure preserves VMA and completed pages without rollback" {
+    try testSetup();
+    const root = try arch.mmu.createAddressSpaceRoot();
+    const page_size: u64 = arch.mmu.getPageSize();
+    const start: u64 = 0x2c00_0000;
+    var backing: [1]kernel.vmm.VirtualMemoryArea = undefined;
+    var address_space = kernel.vmm.AddressSpace{ .virtual_memory_areas = &backing };
+    arch.mmu.failPageMappingCallForTest(2);
+
+    try std.testing.expectError(
+        error.MappingFailed,
+        kernel.vmm.mapEagerInAddressSpace(
+            root,
+            &address_space,
+            start,
+            start + 2 * page_size,
+            .{ .readable = true, .writeable = true, .executable = false, .user_accessible = false },
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 1), address_space.length);
+    try std.testing.expect(arch.mmu.getMappedPageInAddressSpaceForTest(root, @intCast(start)) != null);
+    try std.testing.expect(arch.mmu.getMappedPageInAddressSpaceForTest(root, @intCast(start + page_size)) == null);
+}
+
+test "VMM protection failure leaves partial page updates and old VMA permissions" {
+    try testSetup();
+    const root = try arch.mmu.createAddressSpaceRoot();
+    const page_size: u64 = arch.mmu.getPageSize();
+    const start: u64 = 0x3000_0000;
+    var backing: [1]kernel.vmm.VirtualMemoryArea = undefined;
+    var address_space = kernel.vmm.AddressSpace{ .virtual_memory_areas = &backing };
+    const initial = kernel.vmm.MemoryPermissions{
+        .readable = true,
+        .writeable = true,
+        .executable = false,
+        .user_accessible = false,
+    };
+    try kernel.vmm.mapEagerInAddressSpace(root, &address_space, start, start + 2 * page_size, initial);
+
+    const updated = kernel.vmm.MemoryPermissions{
+        .readable = true,
+        .writeable = false,
+        .executable = true,
+        .user_accessible = true,
+    };
+    arch.mmu.failPageMappingCallForTest(2);
+    try std.testing.expectError(
+        error.MappingFailed,
+        kernel.vmm.protectInAddressSpace(root, &address_space, start, start + 2 * page_size, updated),
+    );
+
+    const first = arch.mmu.getMappedPageInAddressSpaceForTest(root, @intCast(start)).?;
+    const second = arch.mmu.getMappedPageInAddressSpaceForTest(root, @intCast(start + page_size)).?;
+    try std.testing.expect(!first.protection.write);
+    try std.testing.expect(second.protection.write);
+    try std.testing.expectEqual(initial, address_space.virtual_memory_areas[0].permissions);
+}
+
 // --- VMM fault resolution tests ---
 //
-// The mock MMU allocates a 64 MB heap region and reports it as available
-// memory.  The PMM tracks frames within that region.  resolveFault()
-// lazily allocates page tables and data pages from the PMM, then zeroes
-// the faulting page.
-//
-// Each call to arch.mmu.getMemoryMap() allocates a fresh 64 MB region.
-// The PMM's initialize() calls it once to set up frame tracking.  We
-// call it again in these tests to obtain a writable address for the VMA;
-// the PMM allocates physical frames from its own (different) region,
-// which is fine because the mock's mapTable/mapPage are tracking-only
-// and the @memset in resolveFault() writes to the VMA's host-allocated
-// memory.
+// The mock MMU owns one stable 64 MiB physical-memory fixture. The memory
+// map exposes physical offsets, while getHostVirtualAddressForTest() provides
+// writable host virtual addresses for VMAs that the tests intentionally
+// dereference. PMM allocations are accessed through the mock direct map.
 
 test "VMM resolveFault: maps page within VMA" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     // Obtain a writable address inside a mock heap region for the VMA.
     const memoryMap = arch.mmu.getMemoryMap();
-    const regionBase = memoryMap.entries[0].address;
+    const regionBase = arch.mmu.getHostVirtualAddressForTest(
+        @intCast(memoryMap.entries[0].address),
+    );
     const pageSize: u64 = arch.mmu.getPageSize();
     const vmaStart = regionBase + 0x100000;
     const vmaEnd = vmaStart + pageSize * 4; // 4 pages
@@ -309,11 +498,13 @@ test "VMM resolveFault: maps page within VMA" {
 }
 
 test "VMM resolveFault: zeroes mapped page" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     const memoryMap = arch.mmu.getMemoryMap();
-    const regionBase = memoryMap.entries[0].address;
+    const regionBase = arch.mmu.getHostVirtualAddressForTest(
+        @intCast(memoryMap.entries[0].address),
+    );
     const pageSize: u64 = arch.mmu.getPageSize();
     const vmaStart = regionBase + 0x200000;
     const vmaEnd = vmaStart + pageSize * 4;
@@ -359,11 +550,13 @@ test "VMM resolveFault: zeroes mapped page" {
 }
 
 test "VMM resolveFault: second fault in same table region skips table allocation" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     const memoryMap = arch.mmu.getMemoryMap();
-    const regionBase = memoryMap.entries[0].address;
+    const regionBase = arch.mmu.getHostVirtualAddressForTest(
+        @intCast(memoryMap.entries[0].address),
+    );
     const pageSize: u64 = arch.mmu.getPageSize();
     const vmaStart = regionBase + 0x300000;
     const vmaEnd = vmaStart + pageSize * 512; // 2 MB — spans many pages in one table region
@@ -412,11 +605,13 @@ test "VMM resolveFault: second fault in same table region skips table allocation
 }
 
 test "VMM resolveFault: permissions propagate to page protection" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     const memoryMap = arch.mmu.getMemoryMap();
-    const regionBase = memoryMap.entries[0].address;
+    const regionBase = arch.mmu.getHostVirtualAddressForTest(
+        @intCast(memoryMap.entries[0].address),
+    );
     const pageSize: u64 = arch.mmu.getPageSize();
     const vmaStart = regionBase + 0x400000;
     const vmaEnd = vmaStart + pageSize * 4;
@@ -468,7 +663,7 @@ test "VMM resolveFault: permissions propagate to page protection" {
 }
 
 test "VMM resolveFault: bootstrap VMA fault uses early allocator" {
-    testSetup();
+    try testSetup();
 
     var vmaBacking: [1]kernel.vmm.VirtualMemoryArea = undefined;
     var addressSpace = kernel.vmm.AddressSpace{
@@ -478,7 +673,9 @@ test "VMM resolveFault: bootstrap VMA fault uses early allocator" {
     kernel.vmm.setAddressSpace(&addressSpace);
 
     const memoryMap = arch.mmu.getMemoryMap();
-    const regionBase = memoryMap.entries[0].address;
+    const regionBase = arch.mmu.getHostVirtualAddressForTest(
+        @intCast(memoryMap.entries[0].address),
+    );
     const pageSize: u64 = arch.mmu.getPageSize();
     const vmaStart = regionBase + 0x500000;
     const vmaEnd = vmaStart + pageSize;
@@ -510,7 +707,7 @@ test "VMM resolveFault: bootstrap VMA fault uses early allocator" {
 }
 
 test "VMM resolveFault: fault outside VMA returns error" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
     arch.earlyAllocatorActive = false;
 
@@ -533,11 +730,13 @@ test "VMM resolveFault: fault outside VMA returns error" {
 }
 
 test "VMM resolveFault: present page fault returns protection violation" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     const memoryMap = arch.mmu.getMemoryMap();
-    const regionBase = memoryMap.entries[0].address;
+    const regionBase = arch.mmu.getHostVirtualAddressForTest(
+        @intCast(memoryMap.entries[0].address),
+    );
     const pageSize: u64 = arch.mmu.getPageSize();
     const vmaStart = regionBase + 0x500000;
     const vmaEnd = vmaStart + pageSize;
@@ -569,11 +768,13 @@ test "VMM resolveFault: present page fault returns protection violation" {
 }
 
 test "VMM resolveFault: write to read-only VMA returns protection violation" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     const memoryMap = arch.mmu.getMemoryMap();
-    const regionBase = memoryMap.entries[0].address;
+    const regionBase = arch.mmu.getHostVirtualAddressForTest(
+        @intCast(memoryMap.entries[0].address),
+    );
     const pageSize: u64 = arch.mmu.getPageSize();
     const vmaStart = regionBase + 0x600000;
     const vmaEnd = vmaStart + pageSize;
@@ -605,11 +806,13 @@ test "VMM resolveFault: write to read-only VMA returns protection violation" {
 }
 
 test "VMM resolveFault: user access to supervisor VMA returns protection violation" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     const memoryMap = arch.mmu.getMemoryMap();
-    const regionBase = memoryMap.entries[0].address;
+    const regionBase = arch.mmu.getHostVirtualAddressForTest(
+        @intCast(memoryMap.entries[0].address),
+    );
     const pageSize: u64 = arch.mmu.getPageSize();
     const vmaStart = regionBase + 0x700000;
     const vmaEnd = vmaStart + pageSize;
@@ -641,11 +844,13 @@ test "VMM resolveFault: user access to supervisor VMA returns protection violati
 }
 
 test "VMM resolveFault: instruction fetch from non-executable VMA returns protection violation" {
-    testSetup();
+    try testSetup();
     try kernel.pmm.initialize();
 
     const memoryMap = arch.mmu.getMemoryMap();
-    const regionBase = memoryMap.entries[0].address;
+    const regionBase = arch.mmu.getHostVirtualAddressForTest(
+        @intCast(memoryMap.entries[0].address),
+    );
     const pageSize: u64 = arch.mmu.getPageSize();
     const vmaStart = regionBase + 0x800000;
     const vmaEnd = vmaStart + pageSize;

@@ -14,8 +14,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: Build and test (${{ matrix.arch }})
+  native-tests:
+    name: Native tests and formatting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Show Zig version
+        run: zig version
+
+      - name: Check formatting
+        run: >-
+          zig fmt --check build.zig build docs/root.zig src tests tools
+          components/os-abi-library components/os-root-task
+
+      - name: Run unit tests
+        run: zig build tests
+
+  architecture-validation:
+    name: Architecture validation (${{ matrix.arch }})
     runs-on: ubuntu-latest
 
     strategy:
@@ -34,16 +58,27 @@ jobs:
         with:
           version: 0.15.2
 
-      - name: Show Zig version
-        run: zig version
+      - name: Install QEMU and ISO tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            git \
+            qemu-system-x86 \
+            xorriso
 
-      - name: Check formatting
-        run: >-
-          zig fmt --check build.zig build docs/root.zig src tests
-          components/os-abi-library components/os-root-task
+      - name: Install Limine toolchain
+        run: |
+          sudo git clone --depth=1 --branch v9.x-binary \
+            https://github.com/limine-bootloader/limine.git /opt/limine
+          sudo make -C /opt/limine
+          sudo ln -s /opt/limine/limine /usr/local/bin/limine
 
-      - name: Run unit tests
-        run: zig build tests
+      - name: Run physical architecture tests
+        run: zig build architecture-tests -Darch=${{ matrix.arch }}
+
+      - name: Build architecture coverage kernel
+        run: zig build architecture-coverage-kernel -Darch=${{ matrix.arch }}
 
       - name: Build kernel and root task
         run: zig build -Darch=${{ matrix.arch }}

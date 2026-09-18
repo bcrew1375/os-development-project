@@ -5,7 +5,6 @@ const limine_requests = @import("../../common/boot/limine/requests.zig");
 
 pub const createAddressSpaceRoot = address_space.createAddressSpaceRoot;
 pub const switchAddressSpaceRoot = address_space.switchAddressSpaceRoot;
-pub const initializePaging = @import("early_boot.zig").initializePaging;
 pub const getMemoryMap = @import("memory_map.zig").getMemoryMap;
 pub const getMaxAvailableAddress = @import("memory_map.zig").getMaxAvailableAddress;
 

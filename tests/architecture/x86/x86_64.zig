@@ -32,7 +32,7 @@ fn addressSpaceRootCanBeCreated() !void {
 
 fn platformConsoleInitializes() !void {
     @call(.never_inline, arch.platform.initializeConsole, .{});
-    arch.platform.writer().writeAll("QEMU-TEST console smoke output\n") catch
+    arch.platform.writer().writeAll("console smoke output\n") catch
         return framework.TestError.ExpectationFailed;
 }
 

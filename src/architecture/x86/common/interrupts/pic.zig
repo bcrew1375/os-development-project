@@ -1,4 +1,5 @@
 const port_io = @import("../platform/io/port_io.zig");
+const policy = @import("policy.zig");
 
 pub const MASTER_VECTOR_OFFSET: u8 = 0x20;
 pub const SLAVE_VECTOR_OFFSET: u8 = 0x28;
@@ -88,7 +89,7 @@ pub fn sendEndOfInterrupt(vector: usize) void {
 }
 
 pub fn isHardwareInterrupt(vector: usize) bool {
-    return vector >= MASTER_VECTOR_OFFSET and vector < SLAVE_VECTOR_OFFSET + 8;
+    return policy.isHardwareInterrupt(vector);
 }
 
 fn dataPortForIrq(irq: u8) u16 {

@@ -56,6 +56,7 @@ pub fn map(addressSpace: *AddressSpace, startAddress: u64, endAddress: u64, memo
 }
 
 /// Reserves and immediately backs a virtual range in the current hardware address space.
+/// Mapping failures preserve the VMA and any pages mapped before the failure.
 pub fn mapEager(addressSpace: *AddressSpace, startAddress: u64, endAddress: u64, memoryPermissions: MemoryPermissions) !void {
     try map(addressSpace, startAddress, endAddress, memoryPermissions);
 
@@ -67,6 +68,7 @@ pub fn mapEager(addressSpace: *AddressSpace, startAddress: u64, endAddress: u64,
 }
 
 /// Reserves and immediately backs a virtual range in `root`.
+/// Mapping failures preserve the VMA and any pages mapped before the failure.
 pub fn mapEagerInAddressSpace(root: arch.AddressSpaceRoot, addressSpace: *AddressSpace, startAddress: u64, endAddress: u64, memoryPermissions: MemoryPermissions) !void {
     try map(addressSpace, startAddress, endAddress, memoryPermissions);
 
@@ -78,6 +80,7 @@ pub fn mapEagerInAddressSpace(root: arch.AddressSpaceRoot, addressSpace: *Addres
 }
 
 /// Maps bootstrap-time contiguous physical pages for a virtual range in `root`.
+/// Mapping failures preserve the VMA and any pages mapped before the failure.
 pub fn mapBootstrapContiguousInAddressSpace(
     root: arch.AddressSpaceRoot,
     addressSpace: *AddressSpace,
@@ -90,6 +93,7 @@ pub fn mapBootstrapContiguousInAddressSpace(
 }
 
 /// Updates permissions for an existing VMA and any currently mapped pages.
+/// Mapping failures preserve earlier page updates but leave VMA metadata unchanged.
 pub fn protect(addressSpace: *AddressSpace, startAddress: u64, endAddress: u64, memoryPermissions: MemoryPermissions) !void {
     const vma = findVirtualMemoryAreaByRange(addressSpace, startAddress, endAddress) orelse return VMMError.UndefinedVirtualMemoryArea;
 
@@ -111,6 +115,7 @@ pub fn protect(addressSpace: *AddressSpace, startAddress: u64, endAddress: u64, 
 }
 
 /// Updates permissions for an existing VMA and mapped pages in `root`.
+/// Mapping failures preserve earlier page updates but leave VMA metadata unchanged.
 pub fn protectInAddressSpace(root: arch.AddressSpaceRoot, addressSpace: *AddressSpace, startAddress: u64, endAddress: u64, memoryPermissions: MemoryPermissions) !void {
     const vma = findVirtualMemoryAreaByRange(addressSpace, startAddress, endAddress) orelse return VMMError.UndefinedVirtualMemoryArea;
 

@@ -6,6 +6,7 @@ const architecture_coverage = @import("build/architecture_coverage.zig");
 const artifacts = @import("build/artifacts.zig");
 const configuration = @import("build/configuration.zig");
 const documentation = @import("build/documentation.zig");
+const qemu_test_runner = @import("build/qemu_test_runner.zig");
 const run = @import("build/run.zig");
 const unit_tests = @import("build/tests.zig");
 
@@ -23,13 +24,14 @@ pub fn build(b: *std.Build) void {
     ) orelse .limine;
 
     const config = configuration.resolve(b, architecture, bootloader);
+    const architecture_test_timeout = qemu_test_runner.resolveTimeoutSeconds(b);
     const root_task = configuration.resolveRootTaskArtifact(b, config);
     const kernel_artifacts = artifacts.addKernelAndRootTask(b, config, optimize, root_task);
 
     unit_tests.addStep(b, optimize);
     unit_tests.addCoverageStep(b);
-    architecture_tests.addStep(b, config);
-    architecture_coverage.addSteps(b, config);
+    architecture_tests.addStep(b, config, architecture_test_timeout);
+    architecture_coverage.addSteps(b, config, architecture_test_timeout);
     documentation.addSteps(b, optimize);
     run.addStep(b, config, kernel_artifacts.kernel, kernel_artifacts.root_task);
 }

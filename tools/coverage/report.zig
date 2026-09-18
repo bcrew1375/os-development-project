@@ -60,6 +60,12 @@ const FileState = struct {
     }
 };
 
+const NormalizedScope = struct {
+    absolute_path: []u8,
+    display_path: []const u8,
+    kind: Scope.Kind,
+};
+
 pub fn summarize(
     allocator: std.mem.Allocator,
     common_root: []const u8,
@@ -77,11 +83,6 @@ pub fn summarizeScopes(
     scopes: []const Scope,
     points: []const SourcePoint,
 ) !Summary {
-    const NormalizedScope = struct {
-        absolute_path: []u8,
-        display_path: []const u8,
-        kind: Scope.Kind,
-    };
     const normalized_scopes = try allocator.alloc(NormalizedScope, scopes.len);
     defer allocator.free(normalized_scopes);
     var initialized_scopes: usize = 0;
@@ -171,55 +172,85 @@ pub fn write(writer: *std.Io.Writer, summary: Summary) !void {
 }
 
 pub fn writeTable(writer: *std.Io.Writer, summary: Summary) !void {
-    try writer.print("{s:<52} {s:>9} {s:>10} {s:>12}\n", .{
-        "File", "Covered", "Coverable", "Coverage",
+    const path_width = 42;
+    const table_width = path_width + 1 + 8 + 1 + 9 + 1 + 15;
+
+    try writePathColumn(writer, "File", path_width);
+    try writer.print(" {s:>8} {s:>9} {s:>15}\n", .{
+        "Covered", "Coverable", "Coverage",
     });
 
     for (summary.files) |file| {
+        try writePathColumn(writer, file.path, path_width);
         if (file.percentage()) |percentage| {
-            try writer.print("{s:<52} {d:>9} {d:>10} {d:>9.2}%\n", .{
-                file.path,
+            var percentage_buffer: [32]u8 = undefined;
+            const percentage_text = try std.fmt.bufPrint(
+                &percentage_buffer,
+                "{d:.2}%",
+                .{percentage},
+            );
+            try writer.print(" {d:>8} {d:>9} {s:>15}\n", .{
                 file.covered_lines,
                 file.coverable_lines,
-                percentage,
+                percentage_text,
             });
         } else {
-            try writer.print("{s:<52} {d:>9} {d:>10} {s:>12}\n", .{
-                file.path,
+            try writer.print(" {d:>8} {d:>9} {s:>15}\n", .{
                 file.covered_lines,
                 file.coverable_lines,
-                "not emitted",
+                "no emitted code",
             });
         }
     }
 
-    try writer.writeAll("-------------------------------------------------------------------------------------\n");
+    try writer.splatByteAll('-', table_width);
+    try writer.writeByte('\n');
+    try writePathColumn(writer, "TOTAL", path_width);
     if (summary.percentage()) |percentage| {
-        try writer.print("{s:<52} {d:>9} {d:>10} {d:>9.2}%\n", .{
-            "TOTAL",
+        var percentage_buffer: [32]u8 = undefined;
+        const percentage_text = try std.fmt.bufPrint(
+            &percentage_buffer,
+            "{d:.2}%",
+            .{percentage},
+        );
+        try writer.print(" {d:>8} {d:>9} {s:>15}\n", .{
             summary.covered_lines,
             summary.coverable_lines,
-            percentage,
+            percentage_text,
         });
     } else {
-        try writer.print("{s:<52} {d:>9} {d:>10} {s:>12}\n", .{
-            "TOTAL",
+        try writer.print(" {d:>8} {d:>9} {s:>15}\n", .{
             summary.covered_lines,
             summary.coverable_lines,
-            "not emitted",
+            "no emitted code",
         });
     }
 }
 
+fn writePathColumn(writer: *std.Io.Writer, path: []const u8, width: usize) !void {
+    const ellipsis = "...";
+    if (path.len <= width) {
+        try writer.writeAll(path);
+        try writer.splatByteAll(' ', width - path.len);
+        return;
+    }
+
+    const remaining_width = width - ellipsis.len;
+    const prefix_length = remaining_width / 2;
+    const suffix_length = remaining_width - prefix_length;
+    try writer.writeAll(path[0..prefix_length]);
+    try writer.writeAll(ellipsis);
+    try writer.writeAll(path[path.len - suffix_length ..]);
+}
+
 fn inventoryScope(
     allocator: std.mem.Allocator,
-    scope: anytype,
+    scope: NormalizedScope,
     states: *std.StringArrayHashMapUnmanaged(FileState),
 ) !void {
     if (scope.kind == .file) {
         const path = try allocator.dupe(u8, scope.display_path);
-        errdefer allocator.free(path);
-        try states.put(allocator, path, .{});
+        try addInventoryFile(allocator, states, path);
         return;
     }
 
@@ -231,14 +262,24 @@ fn inventoryScope(
     while (try walker.next()) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".zig")) continue;
         const path = try std.fs.path.join(allocator, &.{ scope.display_path, entry.path });
-        errdefer allocator.free(path);
-        try states.put(allocator, path, .{});
+        try addInventoryFile(allocator, states, path);
     }
+}
+
+fn addInventoryFile(
+    allocator: std.mem.Allocator,
+    states: *std.StringArrayHashMapUnmanaged(FileState),
+    path: []u8,
+) !void {
+    errdefer allocator.free(path);
+    const result = try states.getOrPut(allocator, path);
+    if (result.found_existing) return error.DuplicateCoverageScope;
+    result.value_ptr.* = .{};
 }
 
 fn pointDisplayPath(
     allocator: std.mem.Allocator,
-    scopes: anytype,
+    scopes: []const NormalizedScope,
     path: []const u8,
 ) !?[]u8 {
     for (scopes) |scope| switch (scope.kind) {

@@ -3,14 +3,16 @@ const arch = @import("../../architecture.zig");
 const std = @import("std");
 
 var memoryMap = arch.MemoryMap{};
+var memoryBacking: ?[]u8 = null;
 
 var nextAddressSpaceRootValue: usize = 1;
 var currentAddressSpaceRoot: arch.AddressSpaceRoot = .{ .value = 0 };
 
-var testRegion: arch.MemoryMapEntry = undefined;
-var testRegionHeap: []u8 = undefined;
-
-var heapBase: usize = 0;
+pub const FixtureRegion = struct {
+    offset: usize,
+    size: usize,
+    region_type: arch.MemoryMapRegionType,
+};
 
 // Track mapped page tables so getPhysicalAddress can distinguish
 // "table not present" from "page not present".
@@ -34,6 +36,14 @@ pub const MockPageMapping = struct {
 };
 var pageMappings: [MAX_MOCK_PAGE_MAPPINGS]MockPageMapping = undefined;
 var pageMappingCount: usize = 0;
+
+const FailureInjection = struct {
+    fail_table_mapping_call: ?usize = null,
+    fail_page_mapping_call: ?usize = null,
+    table_mapping_calls: usize = 0,
+    page_mapping_calls: usize = 0,
+};
+var failureInjection: FailureInjection = .{};
 
 pub fn createAddressSpaceRoot() arch.MmuError!arch.AddressSpaceRoot {
     const address_space_root = arch.AddressSpaceRoot{
@@ -83,18 +93,7 @@ pub fn isTablePresentInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress:
 }
 
 pub fn getMemoryMap() *arch.MemoryMap {
-    testRegionHeap = std.heap.page_allocator.alloc(u8, 64 * 1024 * 1024) catch {
-        @panic("Mock MMU allocation failed");
-    };
-    testRegion.address = @intFromPtr(testRegionHeap.ptr);
-    testRegion.region_type = arch.MemoryMapRegionType.AVAILABLE;
-    testRegion.size = 64 * 1024 * 1024;
-
-    heapBase = @intFromPtr(testRegionHeap.ptr);
-
-    memoryMap.entries[0] = testRegion;
-    memoryMap.length = 1;
-
+    _ = requireMemoryFixture();
     return &memoryMap;
 }
 
@@ -103,6 +102,10 @@ pub fn mapPage(virtualAddress: usize, physicalAddress: usize, flags: arch.PagePr
 }
 
 pub fn mapPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize, physicalAddress: usize, flags: arch.PageProtection) arch.MmuError!void {
+    failureInjection.page_mapping_calls += 1;
+    if (failureInjection.fail_page_mapping_call == failureInjection.page_mapping_calls) {
+        return arch.MmuError.MappingError;
+    }
     if (!isTablePresentInAddressSpace(root, virtualAddress)) {
         return arch.MmuError.PageTableNotPresent;
     }
@@ -139,6 +142,10 @@ pub fn mapTable(virtualAddress: usize, physicalAddress: usize, flags: arch.PageP
 }
 
 pub fn mapTableInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize, physicalAddress: usize, flags: arch.PageProtection) arch.MmuError!void {
+    failureInjection.table_mapping_calls += 1;
+    if (failureInjection.fail_table_mapping_call == failureInjection.table_mapping_calls) {
+        return arch.MmuError.MappingError;
+    }
     // Align to the page table region boundary so lookups via
     // isTablePresent (which applies the same alignment) succeed.
     const pageTableRegionSize = getPageTableRegionSize();
@@ -194,29 +201,108 @@ pub fn resetForTest() void {
     currentAddressSpaceRoot = .{ .value = 0 };
     tableMappingCount = 0;
     pageMappingCount = 0;
+    failureInjection = .{};
+}
+
+pub fn initializeDefaultMemoryFixtureForTest() !void {
+    const backing_size = 64 * 1024 * 1024;
+    try initializeMemoryFixtureForTest(backing_size, &.{.{
+        .offset = 0,
+        .size = backing_size,
+        .region_type = .AVAILABLE,
+    }});
+}
+
+pub fn initializeMemoryFixtureForTest(
+    backing_size: usize,
+    regions: []const FixtureRegion,
+) !void {
+    if (backing_size == 0 or regions.len == 0) return error.InvalidMemoryFixture;
+    if (regions.len > memoryMap.entries.len) return error.TooManyMemoryMapEntries;
+
+    deinitializeMemoryFixtureForTest();
+    const backing = try std.heap.page_allocator.alloc(u8, backing_size);
+    errdefer std.heap.page_allocator.free(backing);
+    @memset(backing, 0);
+
+    memoryMap = arch.MemoryMap{};
+    for (regions, 0..) |region, index| {
+        if (region.size == 0 or region.offset > backing_size) {
+            return error.InvalidMemoryFixture;
+        }
+        if (region.size > backing_size - region.offset) {
+            return error.InvalidMemoryFixture;
+        }
+
+        memoryMap.entries[index] = .{
+            .address = region.offset,
+            .size = region.size,
+            .region_type = region.region_type,
+        };
+        if (region.region_type == .AVAILABLE) memoryMap.available_regions += 1;
+    }
+    memoryMap.length = regions.len;
+    memoryBacking = backing;
+    resetForTest();
+}
+
+pub fn deinitializeMemoryFixtureForTest() void {
+    if (memoryBacking) |backing| std.heap.page_allocator.free(backing);
+    memoryBacking = null;
+    memoryMap = arch.MemoryMap{};
+    resetForTest();
+}
+
+pub fn getHostVirtualAddressForTest(physical_address: usize) usize {
+    const backing = requireMemoryFixture();
+    if (physical_address >= backing.len) {
+        @panic("mock MMU physical address exceeds memory fixture");
+    }
+    return @intFromPtr(backing.ptr) + physical_address;
+}
+
+pub fn isMemoryFixtureInitializedForTest() bool {
+    return memoryBacking != null;
 }
 
 pub fn getMappedPageForTest(virtualAddress: usize) ?MockPageMapping {
+    return getMappedPageInAddressSpaceForTest(currentAddressSpaceRoot, virtualAddress);
+}
+
+pub fn getMappedPageInAddressSpaceForTest(
+    root: arch.AddressSpaceRoot,
+    virtualAddress: usize,
+) ?MockPageMapping {
     const pageSize = getPageSize();
     const virtualPage = virtualAddress & ~(pageSize - 1);
     for (pageMappings[0..pageMappingCount]) |mapping| {
-        if (mapping.root_value == currentAddressSpaceRoot.value and mapping.virtual_page == virtualPage) {
+        if (mapping.root_value == root.value and mapping.virtual_page == virtualPage) {
             return mapping;
         }
     }
     return null;
 }
 
+pub fn failTableMappingCallForTest(call: ?usize) void {
+    failureInjection.fail_table_mapping_call = call;
+    failureInjection.table_mapping_calls = 0;
+}
+
+pub fn failPageMappingCallForTest(call: ?usize) void {
+    failureInjection.fail_page_mapping_call = call;
+    failureInjection.page_mapping_calls = 0;
+}
+
 pub fn getMaxAvailableAddress() u64 {
-    return testRegion.size;
+    return requireMemoryFixture().len;
 }
 
 pub fn getDirectMapVirtualAddress() u64 {
-    return 0;
+    return @intFromPtr(requireMemoryFixture().ptr);
 }
 
 pub fn getDirectMapMaxSize() u64 {
-    return 0;
+    return requireMemoryFixture().len;
 }
 
 pub fn getKernelVirtualAddressStart() u64 {
@@ -237,4 +323,8 @@ pub fn getPageSize() usize {
 
 pub fn getPageTableRegionSize() usize {
     return 4096 * 1024;
+}
+
+fn requireMemoryFixture() []u8 {
+    return memoryBacking orelse @panic("mock MMU memory fixture is not initialized");
 }

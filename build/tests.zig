@@ -42,6 +42,13 @@ pub fn addCoverageStep(b: *std.Build) void {
     common_modules.kernel_common.fuzz = true;
     modules.addCommonImports(tests.root_module, common_modules);
     tests.root_module.addImport("coverage_report", coverage_report);
+    const architecture_points_file = b.createModule(.{
+        .root_source_file = b.path("tools/architecture_coverage/points_file.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
+    architecture_points_file.addImport("coverage_report", coverage_report);
+    tests.root_module.addImport("architecture_points_file", architecture_points_file);
     tests.root_module.error_tracing = true;
 
     const run_coverage = b.addRunArtifact(tests);
@@ -67,11 +74,19 @@ fn addKernelTests(
     });
 
     modules.addCommonImports(tests.root_module, common_modules);
-    tests.root_module.addImport("coverage_report", b.createModule(.{
+    const coverage_report = b.createModule(.{
         .root_source_file = b.path("tools/coverage/report.zig"),
         .target = b.graph.host,
         .optimize = optimize,
-    }));
+    });
+    tests.root_module.addImport("coverage_report", coverage_report);
+    const architecture_points_file = b.createModule(.{
+        .root_source_file = b.path("tools/architecture_coverage/points_file.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    });
+    architecture_points_file.addImport("coverage_report", coverage_report);
+    tests.root_module.addImport("architecture_points_file", architecture_points_file);
     tests.root_module.error_tracing = true;
 
     const run_tests = b.addRunArtifact(tests);

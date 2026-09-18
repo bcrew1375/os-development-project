@@ -19,6 +19,8 @@ for extraction and reintegration instructions.
 
 See the [current kernel assessment](../kernel_analysis.md) for implementation
 maturity, known architectural limitations, and the priority-ordered roadmap.
+The [testing roadmap](testing-roadmap.md) tracks phased work to improve test
+fidelity and expand the behavior that can be verified.
 
 ## Dependency direction
 
@@ -59,7 +61,7 @@ coverable when Zig's LLVM backend emits a sanitizer-coverage program point for
 that source line, and it is covered when any program point on the line executes
 during the test suite. Blank lines, comments, declarations without runtime
 code, and static data are not part of the denominator. Files with no emitted
-runtime locations are reported as `not emitted`.
+runtime locations are reported as `no emitted code`.
 
 Zig compiles declarations lazily, so entirely unreferenced functions may not be
 present in the test executable and cannot be included in the compiler-derived
@@ -89,9 +91,10 @@ deterministic and avoids making them depend on ISO and Limine tooling. The
 x86-64 runner uses Limine because QEMU has no equivalent direct 64-bit kernel
 loader for this kernel's boot protocol.
 
-Measure x86-64 architecture line coverage with:
+Measure architecture line coverage with:
 
 ```sh
+zig build architecture-coverage -Darch=x86_32
 zig build architecture-coverage -Darch=x86_64
 ```
 
@@ -103,16 +106,25 @@ source line containing an instruction in a block is coverable, and all such
 lines become covered when that block's guard executes. The collector then
 reuses `tools/coverage/report.zig` for per-file totals. Zig lazy compilation
 still limits the denominator to code emitted into that test kernel.
-Namespace-only files, compile-time data, unused implementations, and helpers
-fully eliminated or inlined by the ReleaseFast coverage kernel may therefore
-appear as `not emitted`; this is not reported as either 0% or 100% coverage.
+Namespace-only files, compile-time data, unreferenced implementations, and
+helpers fully eliminated or inlined by the ReleaseFast coverage kernel may
+therefore appear as `no emitted code`; this is not reported as either 0% or
+100% coverage. This status describes the exact test binary, not whether the
+source file text contains function bodies.
 
-Architecture coverage is currently unavailable for x86-32. Zig 0.15.2's
-hosted `-ffuzz` runtime cannot target freestanding kernels, while its supported
-trace-pc-guard mode inserts stack-depth state that is incompatible with the
-x86-32 pre-paging bootstrap. `architecture-tests -Darch=x86_32` remains the
-physical correctness test for that target. The existing `coverage` step remains
-the native mock-architecture report for `src/common`.
+Physical tests exercise supported architecture behavior through production
+interfaces. Private implementation hooks are not exposed solely to manufacture
+a coverage denominator.
+
+The x86-32 coverage kernel uses QEMU's direct Multiboot loader. Its sanitizer
+callback, bitmap, stack-depth state, and compiler memory primitives are linked
+into low bootstrap sections so instrumentation can execute before paging is
+enabled. Sanitizer guards remain in the normal writable kernel data range and
+are reserved and mapped with the rest of that range. The existing `coverage`
+step remains the native mock-architecture report for `src/common`.
+
+See [Architecture Coverage](architecture-coverage.md) for pipeline ownership,
+protocol validation, coverage semantics, and Zig compatibility notes.
 
 Build the kernel and root-task artifacts for either architecture:
 
