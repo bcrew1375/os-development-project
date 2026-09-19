@@ -8,7 +8,9 @@ test {
     _ = @import("vmm_tests.zig");
     _ = @import("process_tests.zig");
     _ = @import("capability_tests.zig");
-    _ = @import("coverage_tests.zig");
+    _ = @import("syscall_tests.zig");
+    _ = @import("coverage_report_tests.zig");
+    _ = @import("architecture_points_file_tests.zig");
     _ = @import("mock_architecture_tests.zig");
     _ = @import("early_allocator_tests.zig");
     _ = @import("interrupt_diagnostics_tests.zig");

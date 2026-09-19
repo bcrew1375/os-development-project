@@ -5,8 +5,6 @@ const multiboot = @import("main.zig");
 
 const arch = @import("arch");
 
-const MAX_BOOT_MODULES = 16;
-
 pub const MultibootModule = extern struct {
     mod_start: u32,
     mod_end: u32,
@@ -14,7 +12,7 @@ pub const MultibootModule = extern struct {
     reserved: u32,
 };
 
-var bootModules: [MAX_BOOT_MODULES]arch.BootModule = undefined;
+var bootModules: [arch.MAX_BOOT_MODULES]arch.BootModule = undefined;
 var bootModuleCount: usize = 0;
 var bootModulesCached: bool = false;
 
@@ -95,7 +93,10 @@ fn getAvailableMultibootModuleCount() linksection(boot_text_section) usize {
         return 0;
     }
 
-    return @min(@as(usize, @intCast(multiboot.multibootTable.mods_count)), MAX_BOOT_MODULES);
+    return @min(
+        @as(usize, @intCast(multiboot.multibootTable.mods_count)),
+        arch.MAX_BOOT_MODULES,
+    );
 }
 
 fn getMultibootModules() linksection(boot_text_section) [*]const MultibootModule {

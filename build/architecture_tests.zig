@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const architecture_test_kernel = @import("architecture_test_kernel.zig");
+const boot_module_fixtures = @import("boot_module_fixtures.zig");
 const configuration = @import("configuration.zig");
 const limine = @import("limine.zig");
 const qemu_test_runner = @import("qemu_test_runner.zig");
@@ -53,11 +54,19 @@ fn addTestRun(
         .execution_mode = @tagName(execution_mode),
         .selected_test_id = if (selected_test) |test_case| @tagName(test_case.id) else "",
     });
+    const fixtures = if (selected_test) |test_case|
+        if (test_case.id == .boot_modules_are_cached_reserved_and_capacity_limited)
+            boot_module_fixtures.create(build)
+        else
+            null
+    else
+        null;
     const test_disk_image = packageTestDiskImage(
         build,
         build_configuration,
         test_kernel.getEmittedBin(),
         test_id,
+        fixtures,
     );
     const test_run = qemu_test_runner.addRun(build, .{
         .architecture = build_configuration.architecture,
@@ -66,6 +75,10 @@ fn addTestRun(
         .execution_mode = @tagName(execution_mode),
         .selected_test_id = if (selected_test) |test_case| @tagName(test_case.id) else null,
         .expected_fault = if (selected_test) |test_case| test_case.expected_fault else null,
+        .boot_modules = if (build_configuration.architecture == .x86_32)
+            if (fixtures) |boot_modules| boot_modules.paths else &.{}
+        else
+            &.{},
     });
     architecture_tests.dependOn(&test_run.command.step);
 }
@@ -75,6 +88,7 @@ fn packageTestDiskImage(
     build_configuration: configuration.BuildConfig,
     test_kernel: std.Build.LazyPath,
     test_id: []const u8,
+    fixtures: ?boot_module_fixtures.Fixtures,
 ) qemu_test_runner.DiskImage {
     return switch (build_configuration.architecture) {
         .x86_32 => .{
@@ -86,12 +100,33 @@ fn packageTestDiskImage(
             .path = limine.createIso(
                 build,
                 test_kernel,
-                build.path("tests/architecture/limine/x86_64.conf"),
-                null,
+                if (fixtures) |boot_modules|
+                    boot_module_fixtures.createLimineConfig(build, boot_modules)
+                else
+                    build.path("tests/architecture/limine/x86_64.conf"),
+                createLimineBootModules(build, fixtures),
                 build.fmt("architecture-tests-x86_64-{s}.iso", .{test_id}),
             ),
         },
     };
+}
+
+fn createLimineBootModules(
+    build: *std.Build,
+    fixtures: ?boot_module_fixtures.Fixtures,
+) []const limine.BootModule {
+    const boot_modules = fixtures orelse return &.{};
+    const modules = build.allocator.alloc(
+        limine.BootModule,
+        boot_modules.paths.len,
+    ) catch @panic("OOM");
+    for (modules, boot_modules.paths, boot_modules.names) |*module, path, name| {
+        module.* = .{
+            .source = path,
+            .iso_name = name,
+        };
+    }
+    return modules;
 }
 
 fn manifestArchitecture(architecture: configuration.Architecture) manifest.Architecture {

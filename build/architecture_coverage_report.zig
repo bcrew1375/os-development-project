@@ -64,7 +64,7 @@ fn packageDiskImage(
                 build,
                 instrumented_kernel_elf,
                 build.path("tests/architecture/limine/x86_64.conf"),
-                null,
+                &.{},
                 "architecture-coverage-x86_64.iso",
             ),
         },
@@ -90,7 +90,7 @@ fn createReporter(
     source_points: std.Build.LazyPath,
 ) *std.Build.Step.Run {
     const coverage_report_module = build.createModule(.{
-        .root_source_file = build.path("tools/coverage/report.zig"),
+        .root_source_file = build.path("tools/coverage/report/main.zig"),
         .target = build.graph.host,
         .optimize = .Debug,
     });

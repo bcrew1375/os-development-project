@@ -9,3 +9,4 @@ pub const mmu = architecture.mmu;
 pub const platform = architecture.platform;
 pub const TextColor = architecture.TextColor;
 pub const ReservedMapRegionType = architecture.ReservedMapRegionType;
+pub const MAX_BOOT_MODULES = architecture.MAX_BOOT_MODULES;

@@ -45,7 +45,10 @@ fn createLimineRunStep(
         b,
         kernel.getEmittedBin(),
         b.path(configuration.limineConfigPath(config.architecture)),
-        root_task.path,
+        &.{.{
+            .source = root_task.path,
+            .iso_name = "root_process.elf",
+        }},
         b.fmt("kernel-{s}.iso", .{@tagName(config.architecture)}),
     );
 

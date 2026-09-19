@@ -19,3 +19,5 @@ pub const heap = memory_management.heap;
 pub const process = @import("common/process/main.zig");
 /// Kernel capability table implementation.
 pub const capability = @import("common/capability/main.zig");
+/// Architecture-independent syscall policy dispatcher.
+pub const syscall = @import("common/syscall/main.zig");

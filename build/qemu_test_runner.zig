@@ -33,6 +33,7 @@ pub const RunOptions = struct {
     execution_mode: []const u8 = "shared_machine",
     selected_test_id: ?[]const u8 = null,
     expected_fault: ?manifest.ExpectedFault = null,
+    boot_modules: []const std.Build.LazyPath = &.{},
 };
 
 pub const RunResult = struct {
@@ -84,6 +85,10 @@ pub fn addRun(build: *std.Build, options: RunOptions) RunResult {
         if (fault.cr2) |cr2| {
             command.addArgs(&.{ "--expected-cr2", build.fmt("0x{x}", .{cr2}) });
         }
+    }
+    for (options.boot_modules) |boot_module| {
+        command.addArg("--boot-module");
+        command.addFileArg(boot_module);
     }
 
     const coverage_frame = switch (options.coverage_capture) {

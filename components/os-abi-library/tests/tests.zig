@@ -31,6 +31,34 @@ test "Capability rights containment is explicit" {
     try std.testing.expect(!(abi.capability.Rights{ .read = true }).contains(.{ .write = true }));
 }
 
+test "system smoke protocol records are complete ordered serial lines" {
+    try std.testing.expectEqual(@as(u32, 1), abi.system_smoke.PROTOCOL_VERSION);
+    try std.testing.expectEqualStrings(
+        "SYSTEM-SMOKE protocol=1\n",
+        abi.system_smoke.HEADER,
+    );
+
+    const expected = [_][]const u8{
+        "SYSTEM-SMOKE milestone=root_process_prepared\n",
+        "SYSTEM-SMOKE milestone=kernel_initialized\n",
+        "SYSTEM-SMOKE milestone=userspace_entered\n",
+        "SYSTEM-SMOKE milestone=boot_info_validated\n",
+        "SYSTEM-SMOKE milestone=address_space_capability_acquired\n",
+        "SYSTEM-SMOKE milestone=memory_object_capability_acquired\n",
+        "SYSTEM-SMOKE milestone=memory_object_mapped\n",
+    };
+    try std.testing.expectEqual(expected.len, abi.system_smoke.ordered_milestones.len);
+    for (expected, abi.system_smoke.ordered_milestones) |expected_record, actual_record| {
+        try std.testing.expectEqualStrings(expected_record, actual_record);
+        try std.testing.expect(std.mem.endsWith(u8, actual_record, "\n"));
+        try std.testing.expectEqual(@as(?usize, null), std.mem.indexOfScalar(u8, actual_record[0 .. actual_record.len - 1], '\n'));
+    }
+    try std.testing.expectEqualStrings(
+        "SYSTEM-SMOKE EXIT status={d}\n",
+        abi.system_smoke.EXIT_FORMAT,
+    );
+}
+
 test "ELF parser rejects non-ELF bytes" {
     const image = "not an elf image";
     try std.testing.expectError(

@@ -2,9 +2,7 @@ const arch = @import("arch");
 const limine_protocol = @import("protocol.zig");
 const limine_requests = @import("requests.zig");
 
-const BOOT_MODULE_CACHE_CAPACITY = 16;
-
-var bootModules: [BOOT_MODULE_CACHE_CAPACITY]arch.BootModule = undefined;
+var bootModules: [arch.MAX_BOOT_MODULES]arch.BootModule = undefined;
 var bootModuleCount: usize = 0;
 var bootModulesCached = false;
 
@@ -67,7 +65,7 @@ pub fn reserveBootModules() arch.EarlyAllocError!void {
 
 fn getAvailableLimineModuleCount() usize {
     const response = limine_requests.moduleResponse() orelse return 0;
-    return @min(@as(usize, @intCast(response.module_count)), BOOT_MODULE_CACHE_CAPACITY);
+    return @min(@as(usize, @intCast(response.module_count)), arch.MAX_BOOT_MODULES);
 }
 
 fn getLimineModules() ?[*]const *const limine_protocol.File {

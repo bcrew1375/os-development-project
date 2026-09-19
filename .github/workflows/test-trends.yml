@@ -1,0 +1,81 @@
+name: Test and coverage trends
+
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    name: Collect test and coverage trends
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Install QEMU and ISO tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            git \
+            qemu-system-x86 \
+            xorriso
+
+      - name: Install Limine toolchain
+        run: |
+          sudo git clone --depth=1 --branch v9.x-binary \
+            https://github.com/limine-bootloader/limine.git /opt/limine
+          sudo make -C /opt/limine
+          sudo ln -s /opt/limine/limine /usr/local/bin/limine
+
+      - name: Run validation and capture reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p trend-logs
+          zig build coverage 2>&1 | tee trend-logs/common-coverage.log
+          for architecture in x86_32 x86_64; do
+            zig build architecture-tests -Darch="$architecture" 2>&1 \
+              | tee "trend-logs/architecture-tests-$architecture.log"
+            zig build architecture-coverage -Darch="$architecture" 2>&1 \
+              | tee "trend-logs/architecture-coverage-$architecture.log"
+            zig build system-smoke -Darch="$architecture" 2>&1 \
+              | tee "trend-logs/system-smoke-$architecture.log"
+          done
+
+      - name: Generate trend snapshot
+        run: |
+          python3 tools/test_trend_report.py \
+            --date "$(date -u +%F)" \
+            --commit "${GITHUB_SHA}" \
+            --common-coverage trend-logs/common-coverage.log \
+            --architecture-coverage-x86-32 trend-logs/architecture-coverage-x86_32.log \
+            --architecture-coverage-x86-64 trend-logs/architecture-coverage-x86_64.log \
+            --architecture-tests-x86-32 trend-logs/architecture-tests-x86_32.log \
+            --architecture-tests-x86-64 trend-logs/architecture-tests-x86_64.log \
+            --system-smoke-x86-32 trend-logs/system-smoke-x86_32.log \
+            --system-smoke-x86-64 trend-logs/system-smoke-x86_64.log \
+            --host-test-source tests/architecture_coverage_tests.py \
+            --host-test-source tests/system_smoke_runner_tests.py \
+            --host-test-source tests/test_trend_report_tests.py \
+            --abi-test-source components/os-abi-library/tests/tests.zig \
+            --root-task-test-source components/os-root-task/tests/tests.zig \
+            --output trend-logs/test-trend.md
+          cat trend-logs/test-trend.md >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload trend snapshot and raw reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-trends-${{ github.run_id }}
+          path: trend-logs
+          retention-days: 90

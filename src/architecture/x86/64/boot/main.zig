@@ -2,6 +2,7 @@ const arch = @import("arch");
 
 const gdt = @import("../interrupts/global_descriptor_table.zig");
 const idt = @import("../interrupts/interrupt_descriptor_table.zig");
+const cpu = @import("../cpu/main.zig");
 const limine = @import("limine/main.zig");
 const boot_modules = @import("../../common/boot/limine/boot_modules.zig");
 const limine_requests = @import("../../common/boot/limine/requests.zig");
@@ -42,6 +43,7 @@ pub fn finishBoot() void {
         : [stack_pointer] "=r" (-> usize),
     );
 
+    cpu.initializeMemoryProtection();
     gdt.initialize(kernel_stack_top);
     idt.initialize();
 }

@@ -84,6 +84,26 @@ pub fn getPhysicalAddressInAddressSpace(root: arch.AddressSpaceRoot, virtualAddr
     return null;
 }
 
+pub fn getPageProtection(virtualAddress: usize) ?arch.PageProtection {
+    return getPageProtectionInAddressSpace(currentAddressSpaceRoot, virtualAddress);
+}
+
+pub fn getPageProtectionInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize) ?arch.PageProtection {
+    const page_size = getPageSize();
+    const virtual_page = virtualAddress & ~(page_size - 1);
+
+    for (pageMappings[0..pageMappingCount]) |mapping| {
+        if (mapping.present and
+            mapping.root_value == root.value and
+            mapping.virtual_page == virtual_page)
+        {
+            return mapping.protection;
+        }
+    }
+
+    return null;
+}
+
 pub fn isTablePresent(virtualAddress: usize) bool {
     return isTablePresentInAddressSpace(currentAddressSpaceRoot, virtualAddress);
 }
@@ -193,10 +213,14 @@ pub fn getTableProtection(virtualAddress: usize) ?arch.PageProtection {
 }
 
 pub fn unmapPage(virtualAddress: usize) void {
+    unmapPageInAddressSpace(currentAddressSpaceRoot, virtualAddress);
+}
+
+pub fn unmapPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize) void {
     const pageSize = getPageSize();
     const virtualPage = virtualAddress & ~(pageSize - 1);
     for (pageMappings[0..pageMappingCount]) |*mapping| {
-        if (mapping.root_value == currentAddressSpaceRoot.value and mapping.virtual_page == virtualPage) {
+        if (mapping.root_value == root.value and mapping.virtual_page == virtualPage) {
             mapping.present = false;
             return;
         }

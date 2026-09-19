@@ -1,10 +1,15 @@
 const std = @import("std");
 
+pub const BootModule = struct {
+    source: std.Build.LazyPath,
+    iso_name: []const u8,
+};
+
 pub fn createIso(
     b: *std.Build,
     kernel: std.Build.LazyPath,
     config: std.Build.LazyPath,
-    boot_module: ?std.Build.LazyPath,
+    boot_modules: []const BootModule,
     output_name: []const u8,
 ) std.Build.LazyPath {
     const script =
@@ -12,7 +17,6 @@ pub fn createIso(
         \\kernel="$1"
         \\limine_conf="$2"
         \\output_iso="$3"
-        \\boot_module="$4"
         \\iso_root="$(mktemp -d "$output_iso.root.XXXXXX")"
         \\temporary_iso="$output_iso.tmp.$$"
         \\limine_dir="/opt/limine"
@@ -46,9 +50,16 @@ pub fn createIso(
         \\mkdir -p "$iso_root/boot"
         \\cp "$kernel" "$iso_root/boot/kernel.elf"
         \\cp "$limine_conf" "$iso_root/boot/limine.conf"
-        \\if [ -n "$boot_module" ]; then
-        \\    cp "$boot_module" "$iso_root/boot/root_process.elf"
-        \\fi
+        \\shift 3
+        \\while [ "$#" -gt 0 ]; do
+        \\    module_source="$1"
+        \\    module_name="$2"
+        \\    shift 2
+        \\    case "$module_name" in
+        \\        ""|*/*) echo "invalid Limine boot module name: $module_name" >&2; exit 1 ;;
+        \\    esac
+        \\    cp "$module_source" "$iso_root/boot/$module_name"
+        \\done
         \\cp "$limine_bios_sys" "$iso_root/boot/limine-bios.sys"
         \\cp "$limine_bios_cd" "$iso_root/boot/limine-bios-cd.bin"
         \\
@@ -68,10 +79,9 @@ pub fn createIso(
     command.addFileArg(kernel);
     command.addFileArg(config);
     const output = command.addOutputFileArg(output_name);
-    if (boot_module) |module| {
-        command.addFileArg(module);
-    } else {
-        command.addArg("");
+    for (boot_modules) |module| {
+        command.addFileArg(module.source);
+        command.addArg(module.iso_name);
     }
     return output;
 }

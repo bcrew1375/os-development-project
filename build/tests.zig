@@ -9,6 +9,12 @@ pub fn addStep(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
     const coverage_tool_tests = b.addSystemCommand(&.{"python3"});
     coverage_tool_tests.addFileArg(b.path("tests/architecture_coverage_tests.py"));
     tests_step.dependOn(&coverage_tool_tests.step);
+    const system_smoke_runner_tests = b.addSystemCommand(&.{"python3"});
+    system_smoke_runner_tests.addFileArg(b.path("tests/system_smoke_runner_tests.py"));
+    tests_step.dependOn(&system_smoke_runner_tests.step);
+    const test_trend_report_tests = b.addSystemCommand(&.{"python3"});
+    test_trend_report_tests.addFileArg(b.path("tests/test_trend_report_tests.py"));
+    tests_step.dependOn(&test_trend_report_tests.step);
     addComponentTests(b, tests_step, "components/os-abi-library");
     addComponentTests(b, tests_step, "components/os-root-task");
 }
@@ -17,7 +23,7 @@ pub fn addCoverageStep(b: *std.Build) void {
     const coverage_step = b.step("coverage", "Measure line coverage of common kernel code");
     const common_modules = modules.createCommonModules(b, b.graph.host, .Debug, false);
     const coverage_report = b.createModule(.{
-        .root_source_file = b.path("tools/coverage/report.zig"),
+        .root_source_file = b.path("tools/coverage/report/main.zig"),
         .target = b.graph.host,
         .optimize = .Debug,
     });
@@ -77,7 +83,7 @@ fn addKernelTests(
     modules.addCommonImports(tests.root_module, common_modules);
     addKernelTestImports(b, tests.root_module, common_modules, optimize);
     const coverage_report = b.createModule(.{
-        .root_source_file = b.path("tools/coverage/report.zig"),
+        .root_source_file = b.path("tools/coverage/report/main.zig"),
         .target = b.graph.host,
         .optimize = optimize,
     });

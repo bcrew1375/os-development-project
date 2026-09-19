@@ -48,6 +48,30 @@ pub fn getPhysicalAddressInAddressSpace(root: arch.AddressSpaceRoot, virtualAddr
     return physical_address;
 }
 
+pub fn getPageProtection(virtualAddress: usize) ?arch.PageProtection {
+    return getPageProtectionInAddressSpace(getCurrentAddressSpaceRoot(), virtualAddress);
+}
+
+pub fn getPageProtectionInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize) ?arch.PageProtection {
+    const page_directory_index = getPageDirectoryIndex(virtualAddress);
+    const page_table_index = getPageTableIndex(virtualAddress);
+
+    const page_directory = getPageDirectoryFromAddressSpaceRoot(root);
+    const directory_entry = page_directory[page_directory_index];
+    if (!directory_entry.present) return null;
+
+    const page_table = getPageTableFromDirectory(page_directory, page_directory_index);
+    const page_entry = page_table[page_table_index];
+    if (!page_entry.present) return null;
+
+    return .{
+        .write = directory_entry.writeable and page_entry.writeable,
+        .user = directory_entry.user_accessible and page_entry.user_accessible,
+        .execute = true,
+        .global = page_entry.global,
+    };
+}
+
 pub fn isTablePresent(virtualAddress: usize) bool {
     return isTablePresentInAddressSpace(getCurrentAddressSpaceRoot(), virtualAddress);
 }
@@ -79,6 +103,7 @@ pub fn mapPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize,
     page_table[page_table_index].present = true;
     page_table[page_table_index].writeable = flags.write;
     page_table[page_table_index].user_accessible = flags.user;
+    page_table[page_table_index].global = flags.global;
 
     flushTLB(virtualAddress);
 }
@@ -109,11 +134,19 @@ pub fn mapTableInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize
 }
 
 pub fn unmapPage(virtualAddress: usize) void {
+    unmapPageInAddressSpace(getCurrentAddressSpaceRoot(), virtualAddress);
+}
+
+pub fn unmapPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize) void {
     const page_directory_index = getPageDirectoryIndex(virtualAddress);
     const page_table_index = getPageTableIndex(virtualAddress);
 
-    const page_dir = getCurrentPageDirectory();
+    const page_dir = getPageDirectoryFromAddressSpaceRoot(root);
+    if (!page_dir[page_directory_index].present) return;
+
     const page_table = getPageTableFromDirectory(page_dir, page_directory_index);
+    if (!page_table[page_table_index].present) return;
+
     page_table[page_table_index].present = false;
 
     flushTLB(virtualAddress);

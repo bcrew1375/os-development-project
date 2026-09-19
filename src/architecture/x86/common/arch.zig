@@ -44,7 +44,10 @@ pub fn makeArchitecture(comptime implementation: anytype) type {
             pub const mapPage = implementation.mmu.mapPage;
             pub const mapTableInAddressSpace = implementation.mmu.mapTableInAddressSpace;
             pub const mapTable = implementation.mmu.mapTable;
+            pub const unmapPageInAddressSpace = implementation.mmu.unmapPageInAddressSpace;
             pub const unmapPage = implementation.mmu.unmapPage;
+            pub const getPageProtectionInAddressSpace = implementation.mmu.getPageProtectionInAddressSpace;
+            pub const getPageProtection = implementation.mmu.getPageProtection;
             pub const getMaxAvailableAddress = implementation.mmu.getMaxAvailableAddress;
             pub const getDirectMapVirtualAddress = implementation.mmu.getDirectMapVirtualAddress;
             pub const getDirectMapMaxSize = implementation.mmu.getDirectMapMaxSize;
@@ -57,6 +60,8 @@ pub fn makeArchitecture(comptime implementation: anytype) type {
 
         pub const platform = struct {
             pub const initializeTimer = implementation.platform.time.initializeTimer;
+            pub const resetTimerInterruptCount = implementation.platform.time.resetInterruptCount;
+            pub const getTimerInterruptCount = implementation.platform.time.getInterruptCount;
             pub const initializeConsole = implementation.platform.console.initialize;
             pub const setColor = implementation.platform.console.setColor;
             pub const writer = implementation.platform.console.writer;

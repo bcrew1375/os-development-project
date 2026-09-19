@@ -26,6 +26,17 @@ test "Interrupt diagnostics sample timers and print hardware vectors once" {
     try std.testing.expect(!state.recordInterrupt(vectors.keyboard).print);
 }
 
+test "Interrupt diagnostics never decorate syscall output" {
+    var state: diagnostics.State = .{};
+    const first = state.recordInterrupt(vectors.syscall);
+    const second = state.recordInterrupt(vectors.syscall);
+
+    try std.testing.expect(!first.print);
+    try std.testing.expect(!second.print);
+    try std.testing.expectEqual(@as(usize, 0), first.count);
+    try std.testing.expectEqual(@as(usize, 0), second.count);
+}
+
 test "Interrupt diagnostics handle out-of-range vectors and saturating counts" {
     var state: diagnostics.State = .{};
     const out_of_range = state.recordInterrupt(vectors.total);

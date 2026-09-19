@@ -10,6 +10,7 @@ const launch_root_process = @import("launch_root_process.zig");
 const TextColor = @import("arch").TextColor;
 
 const std = @import("std");
+const abi = @import("abi");
 
 const KERNEL_VMA_TOTAL = 16;
 const ROOT_VMA_TOTAL = 32;
@@ -144,6 +145,18 @@ const KernelInitializationServices = struct {
 
     pub fn writeMessage(message: []const u8) void {
         terminal.print.printString(message);
+    }
+
+    pub fn writeSystemSmokeHeader() void {
+        terminal.print.printString(abi.system_smoke.HEADER);
+    }
+
+    pub fn writeRootProcessPrepared() void {
+        terminal.print.printString(abi.system_smoke.ROOT_PROCESS_PREPARED);
+    }
+
+    pub fn writeKernelInitialized() void {
+        terminal.print.printString(abi.system_smoke.KERNEL_INITIALIZED);
     }
 
     pub fn prepareRootProcess(address_space: *vmm.AddressSpace) !PreparedRootProcess {

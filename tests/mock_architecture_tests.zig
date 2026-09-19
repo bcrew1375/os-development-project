@@ -1,5 +1,6 @@
 const arch = @import("arch");
 const std = @import("std");
+const boot_module_fixture = @import("architecture/boot_module_fixture.zig");
 
 test "Mock memory fixture reads are side-effect free" {
     try arch.impl.test_support.initializeDefaultMemoryFixture();
@@ -67,6 +68,32 @@ test "Mock boot services expose configured modules and finalization" {
     try std.testing.expect(arch.boot.isBootFinishedForTest());
 }
 
+test "Physical boot-module fixture matches the architecture capacity policy" {
+    try std.testing.expectEqual(
+        arch.MAX_BOOT_MODULES,
+        boot_module_fixture.retained_module_count,
+    );
+    try std.testing.expectEqual(
+        arch.MAX_BOOT_MODULES + 1,
+        boot_module_fixture.supplied_module_count,
+    );
+
+    var modules: [arch.MAX_BOOT_MODULES]arch.BootModule = undefined;
+    for (&modules, 0..) |*module, index| {
+        module.* = .{
+            .physical_start = index * 0x1000,
+            .physical_end = index * 0x1000 + boot_module_fixture.payloadSize(index),
+        };
+    }
+    arch.boot.configureModulesForTest(&modules);
+
+    try std.testing.expectEqual(arch.MAX_BOOT_MODULES, arch.boot.getBootModuleCount());
+    try std.testing.expectEqual(
+        @as(?arch.BootModule, null),
+        arch.boot.getBootModule(arch.MAX_BOOT_MODULES),
+    );
+}
+
 test "Mock boot services configure a module from physical bytes" {
     try arch.impl.test_support.initializeMemoryFixture(4 * 4096, &.{.{
         .offset = 0,
@@ -121,6 +148,54 @@ test "Mock MMU reads explicit address spaces across page boundaries" {
     );
 }
 
+test "Mock MMU reports permissions and unmaps explicit address spaces idempotently" {
+    arch.impl.test_support.resetState();
+
+    const first_root = try arch.mmu.createAddressSpaceRoot();
+    const second_root = try arch.mmu.createAddressSpaceRoot();
+    const virtual_address = 0x400000;
+    const protection = arch.PageProtection{
+        .write = true,
+        .user = true,
+        .execute = false,
+        .global = true,
+    };
+
+    try arch.mmu.mapTableInAddressSpace(first_root, virtual_address, 0, protection);
+    try arch.mmu.mapTableInAddressSpace(second_root, virtual_address, 0, .{});
+    try arch.mmu.mapPageInAddressSpace(first_root, virtual_address, 0x1000, protection);
+    try arch.mmu.mapPageInAddressSpace(second_root, virtual_address, 0x2000, .{});
+
+    try std.testing.expectEqual(
+        protection,
+        arch.mmu.getPageProtectionInAddressSpace(first_root, virtual_address).?,
+    );
+    try std.testing.expectEqual(
+        arch.PageProtection{},
+        arch.mmu.getPageProtectionInAddressSpace(second_root, virtual_address).?,
+    );
+
+    arch.mmu.unmapPageInAddressSpace(first_root, virtual_address);
+    arch.mmu.unmapPageInAddressSpace(first_root, virtual_address);
+    try std.testing.expectEqual(
+        @as(?arch.PageProtection, null),
+        arch.mmu.getPageProtectionInAddressSpace(first_root, virtual_address),
+    );
+    try std.testing.expectEqual(
+        @as(?usize, 0x2000),
+        arch.mmu.getPhysicalAddressInAddressSpace(second_root, virtual_address),
+    );
+
+    arch.mmu.switchAddressSpaceRoot(second_root);
+    try std.testing.expectEqual(
+        arch.PageProtection{},
+        arch.mmu.getPageProtection(virtual_address).?,
+    );
+    arch.mmu.unmapPage(virtual_address);
+    arch.mmu.unmapPage(virtual_address);
+    try std.testing.expectEqual(@as(?usize, null), arch.mmu.getPhysicalAddress(virtual_address));
+}
+
 test "Mock reset clears physical lookup failure injection but preserves backing" {
     try arch.impl.test_support.initializeDefaultMemoryFixture();
     defer arch.impl.test_support.deinitializeMemoryFixture();
@@ -161,11 +236,25 @@ test "Mock interrupt services record externally visible operations" {
 test "Mock platform records timer initialization" {
     arch.impl.test_support.resetState();
 
+    arch.impl.platform.recordTimerInterruptForTest();
+    try std.testing.expectEqual(@as(usize, 1), arch.platform.getTimerInterruptCount());
+
     arch.platform.initializeTimer(1000);
 
     const state = arch.platform.getStateForTest();
     try std.testing.expectEqual(@as(usize, 1), state.timer_initialization_count);
     try std.testing.expectEqual(@as(?usize, 1000), state.timer_frequency);
+    try std.testing.expectEqual(@as(usize, 0), arch.platform.getTimerInterruptCount());
+
+    arch.impl.platform.recordTimerInterruptForTest();
+    arch.impl.platform.recordTimerInterruptForTest();
+    try std.testing.expectEqual(@as(usize, 2), arch.platform.getTimerInterruptCount());
+    arch.platform.resetTimerInterruptCount();
+    try std.testing.expectEqual(@as(usize, 0), arch.platform.getTimerInterruptCount());
+
+    arch.impl.platform.recordTimerInterruptForTest();
+    arch.impl.test_support.resetState();
+    try std.testing.expectEqual(@as(usize, 0), arch.platform.getTimerInterruptCount());
 }
 
 test "Mock CPU operation observation starts reset" {

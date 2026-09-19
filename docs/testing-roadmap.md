@@ -1,6 +1,6 @@
 # Testing Roadmap
 
-Status date: 2026-09-18
+Status date: 2026-09-19
 
 This document is the operational plan for improving test fidelity and expanding
 what can be tested. The broader architectural priorities remain in
@@ -421,7 +421,7 @@ hardware-vector classification.
 **Files:**
 
 - `tools/architecture_coverage/points_file.zig`
-- `tests/coverage_tests.zig` or a dedicated test file under `tests`
+- `tests/architecture_points_file_tests.zig`
 
 **Coverage:** Valid input, unsupported version, architecture mismatch, missing
 headers, malformed records, invalid covered flags, invalid line numbers, extra
@@ -657,7 +657,17 @@ zig build architecture-tests -Darch=x86_32
 zig build architecture-tests -Darch=x86_64
 ```
 
-### [ ] T4.2 Add physical MMU tests
+### [x] T4.2 Add physical MMU tests
+
+- Completed: 2026-09-18
+- Validation: `zig build tests`; both `architecture-tests` commands; both
+  `architecture-coverage-kernel` commands; production builds for x86_32 and
+  x86_64; `git diff --check`.
+- Notes: All physical MMU scenarios run as isolated machines because page-table
+  allocations consume non-reclaiming early reservations and root switching
+  changes CR3. x86-32 reports mappings as executable because its current paging
+  mode has no NX support. Allocator exhaustion is tested at the bounded early
+  reservation capacity rather than by consuming all guest memory.
 
 **Depends on:** T4.1.
 
@@ -667,7 +677,19 @@ allocator-exhaustion boundaries.
 
 **Validation:** Both architecture test commands.
 
-### [ ] T4.3 Add expected-fault tests
+### [x] T4.3 Add expected-fault tests
+
+- Completed: 2026-09-18
+- Validation: `zig build tests`; both `architecture-tests` commands; both
+  `architecture-coverage-kernel` commands; production builds for x86_32 and
+  x86_64; `git diff --check`.
+- Notes: Real CPU accesses and instructions validate unmapped reads and writes,
+  supervisor write protection, CPL3 instruction fetches from supervisor pages,
+  invalid opcodes, and CPL3 software interrupts through a DPL0 IDT gate.
+  x86-64 additionally validates NX instruction-fetch faults. User-originated
+  scenarios use the production GDT, TSS, IDT, MMU, and `enterUserMode()` path.
+  x86-64 boot finalization now enables `CR0.WP` and `EFER.NXE`; x86-32 already
+  enabled `CR0.WP` during paging activation.
 
 **Depends on:** T4.1.
 
@@ -680,7 +702,18 @@ fault metadata; reset, hang, or a different vector fails the test.
 
 **Validation:** Both architecture test commands.
 
-### [ ] T4.4 Observe real timer interrupts
+### [x] T4.4 Observe real timer interrupts
+
+- Completed: 2026-09-19
+- Validation: `zig build tests`; both `architecture-tests` commands; both
+  `architecture-coverage-kernel` commands; both `architecture-coverage`
+  commands; production builds for x86_32 and x86_64; `git diff --check`.
+- Notes: Both physical x86 targets program the production PIT, install the
+  production IDT and PIC configuration, enable interrupts, and observe at least
+  two IRQ0 deliveries through timer-owned atomic state. Requiring a second
+  delivery verifies that the first interrupt completed the normal PIC EOI path.
+  A bounded polling loop reports a normal test failure if progress is absent;
+  diagnostic timer prose is not used as the test oracle.
 
 **Depends on:** T4.1.
 
@@ -691,7 +724,19 @@ rather than parsing temporary diagnostic prose.
 **Validation:** Architecture test command for each architecture that supports
 the tested timer path.
 
-### [ ] T4.5 Add boot-module fixture tests
+### [x] T4.5 Add boot-module fixture tests
+
+- Completed: 2026-09-19
+- Validation: `zig build tests`; both `architecture-tests` commands; both
+  `architecture-coverage-kernel` commands; both `architecture-coverage`
+  commands; production builds for x86_32 Multiboot and x86_64 Limine;
+  `git diff --check`.
+- Notes: Each physical scenario supplies 17 generated modules with deterministic
+  index-specific payloads and sizes. The production adapters retain their shared
+  capacity of 16 modules. Tests verify protocol order through payload signatures,
+  exact ranges and `BOOTLOADER_DATA` reservations, pairwise non-overlap, stable
+  repeated reads, and out-of-range behavior. Multiboot additionally reserves its
+  descriptor array as an adapter-specific implementation detail.
 
 **Work:** Package a deterministic fixture through Limine for x86-64 and add the
 equivalent Multiboot module packaging for x86-32. Verify module count, range,
@@ -699,7 +744,23 @@ reservation, cache behavior, and capacity policy.
 
 **Validation:** Both architecture test commands.
 
-### [ ] T4.6 Extract and test common syscall dispatch
+### [x] T4.6 Extract and test common syscall dispatch
+
+- Completed: 2026-09-19
+- Validation: `zig build tests`; `zig build coverage`; both
+  `architecture-tests`, `architecture-coverage-kernel`, and
+  `architecture-coverage` commands; production builds for x86_32 and x86_64;
+  formatting; `git diff --check`.
+- Notes: `src/common/syscall/main.zig` owns syscall decoding, capability
+  resolution, process invocation, permission-right derivation, and deterministic
+  ABI result mapping. Native tests use static service injection for argument and
+  failure-path verification and the production registries for integration
+  coverage; the dispatcher has 100% emitted-line coverage. An isolated test on
+  each physical x86 target invokes the production `int 0x80` gate and verifies
+  three- and five-argument register ordering through resulting VMA metadata.
+  Architecture adapters still perform debug-pointer access and terminal/halt
+  side effects. Safe user copying, caller execution-context lookup, and nonfatal
+  process exit or unknown-syscall containment remain P0.1, P0.4, and P0.2.
 
 **Related assessment:** P0.3 in `kernel_analysis.md`.
 
@@ -723,33 +784,51 @@ zig build architecture-tests -Darch=x86_64
 
 ### Phase 4 exit gate
 
-- [ ] Destructive tests run in isolated QEMU instances.
-- [ ] Physical mapping and fault behavior are verified.
-- [ ] Timer interrupts are observed rather than merely configured.
-- [ ] Both boot-module adapters are exercised.
-- [ ] Common syscall policy is natively testable and not duplicated by target.
+- [x] Destructive tests run in isolated QEMU instances.
+- [x] Physical mapping and fault behavior are verified.
+- [x] Timer interrupts are observed rather than merely configured.
+- [x] Both boot-module adapters are exercised.
+- [x] Common syscall policy is natively testable and not duplicated by target.
 
 ## Phase 5 — Add full-system verification
 
 **Objective:** Verify the production kernel, real root-task ELF, user-mode
 entry, and syscall ABI as one system.
 
-### [ ] T5.1 Add production system-smoke build steps
+### [x] T5.1 Add production system-smoke build steps
 
-**Future commands:**
+- Completed: 2026-09-19
+- Validation: both default `system-smoke` commands and x86-32 with
+  `-Dbootloader=multiboot`; production builds for both architectures.
+- Notes: The build reuses the production kernel and independently built
+  root-task artifacts. Limine packages both architectures by default, while
+  x86-32 also supports QEMU's direct Multiboot loader. The nested component
+  build declares both component source directories as inputs so root-task
+  changes cannot reuse a stale copied artifact.
+
+**Commands:**
 
 ```sh
 zig build system-smoke -Darch=x86_32
 zig build system-smoke -Darch=x86_64
 ```
 
-These commands do not exist yet; creating them is part of this item.
-
 **Work:** Build and package the production kernel and root task, boot headlessly,
 verify serial milestones and user-mode entry, exercise a capability-backed
 workflow, and terminate QEMU authoritatively.
 
-### [ ] T5.2 Define a versioned system-smoke protocol
+### [x] T5.2 Define a versioned system-smoke protocol
+
+- Completed: 2026-09-19
+- Validation: `zig build tests`; both default `system-smoke` commands; x86-32
+  Multiboot smoke; serial-race regression tests; `git diff --check`.
+- Notes: Shared ABI constants define protocol version 1. Production kernel and
+  root-task code emit unconditional complete-line records at semantic lifecycle
+  boundaries. The dedicated parser rejects missing, duplicate, malformed,
+  unknown, and out-of-order records. It waits for a complete terminal line,
+  validates guest status zero, sends QMP `quit`, and requires QEMU status zero.
+  Syscall-vector diagnostics are suppressed so user debug writes cannot be
+  prefixed or suffixed by interrupt prose.
 
 **Depends on:** T5.1.
 
@@ -760,7 +839,13 @@ memory-object mapping, and root-task exit.
 **Acceptance criteria:** The host rejects missing, duplicate, malformed, and
 out-of-order required records, as well as disagreement with QEMU exit status.
 
-### [ ] T5.3 Add full-system jobs to CI
+### [x] T5.3 Add full-system jobs to CI
+
+- Completed: 2026-09-19
+- Validation: workflow review; local execution of both matrix-equivalent smoke
+  commands; native tests and formatting.
+- Notes: The existing architecture matrix now runs production system smoke after
+  physical tests, coverage-kernel compilation, and production artifact builds.
 
 **Depends on:** T5.1 and T5.2.
 
@@ -771,7 +856,15 @@ smoke tests.
 **Candidates for scheduled jobs:** Full coverage reports, isolated expected
 faults, stress variants, and coverage trend publication.
 
-### [ ] T5.4 Track test and coverage trends
+### [x] T5.4 Track test and coverage trends
+
+- Completed: 2026-09-19
+- Validation: `zig build tests`; local trend-report generation from real native
+  and physical logs; report-generator unit tests.
+- Notes: A weekly and manually dispatchable workflow uploads raw reports and a
+  Markdown snapshot for 90 days. It records native, host-tool, component, and
+  physical test counts; emitted common and architecture coverage; and production
+  smoke status. Coverage remains informational and has no threshold gate.
 
 **Track:** Native and component test counts, physical test counts, emitted
 common coverage, emitted architecture coverage, and system-smoke status.
@@ -781,11 +874,11 @@ used until denominators and suite responsibilities are stable.
 
 ### Phase 5 exit gate
 
-- [ ] Both production architectures boot the real root task in CI.
-- [ ] Userspace completes a capability-backed workflow.
-- [ ] The system protocol and QEMU exit status agree.
-- [ ] Failures identify the initialization stage that did not complete.
-- [ ] Test and coverage trends are recorded without production test hooks.
+- [x] Both production architectures boot the real root task in CI.
+- [x] Userspace completes a capability-backed workflow.
+- [x] The system protocol and QEMU exit status agree.
+- [x] Failures identify the initialization stage that did not complete.
+- [x] Test and coverage trends are recorded without production test hooks.
 
 ## Validation matrix
 
@@ -810,9 +903,10 @@ zig build architecture-coverage -Darch=x86_64
 
 zig build -Darch=x86_32
 zig build -Darch=x86_64
-```
 
-Add the two `system-smoke` commands after T5.1 creates them.
+zig build system-smoke -Darch=x86_32
+zig build system-smoke -Darch=x86_64
+```
 
 ## Updating this roadmap
 

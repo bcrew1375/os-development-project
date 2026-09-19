@@ -33,7 +33,7 @@ original LLVM IR without running QEMU.
    locations in the original IR.
 7. `collect.py` validates the ELF architecture and writes a versioned points
    stream. `points_file.zig` validates and parses that stream before aggregation
-   with `tools/coverage/report.zig`.
+   with `tools/coverage/report/main.zig`.
 
 ## Coverage semantics
 
@@ -41,7 +41,9 @@ A line is coverable when the exact instrumented binary contains a debug-mapped
 instruction in a sanitizer-guarded basic block. It is covered when that block's
 guard executes. Zig compiles declarations lazily and ReleaseFast can inline or
 eliminate helpers, so source files with no emitted runtime locations are shown
-as `no emitted code`; they are neither 0% nor 100% covered.
+as `no emitted code`; they are neither 0% nor 100% covered. The `Missing` column
+contains only compiler-emitted coverable lines whose guarded blocks did not
+execute. It does not classify unreferenced or optimized-away source as missing.
 
 Tests should validate supported architecture behavior. Production interfaces
 must not expose private implementation hooks solely to make code appear in the

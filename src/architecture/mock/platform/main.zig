@@ -8,6 +8,7 @@ pub const State = struct {
     console_initialization_count: usize = 0,
     timer_initialization_count: usize = 0,
     timer_frequency: ?usize = null,
+    timer_interrupt_count: usize = 0,
     console_bytes: [MAX_CONSOLE_BYTES]u8 = undefined,
     console_byte_count: usize = 0,
     color_changes: [MAX_COLOR_CHANGES]arch.TextColor = undefined,
@@ -19,6 +20,19 @@ var state = State{};
 pub fn initializeTimer(frequency: usize) void {
     state.timer_initialization_count += 1;
     state.timer_frequency = frequency;
+    resetTimerInterruptCount();
+}
+
+pub fn resetTimerInterruptCount() void {
+    state.timer_interrupt_count = 0;
+}
+
+pub fn getTimerInterruptCount() usize {
+    return state.timer_interrupt_count;
+}
+
+pub fn recordTimerInterruptForTest() void {
+    state.timer_interrupt_count +|= 1;
 }
 
 pub fn initializeConsole() void {

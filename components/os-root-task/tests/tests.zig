@@ -14,7 +14,7 @@ const RecordingEnvironment = struct {
     var responses: [8]u32 = undefined;
     var response_count: usize = 0;
     var response_index: usize = 0;
-    var diagnostics: [8][]const u8 = undefined;
+    var diagnostics: [16][]const u8 = undefined;
     var diagnostic_count: usize = 0;
 
     fn reset(configured_responses: []const u32) void {
@@ -145,9 +145,10 @@ test "startup rejects invalid boot information before capability syscalls" {
     RecordingEnvironment.reset(&.{});
     try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 0), RecordingEnvironment.syscall_count);
-    try std.testing.expectEqual(@as(usize, 2), RecordingEnvironment.diagnostic_count);
-    try expectDiagnostic(0, "root: started\n");
-    try expectDiagnostic(1, "root: invalid boot info\n");
+    try std.testing.expectEqual(@as(usize, 3), RecordingEnvironment.diagnostic_count);
+    try expectDiagnostic(0, abi.system_smoke.USERSPACE_ENTERED);
+    try expectDiagnostic(1, "root: started\n");
+    try expectDiagnostic(2, "root: invalid boot info\n");
 
     boot_info = validBootInfo();
     boot_info.version += 1;
@@ -162,17 +163,17 @@ test "startup stops after each capability or mapping failure" {
     RecordingEnvironment.reset(&.{abi.capability.INVALID_CAPABILITY});
     try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 1), RecordingEnvironment.syscall_count);
-    try expectDiagnostic(2, "root: failed to acquire address-space capability\n");
+    try expectDiagnostic(4, "root: failed to acquire address-space capability\n");
 
     RecordingEnvironment.reset(&.{ 11, abi.capability.INVALID_CAPABILITY });
     try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 2), RecordingEnvironment.syscall_count);
-    try expectDiagnostic(3, "root: failed to acquire memory-object capability\n");
+    try expectDiagnostic(6, "root: failed to acquire memory-object capability\n");
 
     RecordingEnvironment.reset(&.{ 11, 22, abi.syscall.SYSCALL_FAILURE });
     try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 3), RecordingEnvironment.syscall_count);
-    try expectDiagnostic(4, "root: failed to map managed memory object using capabilities\n");
+    try expectDiagnostic(8, "root: failed to map managed memory object using capabilities\n");
 }
 
 test "startup completes capability-based memory setup in order" {
@@ -181,12 +182,17 @@ test "startup completes capability-based memory setup in order" {
 
     try std.testing.expectEqual(abi.syscall.EXIT_SUCCESS, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 3), RecordingEnvironment.syscall_count);
-    try std.testing.expectEqual(@as(usize, 5), RecordingEnvironment.diagnostic_count);
-    try expectDiagnostic(0, "root: started\n");
-    try expectDiagnostic(1, "root: boot info received\n");
-    try expectDiagnostic(2, "root: acquired address-space capability\n");
-    try expectDiagnostic(3, "root: acquired memory-object capability\n");
-    try expectDiagnostic(4, "root: mapped managed memory object using capabilities\n");
+    try std.testing.expectEqual(@as(usize, 10), RecordingEnvironment.diagnostic_count);
+    try expectDiagnostic(0, abi.system_smoke.USERSPACE_ENTERED);
+    try expectDiagnostic(1, "root: started\n");
+    try expectDiagnostic(2, abi.system_smoke.BOOT_INFO_VALIDATED);
+    try expectDiagnostic(3, "root: boot info received\n");
+    try expectDiagnostic(4, abi.system_smoke.ADDRESS_SPACE_CAPABILITY_ACQUIRED);
+    try expectDiagnostic(5, "root: acquired address-space capability\n");
+    try expectDiagnostic(6, abi.system_smoke.MEMORY_OBJECT_CAPABILITY_ACQUIRED);
+    try expectDiagnostic(7, "root: acquired memory-object capability\n");
+    try expectDiagnostic(8, abi.system_smoke.MEMORY_OBJECT_MAPPED);
+    try expectDiagnostic(9, "root: mapped managed memory object using capabilities\n");
 
     const map_call = RecordingEnvironment.syscalls[2].five;
     try std.testing.expectEqual(

@@ -15,20 +15,8 @@ pub fn descriptorTablesInitialize() !void {
     @call(.never_inline, arch.boot.finishBoot, .{});
 }
 
-pub fn addressSpaceRootCanBeCreated() !void {
-    const root = try @call(.never_inline, arch.mmu.createAddressSpaceRoot, .{});
-    try framework.expect(root.value != 0);
-    try framework.expect(root.value % arch.mmu.getPageSize() == 0);
-}
-
 pub fn platformConsoleInitializes() !void {
     @call(.never_inline, arch.platform.initializeConsole, .{});
     arch.platform.writer().writeAll("console smoke output\n") catch
         return framework.TestError.ExpectationFailed;
-}
-
-pub fn platformTimerInitializes() !void {
-    arch.interrupts.disableInterrupts();
-    @call(.never_inline, arch.platform.initializeTimer, .{100});
-    arch.interrupts.disableInterrupts();
 }

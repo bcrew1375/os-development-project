@@ -13,6 +13,10 @@ pub const State = struct {
     interrupt_counts: [vectors.total]usize = [_]usize{0} ** vectors.total,
 
     pub fn recordInterrupt(self: *State, vector: usize) Decision {
+        if (vector == vectors.syscall) {
+            return .{ .print = false, .count = 0 };
+        }
+
         var count: usize = 0;
         if (vector < vectors.total) {
             self.interrupt_counts[vector] +|= 1;

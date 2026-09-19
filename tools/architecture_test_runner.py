@@ -289,13 +289,24 @@ def build_command(arguments: argparse.Namespace, serial_log: pathlib.Path) -> li
             str(arguments.image),
         ]
     )
+    boot_modules = getattr(arguments, "boot_module", [])
+    if boot_modules:
+        if arguments.image_kind != "kernel":
+            raise ValueError("boot modules are only valid with direct kernel images")
+        if any("," in str(path) for path in boot_modules):
+            raise ValueError("boot module paths must not contain commas")
+        command.extend(["-initrd", ",".join(map(str, boot_modules))])
     return command
 
 
 def run(arguments: argparse.Namespace) -> int:
     with tempfile.NamedTemporaryFile() as serial_log_file:
         serial_log = pathlib.Path(serial_log_file.name)
-        command = build_command(arguments, serial_log)
+        try:
+            command = build_command(arguments, serial_log)
+        except ValueError as error:
+            print(f"invalid architecture test configuration: {error}", file=sys.stderr)
+            return 1
         print(
             "Launching architecture tests with "
             f"{command[0]} ({arguments.image_kind}: {arguments.image})",
@@ -360,6 +371,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--expected-error-code-value", type=lambda value: int(value, 0), default=0)
     parser.add_argument("--expected-cr2", type=lambda value: int(value, 0))
     parser.add_argument("--coverage-output", type=pathlib.Path)
+    parser.add_argument("--boot-module", action="append", type=pathlib.Path, default=[])
     arguments = parser.parse_args()
     if arguments.timeout_seconds <= 0:
         parser.error("--timeout-seconds must be greater than zero")

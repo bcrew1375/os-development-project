@@ -51,6 +51,32 @@ pub fn getPhysicalAddressInAddressSpace(root: arch.AddressSpaceRoot, virtualAddr
     return pageBasePhysicalAddress(page_table_entry) + pageOffset(virtualAddress);
 }
 
+pub fn getPageProtection(virtualAddress: usize) ?arch.PageProtection {
+    return getPageProtectionInAddressSpace(getCurrentAddressSpaceRoot(), virtualAddress);
+}
+
+pub fn getPageProtectionInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize) ?arch.PageProtection {
+    const walk = walkToPageTable(root, virtualAddress) orelse return null;
+    const page_entry = walk.page_table[walk.page_table_index];
+    if (!page_entry.present) return null;
+
+    return .{
+        .write = walk.pml4[walk.pml4_index].writeable and
+            walk.pdpt[walk.pdpt_index].writeable and
+            walk.page_directory[walk.page_directory_index].writeable and
+            page_entry.writeable,
+        .user = walk.pml4[walk.pml4_index].user_accessible and
+            walk.pdpt[walk.pdpt_index].user_accessible and
+            walk.page_directory[walk.page_directory_index].user_accessible and
+            page_entry.user_accessible,
+        .execute = !walk.pml4[walk.pml4_index].no_execute and
+            !walk.pdpt[walk.pdpt_index].no_execute and
+            !walk.page_directory[walk.page_directory_index].no_execute and
+            !page_entry.no_execute,
+        .global = page_entry.global,
+    };
+}
+
 pub fn isTablePresent(virtualAddress: usize) bool {
     return isTablePresentInAddressSpace(getCurrentAddressSpaceRoot(), virtualAddress);
 }
@@ -110,7 +136,13 @@ pub fn mapTableInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize
 }
 
 pub fn unmapPage(virtualAddress: usize) void {
-    const walk = walkToPageTable(getCurrentAddressSpaceRoot(), virtualAddress) orelse return;
+    unmapPageInAddressSpace(getCurrentAddressSpaceRoot(), virtualAddress);
+}
+
+pub fn unmapPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize) void {
+    const walk = walkToPageTable(root, virtualAddress) orelse return;
+    if (!walk.page_table[walk.page_table_index].present) return;
+
     walk.page_table[walk.page_table_index].present = false;
     flushTLB(virtualAddress);
 }

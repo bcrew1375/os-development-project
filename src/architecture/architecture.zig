@@ -59,6 +59,8 @@ pub const TextColor = enum(u8) {
 pub const MAX_MEMORY_MAP_ENTRIES = 128;
 /// Maximum number of early reserved memory regions.
 pub const MAX_EARLY_RESERVATIONS = 128;
+/// Maximum number of boot modules retained by physical boot adapters.
+pub const MAX_BOOT_MODULES = 16;
 
 /// Errors exposed by architecture MMU implementations.
 pub const MmuError = error{
@@ -185,7 +187,10 @@ pub fn validateImpl(comptime T: type) void {
             mapPage: fn (virtualAddress: usize, physicalAddress: usize, flags: PageProtection) MmuError!void,
             mapTableInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize, physicalAddress: usize, flags: PageProtection) MmuError!void,
             mapTable: fn (virtualAddress: usize, physicalAddress: usize, flags: PageProtection) MmuError!void,
+            unmapPageInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize) void,
             unmapPage: fn (virtualAddress: usize) void,
+            getPageProtectionInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize) ?PageProtection,
+            getPageProtection: fn (virtualAddress: usize) ?PageProtection,
             getMaxAvailableAddress: fn () u64,
             getDirectMapVirtualAddress: fn () u64,
             getDirectMapMaxSize: fn () u64,
@@ -206,6 +211,8 @@ pub fn validateImpl(comptime T: type) void {
 
         validateInterface(T.platform, struct {
             initializeTimer: fn (frequency: usize) void,
+            resetTimerInterruptCount: fn () void,
+            getTimerInterruptCount: fn () usize,
             initializeConsole: fn () void,
             setColor: fn (color: TextColor) void,
         });

@@ -4,6 +4,11 @@ const std = @import("std");
 const framework = @import("framework.zig");
 pub const manifest = framework.manifest;
 const common = @import("x86/common.zig");
+const boot_modules = @import("x86/boot_modules.zig");
+const faults = @import("x86/faults.zig");
+const mmu = @import("x86/mmu.zig");
+const syscalls = @import("x86/syscalls.zig");
+const timer = @import("x86/timer.zig");
 const x86_32 = @import("x86/x86_32.zig");
 const x86_64 = @import("x86/x86_64.zig");
 
@@ -66,8 +71,28 @@ fn testFunction(id: manifest.TestId) framework.TestFunction {
         .x86_64_kernel_uses_higher_half => x86_64.kernelUsesHigherHalf,
         .x86_64_hhdm_is_page_aligned => x86_64.hhdmIsPageAligned,
         .x86_64_descriptor_tables_initialize => x86_64.descriptorTablesInitialize,
-        .x86_64_address_space_root_can_be_created => x86_64.addressSpaceRootCanBeCreated,
+        .x86_32_address_space_root_can_be_created,
+        .x86_64_address_space_root_can_be_created,
+        => mmu.addressSpaceRootCanBeCreated,
+        .mmu_explicit_root_mapping_translates => mmu.explicitRootMappingTranslates,
+        .mmu_address_spaces_are_isolated_and_switchable => mmu.addressSpacesAreIsolatedAndSwitchable,
+        .mmu_unmapping_is_idempotent => mmu.unmappingIsIdempotent,
+        .mmu_effective_permissions_are_reported => mmu.effectivePermissionsAreReported,
+        .mmu_allocator_exhaustion_is_bounded => mmu.allocatorExhaustionIsBounded,
+        .page_fault_unmapped_read => faults.unmappedRead,
+        .page_fault_unmapped_write => faults.unmappedWrite,
+        .page_fault_write_protection => faults.writeProtectionViolation,
+        .x86_32_page_fault_user_supervisor_instruction_fetch,
+        .x86_64_page_fault_user_supervisor_instruction_fetch,
+        => faults.userSupervisorInstructionFetch,
+        .x86_64_page_fault_non_executable_instruction_fetch => faults.nonExecutableInstructionFetch,
+        .invalid_opcode_fault => faults.invalidOpcode,
+        .general_protection_from_user_interrupt => faults.generalProtectionFromUserInterrupt,
         .x86_64_platform_console_initializes => x86_64.platformConsoleInitializes,
-        .x86_64_platform_timer_initializes => x86_64.platformTimerInitializes,
+        .x86_32_platform_timer_interrupts_are_delivered,
+        .x86_64_platform_timer_initializes,
+        => timer.interruptsAreDelivered,
+        .boot_modules_are_cached_reserved_and_capacity_limited => boot_modules.areCachedReservedAndCapacityLimited,
+        .syscall_interrupt_gate_preserves_register_abi => syscalls.interruptGatePreservesRegisterAbi,
     };
 }

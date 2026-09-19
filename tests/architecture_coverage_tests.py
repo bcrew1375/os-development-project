@@ -219,6 +219,34 @@ Other:
         self.assertIn("isa-debugcon,iobase=0xe9,chardev=coverage0", command)
         self.assertEqual(["-cdrom", "coverage.iso"], command[-2:])
 
+    def test_qemu_command_aggregates_multiboot_modules(self) -> None:
+        arguments = types.SimpleNamespace(
+            architecture="x86_32",
+            image_kind="kernel",
+            image=pathlib.Path("kernel.elf"),
+            coverage_output=None,
+            boot_module=[pathlib.Path("first.bin"), pathlib.Path("second.bin")],
+        )
+        command = ARCHITECTURE_TEST_RUNNER.build_command(
+            arguments,
+            pathlib.Path("serial.log"),
+        )
+        self.assertEqual(["-initrd", "first.bin,second.bin"], command[-2:])
+
+    def test_qemu_command_rejects_modules_for_optical_disc(self) -> None:
+        arguments = types.SimpleNamespace(
+            architecture="x86_64",
+            image_kind="cdrom",
+            image=pathlib.Path("tests.iso"),
+            coverage_output=None,
+            boot_module=[pathlib.Path("module.bin")],
+        )
+        with self.assertRaisesRegex(ValueError, "direct kernel"):
+            ARCHITECTURE_TEST_RUNNER.build_command(
+                arguments,
+                pathlib.Path("serial.log"),
+            )
+
     def test_qemu_protocol_accepts_complete_success(self) -> None:
         summary = ARCHITECTURE_TEST_RUNNER.validate_protocol(
             "ordinary serial diagnostic\n"

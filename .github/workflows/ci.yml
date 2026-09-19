@@ -82,3 +82,6 @@ jobs:
 
       - name: Build kernel and root task
         run: zig build -Darch=${{ matrix.arch }}
+
+      - name: Run production system smoke test
+        run: zig build system-smoke -Darch=${{ matrix.arch }}

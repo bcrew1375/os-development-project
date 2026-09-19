@@ -8,6 +8,7 @@ const configuration = @import("build/configuration.zig");
 const documentation = @import("build/documentation.zig");
 const qemu_test_runner = @import("build/qemu_test_runner.zig");
 const run = @import("build/run.zig");
+const system_smoke = @import("build/system_smoke.zig");
 const unit_tests = @import("build/tests.zig");
 
 pub fn build(b: *std.Build) void {
@@ -34,4 +35,5 @@ pub fn build(b: *std.Build) void {
     architecture_coverage.addSteps(b, config, architecture_test_timeout);
     documentation.addSteps(b, optimize);
     run.addStep(b, config, kernel_artifacts.kernel, kernel_artifacts.root_task);
+    system_smoke.addStep(b, config, kernel_artifacts.kernel, kernel_artifacts.root_task);
 }
