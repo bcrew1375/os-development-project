@@ -1,12 +1,12 @@
 # Current Kernel Assessment
 
-Date: 2026-09-14
+Date: 2026-09-20
 
 This document records a high-level assessment of the current repository state.
 It is the single source of truth for implementation maturity and the prioritized
 technical backlog. Evergreen project conventions remain in
-`kernel-os-code-organization-best-practices.md` and
-`zig-code-structure-best-practices.md`.
+the [kernel code-organization reference](../reference/kernel-code-organization.md)
+and [Zig code-structure reference](../reference/zig-code-structure.md).
 
 ## Executive summary
 
@@ -19,15 +19,22 @@ architectural foundations:
 - the user/kernel ABI and initial root task are independently scoped
   components;
 - common memory, process-registry, and capability-table logic has host tests;
-- x86-64 reaches ring 3, handles root-task system calls, and observes a clean
-  root-task exit in the existing serial log.
+- both x86 targets have deterministic physical architecture tests and production
+  system-smoke tests that boot the real root task, enter ring 3, exercise the
+  syscall ABI, and observe a clean root-task exit.
 
 The kernel is not yet a functioning microkernel in the seL4 sense. It has the
 shape of an initial capability system, but many exposed objects currently hold
 metadata rather than complete kernel resources. It has no thread model,
 scheduler, IPC endpoints, blocking operations, capability derivation or
-revocation, object destruction, or user-fault containment. The active boot path
-also bypasses the physical memory manager and kernel heap.
+revocation, object destruction, user-fault containment, or kernel-mediated
+transfer of physical-memory authority to the root task.
+
+The absence of an active kernel PMM and general-purpose kernel heap is no longer
+an activation gap. It is the intended architectural direction: after bounded
+bootstrap allocation, physical-memory allocation policy and general heap policy
+belong in user space. The tracked PMM, boundary-tag heap, and global kernel-heap
+facade are experimental legacy fragments, not future kernel services.
 
 The most accurate maturity description is:
 
@@ -39,7 +46,8 @@ The most accurate maturity description is:
 This assessment is based on inspection of the current tracked source, tests,
 build configuration, x86-64 ELF artifacts, and existing serial/QEMU logs.
 
-The existing x86-64 serial output demonstrates this sequence:
+The production system-smoke tests for x86-32 and x86-64 demonstrate this
+sequence:
 
 1. initialize the framebuffer console;
 2. prepare and launch the first user process;
@@ -91,6 +99,28 @@ The root task communicates with the kernel only through the shared ABI and is
 consumed as an ELF runtime artifact rather than linked into the kernel. This is
 the correct boundary for a microkernel-oriented design.
 
+### Memory-policy boundary matches the seL4 direction
+
+The intended steady state is deliberately different from a conventional kernel
+PMM plus kernel heap:
+
+- the kernel uses bounded, auditable storage for kernel objects and a monotonic
+  bootstrap allocator only for resources that must exist before user space;
+- the kernel retains privileged MMU mechanisms, mapping validation, capability
+  checks, and bookkeeping needed to protect physical resources;
+- the root task receives authority over safe, available physical ranges and
+  implements frame allocation, higher-level memory policy, and userspace heaps;
+- user-space allocators request mappings or retype delegated physical-memory
+  capabilities rather than drawing from an implicit kernel-global heap;
+- device, firmware, kernel-image, boot-module, page-table, and other reserved
+  ranges remain unavailable unless explicitly represented by restricted
+  capabilities.
+
+This boundary is not implemented yet. `BootInfo` currently describes only boot
+modules, and the ABI has no untyped/physical-range capability or retype operation.
+The existing `pmm.zig`, `heap.zig`, and `kernel_heap.zig` remain in the tree as
+experimental code and tests, but they should not shape new kernel interfaces.
+
 ### Architecture separation and static validation
 
 `src/architecture/architecture.zig` selects x86-32, x86-64, or mock
@@ -106,8 +136,6 @@ x86-32 and x86-64 interrupt handlers.
 
 Tests are kept outside source files and cover useful behavior in:
 
-- the boundary-tag heap;
-- PMM allocation and accounting basics;
 - VMA range validation and overlap detection;
 - demand-fault resolution and permission checks;
 - process and memory-object registries;
@@ -122,8 +150,9 @@ substantially more credible than a no-op mock would.
 
 The build supports both x86 targets, independently builds the root task,
 accepts an externally supplied root-task artifact, runs component tests, emits
-API documentation, and launches QEMU. CI checks formatting, executes tests, and
-builds both architectures with Zig 0.15.2.
+API documentation, and launches QEMU. CI checks formatting, runs native tests,
+executes physical architecture tests, builds both targets, and runs production
+system-smoke tests with Zig 0.15.2.
 
 ## Prioritized actionable critique
 
@@ -191,31 +220,22 @@ can stop the kernel.
 non-panic result, while kernel-originated fatal exceptions still stop with useful
 diagnostics.
 
-#### P0.3 Extract a common system-call dispatcher
+#### P0.3 Common system-call dispatcher — substantially complete
 
-**Problem:** x86-32 and x86-64 interrupt files duplicate syscall decoding and
-directly invoke capability and process policy.
+**Verified status:** `src/common/syscall/main.zig` now owns architecture-neutral
+syscall decoding, capability resolution, process operation selection, rights
+derivation, and deterministic ABI result mapping. Both x86 adapters marshal trap
+registers into the common request, and native plus physical tests exercise the
+path.
 
-**Why it matters:** Security-sensitive policy is duplicated, architecture code
-depends on broad kernel modules, and host tests cannot exercise the real syscall
-decision path.
+**Remaining work:** Architecture handlers still own unsafe debug-pointer access,
+caller identity is still hard-coded, and exit/unsupported-syscall side effects
+still halt the system. Those concerns remain tracked by **P0.1**, **P0.2**, and
+**P0.4** rather than by this item.
 
-**Actions:**
-
-1. Define an architecture-neutral `SyscallRequest` containing a syscall number
-   and a fixed array of machine-independent argument values.
-2. Define a typed `SyscallResult` and ABI error mapping.
-3. Add `src/common/syscall/main.zig` with one dispatcher entry point.
-4. Move capability and process operation selection into the common dispatcher.
-5. Keep only trap-frame register marshalling in each x86 interrupt module.
-6. Pass caller identity into the dispatcher explicitly.
-7. Replace ad hoc console error messages with returned error codes; retain
-   optional structured diagnostics outside the hot path.
-8. Add table-driven tests for every known syscall, unknown numbers, invalid
-   handles, invalid rights, malformed flags, and range errors.
-
-**Done when:** Both x86 implementations call the same tested dispatcher and
-contain no capability/process policy beyond register conversion.
+**Done when:** The remaining architecture adapters contain only trap-frame
+marshalling and explicitly delegated architecture side effects. The common
+policy portion of this item is complete.
 
 #### P0.4 Make caller identity explicit
 
@@ -292,32 +312,41 @@ destroyed.
 **Done when:** Every address-space handle has exactly one hardware root, the root
 task uses a registered object, and mappings target that object's root.
 
-#### P1.3 Give memory objects real physical backing
+#### P1.3 Back memory objects with user-supplied physical authority
 
 **Problem:** A memory object records only owner and size. VMA fault resolution
-ignores its handle and offset and allocates unrelated anonymous frames.
+ignores its handle and offset and allocates unrelated anonymous frames through a
+kernel-internal allocator path.
 
 **Why it matters:** Mapping the same object twice does not provide shared memory,
-so the memory-object abstraction currently validates only control-plane
-metadata.
+and implicit kernel allocation conflicts with the intended seL4-style model in
+which user space controls physical-memory allocation policy.
 
 **Actions:**
 
-1. Define a per-page backing entry with explicit uncommitted/committed state.
-2. Choose a fixed-capacity backing representation suitable for the current
-   no-general-heap boot stage.
-3. Add a lookup from memory-object handle and page offset to backing entry.
-4. Allocate and zero a physical frame on the first fault for an uncommitted page.
-5. Reuse the committed frame for subsequent mappings and faults.
-6. Validate object offset, page index, and permissions before allocation.
-7. Roll back frame commitment when MMU mapping fails.
-8. Track mapping or object references needed for safe destruction.
-9. Add tests mapping one object into two address spaces and verifying the same
-   physical frame is used.
-10. Extend the root-task demonstration to write and read object-backed memory.
+1. Define a capability type representing an aligned physical range or untyped
+   memory authority delegated to the root task.
+2. Define a retype/create operation that consumes or subdivides that authority to
+   create frame-backed memory objects without overlap.
+3. Store immutable physical backing identity, size, and derivation metadata in
+   each created memory object.
+4. Require explicit user-supplied backing authority; do not allocate frames from
+   a kernel-global PMM on mapping or fault.
+5. Map the same backing pages for every mapping of the same object and offset.
+6. Validate alignment, bounds, rights, object type, and cache/device attributes
+   before installing mappings.
+7. Make object creation and mapping transactional, including rollback when MMU
+   setup fails.
+8. Track capability derivation, mappings, and references needed for safe revoke
+   and destruction.
+9. Add tests that reject overlapping retypes and verify that one object mapped
+   into two address spaces resolves to the same physical frames.
+10. Extend the root-task demonstration to allocate one page from delegated
+    physical authority, create a memory object, map it, and read/write it.
 
-**Done when:** Memory-object identity determines physical backing and shared
-mapping behavior is verified by host tests and QEMU.
+**Done when:** Memory-object identity is tied to explicitly delegated physical
+memory, shared mapping behavior is verified, and no runtime memory-object path
+implicitly calls a kernel PMM.
 
 #### P1.4 Evolve protected handles into capability spaces
 
@@ -416,81 +445,97 @@ to yield voluntarily.
 **Done when:** A CPU-bound user thread cannot starve another ready thread and
 timer-driven switches preserve state.
 
-### Priority 3: memory-management correctness and activation
+### Priority 3: user-space physical-memory authority and mapping correctness
 
-#### P3.1 Make PMM initialization deterministic
+#### P3.1 Define the physical-memory authority ABI
 
-**Problem:** The frame map is allocated uninitialized and populated only for
-memory-map entries. Gaps in the firmware map may retain indeterminate state.
+**Problem:** The boot ABI exposes boot modules but not the normalized available
+physical ranges or kernel reservation boundaries needed by a user-space memory
+manager. The capability ABI has no physical-range/untyped object type.
 
-**Why it matters:** The allocator can interpret uninitialized metadata as free
-physical memory.
-
-**Actions:**
-
-1. Initialize every tracked frame as used and reserved.
-2. Validate each memory-map range for overflow and target address width.
-3. Clamp or reject ranges beyond tracked physical memory explicitly.
-4. Mark only complete frames in confirmed available regions as free.
-5. Apply early reservations after available-region initialization.
-6. Calculate totals from resulting frame states instead of raw region sizes.
-7. Add tests with holes, overlapping entries, unaligned ranges, and ranges above
-   the tracked limit.
-
-**Done when:** Every frame has deterministic state and accounting matches an
-independent scan of frame metadata for adversarial maps.
-
-#### P3.2 Make PMM transitions atomic and accurately accounted
-
-**Problem:** `reserve()` silently accepts out-of-range requests and updates
-counters by requested range size instead of actual transitions. `free()` can
-mutate frames before discovering a later invalid frame, and double frees can
-inflate availability.
-
-**Why it matters:** Incorrect physical-memory accounting can cause overlapping
-allocations or eventual memory corruption.
+**Why it matters:** The root task cannot safely become the system memory manager
+without authoritative knowledge and non-forgeable authority over allocatable RAM.
+Passing raw addresses without capability control would merely move bookkeeping,
+not authority, into user space.
 
 **Actions:**
 
-1. Add checked range construction shared by allocate, reserve, and free.
-2. Return explicit errors for zero-size, overflow, and out-of-range operations.
-3. Validate an entire range before changing any frame.
-4. Define legal transitions between unavailable, free, allocated, and reserved.
-5. Update counters only when a frame actually changes state.
-6. Reject freeing reserved, unavailable, or already-free frames.
-7. Remove `trackAllocationsAsReserved` or replace it with an explicit allocation
-   purpose parameter.
-8. Remove or deliberately integrate the unused `markFrames()` helper.
-9. Add tests for duplicate reservation, overlap, partial failure, double free,
-   reserved free, overflow, and fragmented allocation.
+1. Define a versioned, fixed-layout descriptor for page-aligned physical ranges.
+2. Distinguish allocatable RAM from kernel image, page tables, boot modules,
+   framebuffer/MMIO, firmware, bad memory, and retained boot data.
+3. Normalize, sort, validate, align, and subtract reservations in privileged boot
+   code before delegation.
+4. Represent each delegated range with a root-task capability, not only an
+   informational address pair.
+5. Define target-width and overflow behavior for x86-32 and x86-64.
+6. Specify whether descriptors are embedded in `BootInfo`, referenced through a
+   bounded user mapping, or enumerated through a capability query.
+7. Add ABI layout tests and adversarial range-normalization tests.
 
-**Done when:** Every PMM operation is all-or-nothing and counters always equal
-the state represented by the frame map.
+**Done when:** The root task receives a complete, non-overlapping description of
+allocatable physical memory and matching capabilities that cannot name reserved
+or out-of-range memory.
 
-#### P3.3 Activate PMM in the hardware boot path
+#### P3.2 Implement user-space frame allocation and heap policy
 
-**Problem:** The active boot path continues to use the monotonic early allocator
-for root-task pages and page tables. PMM initialization and the transition flag
-are commented out in `kernelMain()`.
+**Problem:** The root task currently wraps only address-space and memory-object
+syscalls. It has no allocator for delegated physical ranges and no userspace heap.
+The in-kernel PMM and heap fragments encode policy in the wrong protection domain.
 
-**Why it matters:** Host-tested PMM behavior is not validated on hardware, and
-all runtime allocations remain permanently reserved.
+**Why it matters:** A seL4-style design depends on the initial user-space resource
+manager deciding how physical memory is partitioned, reused, and delegated.
 
 **Actions:**
 
-1. Extract a fallible staged `kernelInitialize()` function.
-2. Initialize the terminal and early reservations first.
-3. Initialize PMM before creating runtime kernel objects.
-4. Switch `earlyAllocatorActive` at one documented transition point.
-5. Make MMU page-table allocation use PMM after that transition.
-6. Preserve the early allocator only for resources that truly must be permanent.
-7. Add rollback or explicit fatal boundaries for each initialization stage.
-8. Remove the large commented experimental block from `kernelMain()`.
-9. Add serial milestones and a QEMU assertion that PMM-backed allocations occur.
+1. Add a root-task memory-management subsystem that imports only the shared ABI.
+2. Implement deterministic physical-range bookkeeping over delegated capabilities.
+3. Support aligned split/subrange allocation and explicit coalescing or another
+   documented reclamation strategy.
+4. Build a userspace allocator on mapped memory rather than exposing a kernel
+   `kmalloc`-style service.
+5. Keep allocator metadata in root-task-owned memory with checked arithmetic and
+   explicit exhaustion errors.
+6. Add host tests for holes, alignment, split, coalescing, exhaustion, duplicate
+   free, and reserved-range rejection.
+7. Keep the allocator policy replaceable without changing kernel-private code.
 
-**Done when:** Normal root-task setup after the transition consumes PMM frames,
-the early allocator no longer grows during runtime setup, and both architectures
-still boot.
+**Done when:** The root task can allocate and reclaim physical subranges and back
+its own heap without importing kernel modules or relying on a kernel-global PMM.
+
+#### P3.3 Bound and retire legacy kernel allocation paths
+
+**Problem:** Root-task pages, address-space roots, and page tables currently use
+`arch.early_allocator`, while `vmm.zig` still contains a dormant transition to
+`pmm.zig`. `kernel.zig` retains a large commented PMM/heap experiment, and common
+exports still make the legacy PMM and kernel heap appear architectural.
+
+**Why it matters:** A monotonic allocator is acceptable for bounded bootstrap
+objects, but an undocumented always-growing runtime path can exhaust memory and
+blur the intended ownership boundary. Dormant PMM/heap paths invite future code
+to depend on the wrong model.
+
+**Actions:**
+
+1. Inventory every bootstrap allocation and classify its lifetime and maximum
+   count before the root task starts.
+2. Keep a small kernel-owned mechanism for page tables and kernel-object metadata;
+   prefer fixed-capacity pools or capability-funded object creation over a
+   general-purpose heap.
+3. Remove `earlyAllocatorActive` and the fallback from VMM allocation to the
+   experimental PMM.
+4. Remove PMM and kernel-heap imports, compatibility aliases, and commented boot
+   activation code from production kernel paths.
+5. Move reusable allocator implementations and their tests into a user-space
+   memory-manager component, or delete them if they no longer match that design.
+6. Preserve only the early reservation logic required to exclude privileged boot
+   resources from delegation.
+7. Add accounting and exhaustion tests for every retained fixed-capacity or
+   bootstrap pool.
+8. Fail explicitly if bounded kernel bootstrap storage is exhausted.
+
+**Done when:** Production kernel code has no general-purpose PMM or heap API,
+bootstrap allocation is bounded and documented, and runtime physical-memory
+policy is exercised in user space.
 
 #### P3.4 Complete explicit-root unmapping and reclamation
 
@@ -546,50 +591,55 @@ semantics on each supported architecture.
 
 #### P3.6 Redesign the x86-64 virtual address layout
 
-**Problem:** The x86-64 heap and reserved constants retain low 32-bit-style
-addresses, below the declared higher-half kernel boundary. Direct-map constants
-also mix a fixed legacy model with Limine's dynamic HHDM offset.
+**Problem:** Some x86-64 reserved constants retain low 32-bit-style addresses,
+below the declared higher-half kernel boundary. Direct-map constants also mix a
+fixed legacy model with Limine's dynamic HHDM offset.
 
-**Why it matters:** Enabling the heap or broader user mappings can create
+**Why it matters:** Broader user mappings or new privileged regions can create
 kernel/user address collisions and contradictory range validation.
 
 **Actions:**
 
 1. Write a documented x86-64 virtual layout with user, guard, kernel image,
-   direct map, heap, MMIO, and reserved regions.
+   direct map, MMIO, bootstrap pools, and reserved regions.
 2. Derive all boundary constants from that layout.
 3. Treat Limine's HHDM offset and validated mapped extent as the direct map.
 4. Remove or rename constants that do not describe active mappings.
 5. Add compile-time canonical-address and non-overlap assertions.
-6. Update linker, user-range validation, heap bounds, and kernel mapping clone
-   assumptions together.
+6. Update linker, user-range validation, bootstrap-pool bounds, and kernel
+   mapping clone assumptions together.
 7. Add QEMU probes for the first and last page of each active region.
 
 **Done when:** Every x86-64 virtual region is canonical, non-overlapping, and
 used consistently by the linker, MMU, VMM, and process validator.
 
-#### P3.7 Enable and validate the kernel heap
+#### P3.7 Remove the general-purpose kernel heap from the target architecture
 
-**Problem:** The generic heap is well tested, but the global kernel heap is not
-initialized in the active boot path and has no explicit commit/decommit policy.
+**Problem:** `heap.zig` and `kernel_heap.zig` remain exported as kernel memory
+subsystems even though the active kernel does not initialize them and the target
+architecture assigns general allocation policy to user space.
 
-**Why it matters:** Kernel object growth cannot safely rely on dynamic allocation
-until virtual reservation, physical commitment, and reclamation are separated.
+**Why it matters:** Retaining an apparently supported kernel heap encourages
+unbounded in-kernel object growth, complicates failure analysis, and contradicts
+the intended capability-funded resource model.
 
 **Actions:**
 
-1. Move heap sizing policy out of architecture MMU implementations.
-2. Reserve a non-overlapping kernel virtual heap range during staged boot.
-3. Define whether pages are eagerly committed or faulted in on demand.
-4. Initialize the global allocator only after backing pages are usable.
-5. Keep normal `free()` local to heap metadata.
-6. Add a separate, explicit page decommit policy for memory pressure.
-7. Add accounting invariants for reserved, committed, and allocated bytes.
-8. Add a QEMU allocation/free/coalescing smoke test behind a test build option.
+1. Identify any allocator code worth reusing in a root-task or user-space
+   memory-manager component.
+2. Move user-space allocator code and tests across the protection-domain boundary
+   without introducing kernel-private imports.
+3. Replace future kernel dynamic-allocation proposals with fixed-capacity storage,
+   explicit object-memory donation, or another reviewed bounded mechanism.
+4. Remove `kernel_heap` exports and dead heap virtual-layout constants from the
+   privileged kernel.
+5. Document the allowed allocation model for kernel object metadata, IPC queues,
+   and scheduler structures.
+6. Add tests proving retained kernel pools fail explicitly at capacity.
 
-**Done when:** Kernel objects can allocate after boot from a backed heap, normal
-free does not implicitly manipulate page tables, and all three accounting values
-remain consistent.
+**Done when:** No production kernel interface exposes a general heap, user-space
+owns general allocation policy, and every kernel-resident storage pool has a
+bounded capacity and explicit exhaustion behavior.
 
 ### Priority 4: IPC and userspace service mechanisms
 
@@ -662,119 +712,47 @@ without the interrupt handler invoking driver policy.
 ### Priority 5: verification and test fidelity
 
 The phased implementation checklist for this priority and related testing work
-is maintained in [`docs/testing-roadmap.md`](docs/testing-roadmap.md). This
+is maintained in the [testing roadmap](testing-roadmap.md). This
 assessment remains the source for architectural motivation and priority; the
 roadmap records execution status, dependencies, acceptance criteria, and
 validation commands.
 
-#### P5.1 Stabilize mock memory lifecycle
+#### P5.1 Stabilize mock memory lifecycle — complete
 
-**Problem:** Mock `getMemoryMap()` allocates a new 64 MiB host region on each
-call and does not free or explicitly own it.
+**Verified status:** The mock MMU now owns configurable physical backing with
+explicit initialization, reset, and deinitialization. Memory-map reads are
+side-effect free, repeated fixtures release prior backing, and use before setup is
+detected. This is tracked as complete by T1.3 in `testing-roadmap.md`.
 
-**Why it matters:** Tests leak memory, depend on implicit setup, and can hide
-lifecycle bugs.
+#### P5.2 Make platform and interrupt mocks observable — complete
 
-**Actions:**
+**Verified status:** Mock boot, CPU, interrupt, console, color, timer, and
+acknowledgement effects are bounded, resettable, and queryable without expanding
+production architecture interfaces. This is tracked as complete by T1.4.
 
-1. Add explicit `initializeTestMemory(size)` and `deinitializeTestMemory()`
-   operations.
-2. Make `getMemoryMap()` return stable state without allocation.
-3. Make `resetForTest()` clear mappings and counters without leaking the backing
-   region.
-4. Detect use before initialization.
-5. Update every PMM/VMM test to use a shared setup/teardown helper.
-6. Add a repeated initialization/reset test and run it under Zig leak checking.
+#### P5.3 Expand ABI, ELF, and root-task tests — substantially complete
 
-**Done when:** Repeated test runs allocate and release one intentional backing
-region per fixture and memory-map reads are side-effect free.
+**Verified status:** ABI layout/constants, ELF fixtures and rejection paths,
+root-process preparation, root-task transport, startup policy, and wrapper
+argument ordering now have dedicated tests. Continue extending these tests as the
+physical-memory authority ABI, capability types, and IPC contract are added.
 
-#### P5.2 Make platform and interrupt mocks observable
+#### P5.4 Add deterministic QEMU smoke tests — complete for the current scenario
 
-**Problem:** Mock interrupt functions are no-ops and the mock writer discards
-output.
+**Verified status:** Both x86 targets have deterministic architecture tests and
+production system-smoke tests with timeout handling, machine-readable protocols,
+authoritative completion, and CI enforcement. The current smoke scenario proves
+boot, user entry, boot-info validation, capability acquisition, metadata mapping,
+and clean exit; future object-backing and scheduling milestones should extend the
+same protocol rather than create an unrelated runner.
 
-**Why it matters:** Boot sequencing, interrupt state, acknowledgements, timer
-configuration, and diagnostics cannot be asserted on the host.
+#### P5.5 Remove redundant CI work and expose explicit verification steps — complete
 
-**Actions:**
-
-1. Track interrupt enabled/disabled state.
-2. Store registered vector addresses and gate attributes.
-3. Count acknowledgements per vector.
-4. Record timer frequency and initialization count.
-5. Buffer console bytes in fixed test storage.
-6. Record color changes and console initialization.
-7. Add reset and query helpers under test-only declarations.
-8. Add host integration tests for initialization order and interrupt behavior.
-
-**Done when:** Common boot/dispatch tests can assert all externally visible
-platform and interrupt effects without QEMU.
-
-#### P5.3 Expand ABI, ELF, and root-task tests
-
-**Problem:** ABI tests cover basic layouts, ELF tests cover only non-ELF
-rejection, and root-task tests check only shared constants.
-
-**Why it matters:** Cross-domain binary contracts can regress while all current
-tests still pass.
-
-**Actions:**
-
-1. Assert enum values, rights layout, syscall constants, and structure offsets.
-2. Add valid ELF32 and ELF64 fixtures with multiple loadable segments.
-3. Add truncated header/table, overflow, wrong machine/class/endian, empty
-   segment, and overlapping-segment cases.
-4. Validate entry points reside in an executable loadable segment.
-5. Abstract the root-task syscall transport behind a comptime-injected backend.
-6. Test every userspace wrapper's syscall number and argument order.
-7. Test userspace translation of kernel success and failure results.
-
-**Done when:** The shared ABI and root-task wrappers can change only with an
-intentional corresponding test update.
-
-#### P5.4 Add deterministic QEMU smoke tests
-
-**Problem:** CI compiles both architectures but does not boot them.
-
-**Why it matters:** Linker, boot protocol, descriptor-table, MMU, and ring-3
-regressions are invisible to host tests.
-
-**Actions:**
-
-1. Add a non-daemonized, serial-only QEMU test configuration.
-2. Add `isa-debug-exit` or an equivalent deterministic completion mechanism.
-3. Emit stable machine-readable milestones rather than parsing verbose prose.
-4. Enforce a timeout and kill QEMU on failure.
-5. Fail on panic, triple fault, unexpected reset, or missing milestone.
-6. Add separate x86-32 and x86-64 smoke build steps.
-7. Keep interactive `run` and debugger-oriented launch behavior separate.
-8. Run smoke tests in CI after unit tests and architecture builds.
-
-**Done when:** CI proves both kernels boot, enter userspace, complete the chosen
-scenario, and terminate QEMU with a success code.
-
-#### P5.5 Remove redundant CI work and expose explicit verification steps
-
-**Problem:** The architecture matrix runs the same host mock suite twice, while
-compile-only and integration checks are not named separately.
-
-**Why it matters:** CI spends time without increasing coverage and developers
-lack clear fast versus comprehensive validation commands.
-
-**Actions:**
-
-1. Run host unit/component tests once outside the architecture matrix.
-2. Keep architecture kernel/root-task builds in the matrix.
-3. Add named `test-unit`, `test-components`, and `test-smoke` steps or document
-   equivalent commands.
-4. Add an explicit compile/check step if Zig's build API provides value beyond
-   the normal builds.
-5. Preserve one aggregate `tests` step for local convenience.
-6. Document the expected validation sequence in the top-level documentation.
-
-**Done when:** Each CI job has distinct coverage and local commands clearly
-separate fast host checks from QEMU integration checks.
+**Verified status:** Native tests run once outside the architecture matrix. Each
+architecture then runs physical tests, builds the coverage kernel and production
+artifacts, and executes the production system smoke. Repository documentation
+lists the local validation commands and the aggregate `zig build tests` step
+remains available.
 
 ### Priority 6: interrupt architecture and platform discovery
 
@@ -845,8 +823,9 @@ on the expected dedicated stack.
 
 #### P6.4 Define the path to SMP safely
 
-**Problem:** PMM, VMM, registries, diagnostics, and mocks use unprotected global
-mutable state, and current execution state is implicitly uniprocessor.
+**Problem:** VMM state, capability/object registries, diagnostics, retained
+bootstrap allocators, and current execution state use unprotected global mutable
+state and are implicitly uniprocessor.
 
 **Why it matters:** Enabling additional CPUs or preemption without ownership and
 locking rules would introduce races throughout the kernel.
@@ -857,8 +836,8 @@ locking rules would introduce races throughout the kernel.
 2. Introduce CPU-local current-thread and interrupt state.
 3. Define lock primitives and interrupt-save semantics.
 4. Establish and document a global lock order.
-5. Add synchronization to PMM, capability spaces, object registries, and
-   scheduler queues one subsystem at a time.
+5. Add synchronization to capability spaces, object registries, retained
+   kernel pools, and scheduler queues one subsystem at a time.
 6. Keep the build explicitly single-CPU until those contracts are enforced.
 7. Add application-processor startup only after synchronized scheduler state
    exists.
@@ -868,28 +847,13 @@ shared mutable structure before a second CPU executes kernel code.
 
 ### Priority 7: maintainability and documentation
 
-#### P7.1 Remove dead or misleading x86-64 bootstrap code
+#### P7.1 Remove dead or misleading x86-64 bootstrap code — complete
 
-**Problem:** `src/architecture/x86/64/mmu/early_boot.zig` contains comments and
-assembly derived from a 32-bit multiboot paging path and is unused by the active
-x86-64 Limine flow.
-
-**Why it matters:** Zig's lazy analysis can leave invalid unused declarations
-unnoticed, and maintainers may mistake the file for an active x86-64 mechanism.
-
-**Actions:**
-
-1. Confirm no supported x86-64 boot path calls the file.
-2. Identify any genuinely reusable checked arithmetic helpers.
-3. Move those helpers into an appropriately named common module with tests.
-4. Delete the obsolete bootstrap implementation.
-5. If a non-Limine path is required, replace it with a separately designed
-   long-mode implementation rather than retaining copied 32-bit code.
-6. Add a source/reference check ensuring architecture entry points are reachable
-   from supported build configurations.
-
-**Done when:** Every x86-64 MMU source file represents an active, build-checked
-mechanism or a clearly documented shared helper.
+**Verified status:** The obsolete `src/architecture/x86/64/mmu/early_boot.zig`
+file is absent, and current x86-64 MMU sources belong to the active Limine path or
+shared architecture mechanisms. New architecture entry points should continue to
+be exercised by production builds or physical tests so Zig lazy analysis cannot
+hide dead implementations.
 
 #### P7.2 Standardize naming incrementally
 
@@ -933,21 +897,26 @@ repository root without first searching component documentation.
 
 #### P7.4 Keep initialization code executable and testable
 
-**Problem:** `kernelMain()` contains a large commented experimental
-initialization sequence.
+**Problem:** Active initialization has been extracted into
+`kernel_initialization.zig` and is host tested, but `kernelMain()` still contains
+a large commented PMM/heap experiment and disabled duplicate initialization
+steps.
 
-**Why it matters:** Commented code drifts, obscures the active boot order, and is
-not checked by the compiler.
+**Why it matters:** The remaining comments preserve an obsolete kernel-owned
+allocation direction, obscure the active boot order, and are not checked by the
+compiler.
 
 **Actions:**
 
-1. Extract active initialization into small fallible stages.
-2. Keep control flow and fatal-boundary decisions in one parent function.
-3. Move allocation probes into host tests or a build-gated QEMU self-test.
-4. Delete obsolete commented code after preserving any required intent in issue
-   text or design documentation.
-5. Add host tests for architecture-independent initialization sequencing using
-   observable mocks.
+1. Keep `kernel_initialization.initialize()` as the single active orchestration
+   path up to user entry.
+2. Delete the commented PMM, heap, duplicate boot-finalization, interrupt, and
+   allocation-probe blocks.
+3. Preserve architectural intent in this assessment or a reviewed design document,
+   not disabled source.
+4. Keep control flow and fatal-boundary decisions in one parent function.
+5. Extend existing host orchestration tests whenever an initialization stage is
+   added.
 6. Emit concise stage-specific diagnostics only at the top-level boundary.
 
 **Done when:** `kernelMain()` is a thin wrapper over compiled, testable stages and
@@ -955,22 +924,27 @@ contains no disabled implementation blocks.
 
 ## Recommended next vertical slice
 
-Avoid broad syscall or driver expansion. Complete one narrow path end to end:
+The phased implementation plan for multiple processes is maintained in
+the [userspace process roadmap](userspace-process-roadmap.md).
 
-1. complete **P0.3** and **P0.4** so syscall dispatch and caller identity are
-   explicit and host-testable;
-2. complete the root-address-space registration portion of **P1.2**;
-3. complete one-page physical backing from **P1.3**;
-4. represent the root task as the first thread from **P2.1**;
-5. implement contained exit to an idle context from **P2.2**;
-6. access the object-backed page from userspace through the safe-copy boundary
-   in **P0.1**;
-7. validate the entire sequence with the x86-64 portion of **P5.4**.
+Avoid adding a kernel PMM or heap. Complete one narrow seL4-style memory-authority
+path end to end:
 
-Completing this slice would prove that a registered thread can use capability-
-authorized, genuinely backed memory and return control to the kernel without
-halting it. That would move the project from a capability-themed prototype to
-the beginning of a genuine microkernel execution environment.
+1. finish **P0.4** so the syscall boundary has an explicit current caller;
+2. define the physical-range/untyped capability and boot handoff from **P3.1**;
+3. let the root task select one delegated page through the initial allocator from
+   **P3.2**;
+4. retype that authority into one genuinely backed memory object from **P1.3**;
+5. attach a hardware root to the target address-space object from **P1.2**;
+6. map the object, write and read the page in user space, and verify shared backing;
+7. represent the root task as the first thread and contain its exit through
+   **P2.1** and **P2.2**;
+8. extend the existing system-smoke protocol from **P5.4** on both architectures.
+
+Completing this slice would prove that user space controls physical allocation
+policy while the kernel enforces capability authority and mappings. It would also
+prove that a registered thread can use genuinely backed memory and return control
+to the kernel without halting the system.
 
 ## Bottom line
 
@@ -980,6 +954,8 @@ tables, initial capability checks, architecture mocks, and organized tests.
 
 Its primary risk is semantic overstatement: address spaces, memory objects, and
 capabilities exist by name, but only the bootstrap root address space currently
-has complete hardware state, and memory objects do not yet own backing memory.
-The priority backlog above deliberately favors completing and securing those
-semantics before adding breadth.
+has complete hardware state, memory objects do not yet own delegated backing, and
+the root task has no physical-memory authority. The next architecture milestone
+is not activation of a kernel PMM or heap; it is a capability-controlled handoff
+of allocatable memory to a user-space resource manager, with bounded kernel
+storage and complete mapping/lifetime semantics.

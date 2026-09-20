@@ -10,6 +10,7 @@
       "extensions": [
         "vadimcn.vscode-lldb",
         "ziglang.vscode-zig",
+        "disaac.zlint-vscode",
         "/opt/qemu-vnc/qemu-vnc.vsix",
         "saoudrizwan.claude-dev"
       ],

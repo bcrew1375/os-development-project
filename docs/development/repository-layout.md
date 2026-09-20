@@ -17,10 +17,14 @@ for extraction and reintegration instructions.
 
 ## Project status
 
-See the [current kernel assessment](../kernel_analysis.md) for implementation
-maturity, known architectural limitations, and the priority-ordered roadmap.
-The [testing roadmap](testing-roadmap.md) tracks phased work to improve test
-fidelity and expand the behavior that can be verified.
+See the [current kernel assessment](../roadmaps/kernel-assessment.md) for
+implementation maturity, known architectural limitations, and the
+priority-ordered roadmap. The [testing roadmap](../roadmaps/testing-roadmap.md)
+tracks phased work to improve test fidelity and expand the behavior that can be
+verified. The
+[userspace process roadmap](../roadmaps/userspace-process-roadmap.md) plans the
+object, memory-authority, scheduling, and IPC work required for multiple isolated
+userspace processes.
 
 ## Dependency direction
 
@@ -157,7 +161,7 @@ enabled. Sanitizer guards remain in the normal writable kernel data range and
 are reserved and mapped with the rest of that range. The existing `coverage`
 step remains the native mock-architecture report for `src/common`.
 
-See [Architecture Coverage](architecture-coverage.md) for pipeline ownership,
+See [Architecture Coverage](../testing/architecture-coverage.md) for pipeline ownership,
 protocol validation, coverage semantics, and Zig compatibility notes.
 
 Boot the packaged production kernel and real root-task artifact as a complete
@@ -172,7 +176,7 @@ The runner validates the ordered version-1 `SYSTEM-SMOKE` lifecycle protocol,
 requires root-task exit status zero, and terminates the halted guest through QMP
 `quit`. x86-32 supports both its default Limine image and the optional direct
 Multiboot path selected with `-Dbootloader=multiboot`. See
-[Production System Smoke Tests](system-smoke.md) for protocol ownership, timeout
+[Production System Smoke Tests](../testing/system-smoke.md) for protocol ownership, timeout
 configuration, failure behavior, CI integration, and trend reporting.
 
 Build the kernel and root-task artifacts for either architecture:

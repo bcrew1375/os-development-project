@@ -1,6 +1,89 @@
 {
   "version": "2.0.0",
   "tasks": [
+    {
+      "label": "Lint Zig",
+      "type": "process",
+      "command": "zlint",
+      "args": [
+        "--config",
+        "${workspaceFolder}/zlint.json",
+        "--format",
+        "github",
+        ".",
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+      },
+      "problemMatcher": {
+        "owner": "zlint",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}",
+        ],
+        "pattern": {
+          "regexp": "^::(error|warning|notice) file=(.*),line=(\\d+),col=(\\d+),title=([^:]*)::(.*)$",
+          "severity": 1,
+          "file": 2,
+          "line": 3,
+          "column": 4,
+          "code": 5,
+          "message": 6,
+        },
+      },
+      "group": {
+        "kind": "test",
+        "isDefault": false,
+      },
+      "presentation": {
+        "panel": "shared",
+        "reveal": "silent",
+        "revealProblems": "onProblem",
+        "clear": true,
+      },
+    },
+    {
+      "label": "Lint Zig (strict)",
+      "type": "process",
+      "command": "zlint",
+      "args": [
+        "--config",
+        "${workspaceFolder}/zlint.json",
+        "--format",
+        "github",
+        "--deny-warnings",
+        ".",
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+      },
+      "problemMatcher": {
+        "owner": "zlint-strict",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}",
+        ],
+        "pattern": {
+          "regexp": "^::(error|warning|notice) file=(.*),line=(\\d+),col=(\\d+),title=([^:]*)::(.*)$",
+          "severity": 1,
+          "file": 2,
+          "line": 3,
+          "column": 4,
+          "code": 5,
+          "message": 6,
+        },
+      },
+      "group": {
+        "kind": "test",
+        "isDefault": false,
+      },
+      "presentation": {
+        "panel": "shared",
+        "reveal": "silent",
+        "revealProblems": "onProblem",
+        "clear": true,
+      },
+    },
     // {
     //   "label": "Build Kernel",
     //   "type": "shell",

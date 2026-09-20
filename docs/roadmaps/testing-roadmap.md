@@ -3,8 +3,8 @@
 Status date: 2026-09-19
 
 This document is the operational plan for improving test fidelity and expanding
-what can be tested. The broader architectural priorities remain in
-[`kernel_analysis.md`](../kernel_analysis.md). This roadmap tracks concrete
+what can be tested. The broader architectural priorities remain in the
+[current kernel assessment](kernel-assessment.md). This roadmap tracks concrete
 testing work, dependencies, acceptance criteria, and validation commands.
 
 Coverage percentages are diagnostic. A higher percentage is not, by itself, a
@@ -591,7 +591,7 @@ zig build -Darch=x86_64
   static services. `kernelMain()` retains unrecoverable failure handling and the
   non-returning user-mode transition.
 
-**Related assessment:** P3.3 and P7.4 in `kernel_analysis.md`.
+**Related assessment:** P3.3 and P7.4 in `kernel-assessment.md`.
 
 **Prerequisite:** Extract a staged, fallible initialization function from the
 non-returning kernel entry point.
@@ -762,7 +762,7 @@ reservation, cache behavior, and capacity policy.
   side effects. Safe user copying, caller execution-context lookup, and nonfatal
   process exit or unknown-syscall containment remain P0.1, P0.4, and P0.2.
 
-**Related assessment:** P0.3 in `kernel_analysis.md`.
+**Related assessment:** P0.3 in `kernel-assessment.md`.
 
 **Files:**
 

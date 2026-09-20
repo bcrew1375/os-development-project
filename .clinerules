@@ -1,7 +1,7 @@
 # Project: OS Development - an early development hobby kernel.
 
 ## General Instructions:
-- Follow guidelines in 'kernel-os-code-organization-best-practices.md'
+- Follow guidelines in 'docs/reference/kernel-code-organization.md'
 
 - Aim for a general purpose kernel microkernel with modern production-grade design patterns.
 - The kernel will loosely follow the seL4 capability model.
@@ -15,7 +15,7 @@ performance-critical paths (e.g., context switching, MMU hot-paths) where effici
 - Error handling must be explicit. Use Zig's error union types; avoid catching errors unless they can be recovered from.
 
 ## Coding style
-- Follow guidelines in 'zig-code=structure-best-practices.md'
+- Follow guidelines in 'docs/reference/zig-code-structure.md'
 
 - Use typical Zig or C++ identifier casing. Do not abbreviate identifiers.
 - Prefer abstraction and generic interfaces whenever possible.

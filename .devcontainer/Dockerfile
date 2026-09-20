@@ -23,6 +23,9 @@ FROM ubuntu:noble
 ENV DEBIAN_FRONTEND=noninteractive
 
 ARG ZIG_VERSION=0.15.2
+ARG ZLINT_VERSION=0.10.0
+ARG ZLINT_LINUX_X86_64_SHA256=0b331646d5e40bec3cfcb0694c5da0b13b9de8b10af12937a777ab3144b70b65
+ARG ZLINT_LINUX_AARCH64_SHA256=ec5e31eacc889540dbfa0a32f0e694199d06c16f640b832bf2a3bd8ecc07c3e3
 ARG LIMINE_BRANCH=v9.x-binary
 
 COPY --from=qemu-vnc-builder \
@@ -55,6 +58,28 @@ RUN set -eux; \
     mv zig-${ARCH}-* /opt/zig; \
     ln -s /opt/zig/zig /usr/local/bin/zig; \
     rm zig.tar.xz
+
+# Install a pinned standalone ZLint release. ZLint's source package currently
+# requires a newer Zig version than the kernel, so keep the toolchains
+# independent and verify the release binary before exposing it on PATH.
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) \
+            ZLINT_TARGET="linux-x86_64"; \
+            ZLINT_SHA256="${ZLINT_LINUX_X86_64_SHA256}" \
+            ;; \
+        arm64) \
+            ZLINT_TARGET="linux-aarch64"; \
+            ZLINT_SHA256="${ZLINT_LINUX_AARCH64_SHA256}" \
+            ;; \
+        *) echo "Unsupported architecture for ZLint" && exit 1 ;; \
+    esac; \
+    curl --fail --location \
+        "https://github.com/DonIsaac/zlint/releases/download/v${ZLINT_VERSION}/zlint-${ZLINT_TARGET}" \
+        --output /usr/local/bin/zlint; \
+    echo "${ZLINT_SHA256}  /usr/local/bin/zlint" | sha256sum --check -; \
+    chmod +x /usr/local/bin/zlint; \
+    zlint --version
 
 # Install Limine as a devcontainer-provided bootloader toolchain dependency.
 # The binary branch provides the BIOS/UEFI boot files used by build.zig to
