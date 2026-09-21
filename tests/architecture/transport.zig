@@ -19,26 +19,40 @@ pub fn initialize() void {
     out8(com1_base_address + 4, 0x0B);
 }
 
-const Writer = std.io.GenericWriter(void, error{}, struct {
-    fn write(_: void, data: []const u8) error{}!usize {
-        for (data) |character| writeCharacter(character);
-        return data.len;
-    }
-}.write);
+const Writer = std.Io.Writer;
 
-pub fn writer() Writer {
-    return .{ .context = {} };
+fn drain(_: *Writer, data: []const []const u8, _: usize) Writer.Error!usize {
+    var written: usize = 0;
+    for (data) |chunk| {
+        for (chunk) |character| writeCharacter(character);
+        written += chunk.len;
+    }
+    return written;
 }
 
-const CoverageWriter = std.io.GenericWriter(void, error{}, struct {
-    fn write(_: void, data: []const u8) error{}!usize {
-        for (data) |byte| out8(coverage_port, byte);
-        return data.len;
-    }
-}.write);
+const writer_vtable: Writer.VTable = .{ .drain = drain };
+var writer_instance: Writer = .{ .vtable = &writer_vtable, .buffer = &.{} };
 
-pub fn coverageWriter() CoverageWriter {
-    return .{ .context = {} };
+pub fn writer() *Writer {
+    return &writer_instance;
+}
+
+const CoverageWriter = std.Io.Writer;
+
+fn coverageDrain(_: *CoverageWriter, data: []const []const u8, _: usize) CoverageWriter.Error!usize {
+    var written: usize = 0;
+    for (data) |chunk| {
+        for (chunk) |byte| out8(coverage_port, byte);
+        written += chunk.len;
+    }
+    return written;
+}
+
+const coverage_writer_vtable: CoverageWriter.VTable = .{ .drain = coverageDrain };
+var coverage_writer_instance: CoverageWriter = .{ .vtable = &coverage_writer_vtable, .buffer = &.{} };
+
+pub fn coverageWriter() *CoverageWriter {
+    return &coverage_writer_instance;
 }
 
 pub fn exit(status: ExitStatus) noreturn {

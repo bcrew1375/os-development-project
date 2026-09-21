@@ -101,14 +101,17 @@ fn readFixture(
 ) !points_file.Parsed {
     var temporary_directory = std.testing.tmpDir(.{});
     defer temporary_directory.cleanup();
-    try temporary_directory.dir.writeFile(.{
+    try temporary_directory.dir.writeFile(std.testing.io, .{
         .sub_path = "points.tsv",
         .data = contents,
     });
-    const file_path = try temporary_directory.dir.realpathAlloc(
-        std.testing.allocator,
+    const canonical_file_path = try temporary_directory.dir.realPathFileAlloc(
+        std.testing.io,
         "points.tsv",
+        std.testing.allocator,
     );
+    defer std.testing.allocator.free(canonical_file_path);
+    const file_path = try std.testing.allocator.dupe(u8, canonical_file_path);
     defer std.testing.allocator.free(file_path);
-    return points_file.read(std.testing.allocator, file_path, expected_architecture);
+    return points_file.read(std.testing.io, std.testing.allocator, file_path, expected_architecture);
 }

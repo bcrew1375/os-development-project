@@ -34,9 +34,8 @@ pub fn create(build: *std.Build) Fixtures {
 }
 
 pub fn createLimineConfig(build: *std.Build, fixtures: Fixtures) std.Build.LazyPath {
-    var config: std.ArrayList(u8) = .empty;
-    const writer = config.writer(build.allocator);
-    writer.writeAll(
+    var config: std.Io.Writer.Allocating = .init(build.allocator);
+    config.writer.writeAll(
         \\graphics: no
         \\timeout: 0
         \\verbose: yes
@@ -47,9 +46,9 @@ pub fn createLimineConfig(build: *std.Build, fixtures: Fixtures) std.Build.LazyP
         \\
     ) catch @panic("OOM");
     for (fixtures.names) |name| {
-        writer.print("    module_path: boot():/boot/{s}\n", .{name}) catch @panic("OOM");
+        config.writer.print("    module_path: boot():/boot/{s}\n", .{name}) catch @panic("OOM");
     }
 
     const generated_files = build.addWriteFiles();
-    return generated_files.add("x86_64-boot-modules.conf", config.items);
+    return generated_files.add("x86_64-boot-modules.conf", config.written());
 }

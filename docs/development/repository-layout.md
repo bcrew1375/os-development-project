@@ -205,6 +205,22 @@ zig build -Darch=x86_64 \
   -Droot-task=/path/to/root_process.elf
 ```
 
+## Linting
+
+ZLint analyzes the repository without invoking the Zig compiler, so it can run
+after every save:
+
+```sh
+python3 tools/zlint_watch.py --once
+```
+
+Inside the devcontainer, the `Lint Zig (watch)` VS Code task runs that script as
+a background task and starts automatically when the folder opens. Each lint pass
+replaces the diagnostics of the previous pass, so a fixed finding leaves the
+Problems panel as soon as the file is saved. The `Lint Zig` and
+`Lint Zig (strict)` tasks run the same check on demand; the strict variant treats
+warnings as failures.
+
 ## Ownership boundaries
 
 - ABI definitions and cross-domain helpers belong in

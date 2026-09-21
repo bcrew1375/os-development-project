@@ -20,24 +20,30 @@ const Counters = struct {
     program_counters: []const usize,
 };
 
-pub fn main() void {
+pub fn main(init: std.process.Init) void {
     @disableInstrumentation();
-    run() catch |err| {
+    run(init) catch |err| {
         std.debug.print("coverage failed: {s}\n", .{@errorName(err)});
         if (@errorReturnTrace()) |trace| std.debug.dumpStackTrace(trace.*);
         std.process.exit(1);
     };
 }
 
-fn run() !void {
+fn run(init: std.process.Init) !void {
     @disableInstrumentation();
-    var args = std.process.args();
+    var args = init.minimal.args.iterate();
     _ = args.next();
     const common_root_argument = args.next() orelse return error.MissingCommonRoot;
     if (args.next() != null) return error.UnexpectedArgument;
 
     const allocator = std.heap.page_allocator;
-    const common_root = try std.fs.realpathAlloc(allocator, common_root_argument);
+    const canonical_common_root = try std.Io.Dir.cwd().realPathFileAlloc(
+        init.io,
+        common_root_argument,
+        allocator,
+    );
+    defer allocator.free(canonical_common_root);
+    const common_root = try allocator.dupe(u8, canonical_common_root);
     defer allocator.free(common_root);
 
     const cache_path = ".zig-cache/coverage";
@@ -60,11 +66,11 @@ fn run() !void {
         allocator.free(points);
     }
 
-    var summary = try report.summarize(allocator, common_root, points);
+    var summary = try report.summarize(init.io, allocator, common_root, points);
     defer summary.deinit(allocator);
 
     var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buffer);
     try report.write(&stdout_writer.interface, summary);
     try stdout_writer.interface.print("\n{d} passed; {d} skipped; {d} failed.\n", .{
         test_result.passed,
@@ -189,7 +195,7 @@ fn coverageCounters() !Counters {
 
 fn log(
     comptime level: std.log.Level,
-    comptime scope: @Type(.enum_literal),
+    comptime scope: @TypeOf(.enum_literal),
     comptime format: []const u8,
     arguments: anytype,
 ) void {

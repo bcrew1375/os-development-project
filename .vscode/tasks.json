@@ -57,8 +57,11 @@
       "options": {
         "cwd": "${workspaceFolder}",
       },
+      // Shares the "zlint" owner with the other lint tasks so that any one
+      // pass replaces the whole problem set. Separate owners would list every
+      // finding twice and leave the fixed ones behind until each task re-runs.
       "problemMatcher": {
-        "owner": "zlint-strict",
+        "owner": "zlint",
         "fileLocation": [
           "relative",
           "${workspaceFolder}",
@@ -82,6 +85,54 @@
         "reveal": "silent",
         "revealProblems": "onProblem",
         "clear": true,
+      },
+    },
+    // Long-lived lint watcher. Every pass is bracketed by begin/end markers so
+    // the background problem matcher below replaces its previous diagnostics,
+    // which is what makes a fixed finding disappear from the Problems panel
+    // without re-running anything manually.
+    {
+      "label": "Lint Zig (watch)",
+      "type": "process",
+      "command": "python3",
+      "args": [
+        "${workspaceFolder}/tools/zlint_watch.py",
+        "--config",
+        "${workspaceFolder}/zlint.json",
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+      },
+      "isBackground": true,
+      "runOptions": {
+        "runOn": "folderOpen",
+      },
+      "problemMatcher": {
+        "owner": "zlint",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}",
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^zlint-watch: begin$",
+          "endsPattern": "^zlint-watch: end$",
+        },
+        "pattern": {
+          "regexp": "^::(error|warning|notice) file=(.*),line=(\\d+),col=(\\d+),title=([^:]*)::(.*)$",
+          "severity": 1,
+          "file": 2,
+          "line": 3,
+          "column": 4,
+          "code": 5,
+          "message": 6,
+        },
+      },
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "silent",
+        "clear": true,
+        "close": false,
       },
     },
     // {

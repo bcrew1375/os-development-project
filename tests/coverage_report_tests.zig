@@ -20,7 +20,7 @@ test "coverage report merges points by source line and ignores unrelated paths" 
         .{ .path = capability_path, .line = 0, .covered = true },
     };
 
-    var summary = try report.summarize(std.testing.allocator, common_root, &points);
+    var summary = try report.summarize(std.testing.io, std.testing.allocator, common_root, &points);
     defer summary.deinit(std.testing.allocator);
 
     const capability = findFile(summary.files, "src/common/capability/main.zig").?;
@@ -37,7 +37,7 @@ test "coverage report inventories files with no emitted code" {
     const common_root = try realPath("src/common");
     defer std.testing.allocator.free(common_root);
 
-    var summary = try report.summarize(std.testing.allocator, common_root, &.{});
+    var summary = try report.summarize(std.testing.io, std.testing.allocator, common_root, &.{});
     defer summary.deinit(std.testing.allocator);
 
     const namespace = findFile(summary.files, "src/common/memory_management/main.zig").?;
@@ -59,7 +59,7 @@ test "coverage report sorts missing lines, files, and derives totals" {
         .{ .path = process_path, .line = 60, .covered = false },
         .{ .path = process_path, .line = 59, .covered = false },
     };
-    var summary = try report.summarize(std.testing.allocator, common_root, &points);
+    var summary = try report.summarize(std.testing.io, std.testing.allocator, common_root, &points);
     defer summary.deinit(std.testing.allocator);
 
     try expectCounts(summary.counts(), 1, 4);
@@ -95,6 +95,7 @@ test "coverage report supports file and directory scopes" {
         .{ .path = vectors_file, .line = 1, .covered = false },
     };
     var summary = try report.summarizeScopes(
+        std.testing.io,
         std.testing.allocator,
         &scopes,
         &points,
@@ -126,7 +127,7 @@ test "coverage report rejects overlapping inventory entries" {
 
     try std.testing.expectError(
         error.DuplicateCoverageScope,
-        report.summarizeScopes(std.testing.allocator, &scopes, &.{}),
+        report.summarizeScopes(std.testing.io, std.testing.allocator, &scopes, &.{}),
     );
 }
 
@@ -217,10 +218,13 @@ fn renderTable(output_buffer: []u8, summary: report.Summary) ![]const u8 {
 }
 
 fn summarizeSingleFile(allocator: std.mem.Allocator) !void {
-    const architecture_file = try std.fs.cwd().realpathAlloc(
-        allocator,
+    const canonical_architecture_file = try std.Io.Dir.cwd().realPathFileAlloc(
+        std.testing.io,
         "src/architecture/architecture.zig",
+        allocator,
     );
+    defer allocator.free(canonical_architecture_file);
+    const architecture_file = try allocator.dupe(u8, canonical_architecture_file);
     defer allocator.free(architecture_file);
     const scopes = [_]report.Scope{.{
         .absolute_path = architecture_file,
@@ -232,7 +236,7 @@ fn summarizeSingleFile(allocator: std.mem.Allocator) !void {
         .line = 10,
         .covered = false,
     }};
-    var summary = try report.summarizeScopes(allocator, &scopes, &points);
+    var summary = try report.summarizeScopes(std.testing.io, allocator, &scopes, &points);
     defer summary.deinit(allocator);
 }
 
@@ -283,7 +287,13 @@ fn findFile(files: []const report.FileCoverage, path: []const u8) ?report.FileCo
 }
 
 fn realPath(path: []const u8) ![]u8 {
-    return std.fs.cwd().realpathAlloc(std.testing.allocator, path);
+    const canonical_path = try std.Io.Dir.cwd().realPathFileAlloc(
+        std.testing.io,
+        path,
+        std.testing.allocator,
+    );
+    defer std.testing.allocator.free(canonical_path);
+    return std.testing.allocator.dupe(u8, canonical_path);
 }
 
 fn joinPath(parts: []const []const u8) ![]u8 {

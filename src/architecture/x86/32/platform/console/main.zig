@@ -119,15 +119,22 @@ pub fn initialize() void {
     }
 }
 
-const Writer = std.io.GenericWriter(void, error{}, struct {
-    fn write(_: void, data: []const u8) error{}!usize {
-        print(data);
-        return data.len;
-    }
-}.write);
+const Writer = std.Io.Writer;
 
-pub fn writer() Writer {
-    return .{ .context = {} };
+fn drain(_: *Writer, data: []const []const u8, _: usize) Writer.Error!usize {
+    var written: usize = 0;
+    for (data) |chunk| {
+        print(chunk);
+        written += chunk.len;
+    }
+    return written;
+}
+
+const writer_vtable: Writer.VTable = .{ .drain = drain };
+var writer_instance: Writer = .{ .vtable = &writer_vtable, .buffer = &.{} };
+
+pub fn writer() *Writer {
+    return &writer_instance;
 }
 
 pub fn print(string: []const u8) void {

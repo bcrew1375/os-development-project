@@ -10,19 +10,21 @@ pub const SourcePoint = model.SourcePoint;
 pub const Summary = model.Summary;
 
 pub fn summarize(
+    io: std.Io,
     allocator: std.mem.Allocator,
     common_root: []const u8,
     points: []const SourcePoint,
 ) !Summary {
-    return summarize_report.common(allocator, common_root, points);
+    return summarize_report.common(io, allocator, common_root, points);
 }
 
 pub fn summarizeScopes(
+    io: std.Io,
     allocator: std.mem.Allocator,
     scopes: []const Scope,
     points: []const SourcePoint,
 ) !Summary {
-    return summarize_report.scopes(allocator, scopes, points);
+    return summarize_report.scopes(io, allocator, scopes, points);
 }
 
 pub fn write(writer: *std.Io.Writer, summary: Summary) !void {

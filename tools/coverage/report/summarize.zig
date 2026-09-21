@@ -26,11 +26,12 @@ const NormalizedScope = struct {
 const FileStates = std.StringArrayHashMapUnmanaged(FileState);
 
 pub fn common(
+    io: std.Io,
     allocator: std.mem.Allocator,
     common_root: []const u8,
     points: []const model.SourcePoint,
 ) !model.Summary {
-    return scopes(allocator, &.{.{
+    return scopes(io, allocator, &.{.{
         .absolute_path = common_root,
         .display_path = "src/common",
         .kind = .directory,
@@ -38,6 +39,7 @@ pub fn common(
 }
 
 pub fn scopes(
+    io: std.Io,
     allocator: std.mem.Allocator,
     coverage_scopes: []const model.Scope,
     points: []const model.SourcePoint,
@@ -47,7 +49,7 @@ pub fn scopes(
 
     var states: FileStates = .empty;
     defer deinitStates(allocator, &states);
-    for (normalized_scopes) |scope| try inventoryScope(allocator, scope, &states);
+    for (normalized_scopes) |scope| try inventoryScope(io, allocator, scope, &states);
     try aggregatePoints(allocator, &states, points);
     return createSummary(allocator, &states);
 }
@@ -89,6 +91,7 @@ fn deinitStates(allocator: std.mem.Allocator, states: *FileStates) void {
 }
 
 fn inventoryScope(
+    io: std.Io,
     allocator: std.mem.Allocator,
     scope: NormalizedScope,
     states: *FileStates,
@@ -98,11 +101,11 @@ fn inventoryScope(
         return;
     }
 
-    var directory = try std.fs.openDirAbsolute(scope.absolute_path, .{ .iterate = true });
-    defer directory.close();
+    var directory = try std.Io.Dir.openDirAbsolute(io, scope.absolute_path, .{ .iterate = true });
+    defer directory.close(io);
     var walker = try directory.walk(allocator);
     defer walker.deinit();
-    while (try walker.next()) |entry| {
+    while (try walker.next(io)) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".zig")) continue;
         try inventoryDirectoryFile(allocator, scope, entry.path, states);
     }

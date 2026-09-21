@@ -5,6 +5,7 @@
 //! concrete hardware implementation.
 
 const builtin = @import("builtin");
+const std = @import("std");
 
 /// Selected architecture implementation. Tests use the mock implementation.
 pub const impl = if (builtin.is_test)
@@ -219,6 +220,9 @@ pub fn validateImpl(comptime T: type) void {
 
         if (!@hasDecl(T.platform, "writer")) {
             @compileError(@typeName(T.platform) ++ " is missing 'writer' instance");
+        }
+        if (@TypeOf(T.platform.writer) != fn () *std.Io.Writer) {
+            @compileError(@typeName(T.platform) ++ ".writer has an unexpected type");
         }
     }
 }

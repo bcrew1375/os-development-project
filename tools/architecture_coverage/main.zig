@@ -10,10 +10,11 @@ const CommandArguments = struct {
     architecture_name: []const u8,
 };
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const allocator = std.heap.page_allocator;
-    const arguments = try parseCommandArguments();
+    const arguments = try parseCommandArguments(&init.minimal.args);
     const parsed_points = try coverage_points_file.read(
+        init.io,
         allocator,
         arguments.points_file_path,
         arguments.architecture_name,
@@ -23,16 +24,17 @@ pub fn main() !void {
     const coverage_scopes = try createCoverageScopes(allocator, arguments);
     defer freeCoverageScopes(allocator, &coverage_scopes);
     var summary = try coverage_report.summarizeScopes(
+        init.io,
         allocator,
         &coverage_scopes,
         parsed_points.source_points,
     );
     defer summary.deinit(allocator);
-    try writeReport(arguments.architecture_name, summary);
+    try writeReport(init.io, arguments.architecture_name, summary);
 }
 
-fn parseCommandArguments() !CommandArguments {
-    var process_arguments = std.process.args();
+fn parseCommandArguments(args: *std.process.Args) !CommandArguments {
+    var process_arguments = args.iterate();
     _ = process_arguments.next();
     const arguments: CommandArguments = .{
         .points_file_path = process_arguments.next() orelse
@@ -118,11 +120,12 @@ fn freeCoverageScopes(
 }
 
 fn writeReport(
+    io: std.Io,
     architecture_name: []const u8,
     summary: coverage_report.Summary,
 ) !void {
     var output_buffer: [4096]u8 = undefined;
-    var output = std.fs.File.stdout().writer(&output_buffer);
+    var output = std.Io.File.stdout().writer(io, &output_buffer);
     try output.interface.print(
         "Architecture coverage: {s}\n\n",
         .{architecture_name},

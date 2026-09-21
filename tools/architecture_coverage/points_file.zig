@@ -15,14 +15,16 @@ pub const Parsed = struct {
 };
 
 pub fn read(
+    io: std.Io,
     allocator: std.mem.Allocator,
     file_path: []const u8,
     expected_architecture: []const u8,
 ) !Parsed {
-    const file_contents = try std.fs.cwd().readFileAlloc(
-        allocator,
+    const file_contents = try std.Io.Dir.cwd().readFileAlloc(
+        io,
         file_path,
-        maximum_file_size,
+        allocator,
+        .limited(maximum_file_size),
     );
     errdefer allocator.free(file_contents);
 

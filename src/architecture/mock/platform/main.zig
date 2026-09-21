@@ -47,26 +47,29 @@ pub fn setColor(color: arch.TextColor) void {
     state.color_change_count += 1;
 }
 
-pub const Writer = std.io.GenericWriter(
-    void,
-    error{},
-    struct {
-        fn write(_: void, bytes: []const u8) !usize {
-            if (bytes.len > state.console_bytes.len - state.console_byte_count) {
-                @panic("mock platform console observation capacity exceeded");
-            }
-            @memcpy(
-                state.console_bytes[state.console_byte_count..][0..bytes.len],
-                bytes,
-            );
-            state.console_byte_count += bytes.len;
-            return bytes.len;
-        }
-    }.write,
-);
+pub const Writer = std.Io.Writer;
 
-pub fn writer() Writer {
-    return .{ .context = {} };
+fn drain(_: *Writer, data: []const []const u8, _: usize) Writer.Error!usize {
+    var written: usize = 0;
+    for (data) |bytes| {
+        if (bytes.len > state.console_bytes.len - state.console_byte_count) {
+            @panic("mock platform console observation capacity exceeded");
+        }
+        @memcpy(
+            state.console_bytes[state.console_byte_count..][0..bytes.len],
+            bytes,
+        );
+        state.console_byte_count += bytes.len;
+        written += bytes.len;
+    }
+    return written;
+}
+
+const writer_vtable: Writer.VTable = .{ .drain = drain };
+var writer_instance: Writer = .{ .vtable = &writer_vtable, .buffer = &.{} };
+
+pub fn writer() *Writer {
+    return &writer_instance;
 }
 
 pub fn resetForTest() void {
