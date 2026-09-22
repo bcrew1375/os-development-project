@@ -35,6 +35,16 @@ fn expectFailure(
 fn resetProductionState() void {
     kernel.capability.resetForTest();
     kernel.process.resetForTest();
+    kernel.process.execution_context.resetForTest();
+}
+
+fn initializeContext(process_handle: kernel.process.ProcessHandle) !void {
+    try kernel.process.execution_context.initialize(.{
+        .thread_handle = process_handle,
+        .capability_space_handle = process_handle,
+        .address_space_handle = process_handle,
+        .process_handle = process_handle,
+    });
 }
 
 test "Syscall: side-effect requests preserve native-width arguments" {
@@ -193,10 +203,9 @@ test "Syscall: oversized handles and flags fail before service invocation" {
 
 test "Syscall: production dispatch creates and maps capability-backed objects" {
     resetProductionState();
-    const owner = kernel.process.ROOT_PROCESS_HANDLE;
+    try initializeContext(kernel.process.ROOT_PROCESS_HANDLE);
 
-    const address_space_result = kernel.syscall.dispatch(
-        owner,
+    const address_space_result = kernel.syscall.dispatchFromCurrentContext(
         request(.create_address_space, .{ 0, 0, 0, 0, 0 }),
     );
     const address_space_capability = switch (address_space_result) {
@@ -205,14 +214,12 @@ test "Syscall: production dispatch creates and maps capability-backed objects" {
     };
     try expectReturned(
         abi.syscall.SYSCALL_SUCCESS,
-        kernel.syscall.dispatch(
-            owner,
+        kernel.syscall.dispatchFromCurrentContext(
             request(.map_memory, .{ address_space_capability, 0x0200_0000, 0x2000, 0, 0 }),
         ),
     );
 
-    const memory_object_result = kernel.syscall.dispatch(
-        owner,
+    const memory_object_result = kernel.syscall.dispatchFromCurrentContext(
         request(.create_memory_object, .{ 0x3000, 0, 0, 0, 0 }),
     );
     const memory_object_capability = switch (memory_object_result) {
@@ -221,8 +228,7 @@ test "Syscall: production dispatch creates and maps capability-backed objects" {
     };
     try expectReturned(
         abi.syscall.SYSCALL_SUCCESS,
-        kernel.syscall.dispatch(
-            owner,
+        kernel.syscall.dispatchFromCurrentContext(
             request(.map_memory_object, .{
                 address_space_capability,
                 memory_object_capability,
@@ -234,7 +240,7 @@ test "Syscall: production dispatch creates and maps capability-backed objects" {
     );
 
     const address_space_handle = try kernel.capability.resolveAddressSpace(
-        owner,
+        kernel.process.ROOT_PROCESS_HANDLE,
         address_space_capability,
         .{ .manage = true },
     );
@@ -247,48 +253,58 @@ test "Syscall: production dispatch creates and maps capability-backed objects" {
 
 test "Syscall: production capability and invocation failures return stable statuses" {
     resetProductionState();
-    const owner = kernel.process.ROOT_PROCESS_HANDLE;
+    try initializeContext(kernel.process.ROOT_PROCESS_HANDLE);
 
     try expectFailure(
         .resolve_address_space,
         error.InvalidCapability,
         abi.syscall.SYSCALL_FAILURE,
-        kernel.syscall.dispatch(
-            owner,
+        kernel.syscall.dispatchFromCurrentContext(
             request(.map_memory, .{ abi.capability.INVALID_CAPABILITY, 0x1000, 0x1000, 0, 0 }),
         ),
     );
 
-    const address_space_capability = switch (kernel.syscall.dispatch(
-        owner,
+    const address_space_capability = switch (kernel.syscall.dispatchFromCurrentContext(
         request(.create_address_space, .{ 0, 0, 0, 0, 0 }),
     )) {
         .returned => |handle| handle,
         else => return error.UnexpectedSyscallResult,
     };
-    const memory_object_capability = switch (kernel.syscall.dispatch(
-        owner,
+    const memory_object_capability = switch (kernel.syscall.dispatchFromCurrentContext(
         request(.create_memory_object, .{ 0x1000, 0, 0, 0, 0 }),
     )) {
         .returned => |handle| handle,
         else => return error.UnexpectedSyscallResult,
     };
 
+    try kernel.process.execution_context.replace(.{
+        .thread_handle = 2,
+        .capability_space_handle = 2,
+        .address_space_handle = 2,
+        .process_handle = 2,
+    });
+
     try expectFailure(
         .resolve_address_space,
         error.CapabilityOwnerMismatch,
         abi.syscall.SYSCALL_FAILURE,
-        kernel.syscall.dispatch(
-            owner + 1,
+        kernel.syscall.dispatchFromCurrentContext(
             request(.map_memory, .{ address_space_capability, 0x1000, 0x1000, 0, 0 }),
         ),
     );
+
+    try kernel.process.execution_context.replace(.{
+        .thread_handle = kernel.process.execution_context.ROOT_THREAD_HANDLE,
+        .capability_space_handle = kernel.process.execution_context.ROOT_CAPABILITY_SPACE_HANDLE,
+        .address_space_handle = kernel.process.execution_context.ROOT_ADDRESS_SPACE_HANDLE,
+        .process_handle = kernel.process.ROOT_PROCESS_HANDLE,
+    });
+
     try expectFailure(
         .resolve_address_space,
         error.InvalidCapabilityType,
         abi.syscall.SYSCALL_FAILURE,
-        kernel.syscall.dispatch(
-            owner,
+        kernel.syscall.dispatchFromCurrentContext(
             request(.map_memory, .{ memory_object_capability, 0x1000, 0x1000, 0, 0 }),
         ),
     );
@@ -296,8 +312,7 @@ test "Syscall: production capability and invocation failures return stable statu
         .map_memory_object,
         error.InvalidMemoryPermissions,
         abi.syscall.SYSCALL_FAILURE,
-        kernel.syscall.dispatch(
-            owner,
+        kernel.syscall.dispatchFromCurrentContext(
             request(.map_memory_object, .{
                 address_space_capability,
                 memory_object_capability,

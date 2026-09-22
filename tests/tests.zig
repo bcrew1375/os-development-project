@@ -16,4 +16,5 @@ test {
     _ = @import("interrupt_diagnostics_tests.zig");
     _ = @import("root_process_tests.zig");
     _ = @import("kernel_initialization_tests.zig");
+    _ = @import("user_memory_tests.zig");
 }

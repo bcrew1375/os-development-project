@@ -6,6 +6,8 @@ const framework = @import("../framework.zig");
 pub fn interruptGatePreservesRegisterAbi() !void {
     kernel.capability.resetForTest();
     kernel.process.resetForTest();
+    kernel.process.execution_context.resetForTest();
+    try kernel.process.execution_context.initializeRoot();
     @call(.never_inline, arch.boot.finishBoot, .{});
 
     const address_space_capability = abi.syscall.syscall3(

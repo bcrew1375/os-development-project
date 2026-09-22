@@ -4,6 +4,50 @@ const kernel = @import("kernel_common");
 
 fn testSetup() void {
     kernel.process.resetForTest();
+    kernel.process.execution_context.resetForTest();
+}
+
+test "Execution context: root context is explicit and replaceable" {
+    testSetup();
+
+    try std.testing.expectError(
+        error.ExecutionContextUninitialized,
+        kernel.process.execution_context.current(),
+    );
+
+    try kernel.process.execution_context.initializeRoot();
+    const root = try kernel.process.execution_context.current();
+    try std.testing.expectEqual(kernel.process.execution_context.ROOT_THREAD_HANDLE, root.thread_handle);
+    try std.testing.expectEqual(kernel.process.execution_context.ROOT_CAPABILITY_SPACE_HANDLE, root.capability_space_handle);
+    try std.testing.expectEqual(kernel.process.execution_context.ROOT_ADDRESS_SPACE_HANDLE, root.address_space_handle);
+    try std.testing.expectEqual(kernel.process.ROOT_PROCESS_HANDLE, root.process_handle);
+
+    try kernel.process.execution_context.replace(.{
+        .thread_handle = 2,
+        .capability_space_handle = 3,
+        .address_space_handle = 4,
+        .process_handle = 42,
+    });
+    const replaced = try kernel.process.execution_context.current();
+    try std.testing.expectEqual(@as(u32, 2), replaced.thread_handle);
+    try std.testing.expectEqual(@as(u32, 3), replaced.capability_space_handle);
+    try std.testing.expectEqual(@as(u32, 4), replaced.address_space_handle);
+    try std.testing.expectEqual(@as(u32, 42), replaced.process_handle);
+}
+
+test "Execution context: production syscall dispatch rejects an uninitialized context" {
+    testSetup();
+
+    const result = kernel.syscall.dispatchFromCurrentContext(.{
+        .number = @intFromEnum(abi.syscall.SyscallNumber.create_address_space),
+    });
+    switch (result) {
+        .failure => |failure| {
+            try std.testing.expectEqual(kernel.syscall.Operation.resolve_execution_context, failure.operation);
+            try std.testing.expectEqual(error.ExecutionContextUninitialized, failure.err);
+        },
+        else => return error.UnexpectedSyscallResult,
+    }
 }
 
 test "Process: createAddressSpace returns tracked address space object" {

@@ -33,7 +33,7 @@ pub fn main(init: std.process.Init) !void {
     try writeReport(init.io, arguments.architecture_name, summary);
 }
 
-fn parseCommandArguments(args: *std.process.Args) !CommandArguments {
+fn parseCommandArguments(args: *const std.process.Args) !CommandArguments {
     var process_arguments = args.iterate();
     _ = process_arguments.next();
     const arguments: CommandArguments = .{

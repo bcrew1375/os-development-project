@@ -12,6 +12,7 @@ pub const Request = struct {
 
 /// Kernel operation that failed while servicing a syscall.
 pub const Operation = enum {
+    resolve_execution_context,
     create_address_space,
     resolve_address_space,
     map_memory,
@@ -44,8 +45,11 @@ pub const Result = union(enum) {
     failure: Failure,
 };
 
-/// Dispatches a syscall through the production capability and process services.
-pub fn dispatch(caller_process_handle: process.ProcessHandle, request: Request) Result {
+/// Dispatches a production syscall using the installed execution context.
+pub fn dispatchFromCurrentContext(request: Request) Result {
+    const caller_process_handle = process.execution_context.currentProcessHandle() catch |err| {
+        return failure(.resolve_execution_context, err, abi.syscall.SYSCALL_FAILURE);
+    };
     return dispatchWithServices(ProductionServices, caller_process_handle, request);
 }
 

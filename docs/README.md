@@ -13,11 +13,15 @@ research are not confused with one another.
   dependency direction, build products, and validation commands.
 - [Current Kernel Assessment](roadmaps/kernel-assessment.md) — dated maturity
   assessment, risks, and priority-ordered technical critique.
+- [Kernel Object Model](kernel-object-model.md) — current ownership, lifetime,
+  authorization, and concurrency contract for kernel objects.
 
 ## Architecture
 
 - [Current Kernel Structure and Rationale](architecture/current-state.md) — the
   canonical overview of the implemented system and its architectural intent.
+- [Kernel Object Model](kernel-object-model.md) — the contract that must guide
+  new threads, address spaces, memory objects, capability spaces, and IPC objects.
 
 Architecture documents describe stable or currently implemented relationships.
 Proposals that are not implemented belong in `roadmaps`, not here.
@@ -81,11 +85,13 @@ repository without reconstructing its build or usage documentation.
 
 1. Update `architecture/current-state.md` when implemented subsystem boundaries
    or the active boot path change.
-2. Update `roadmaps/kernel-assessment.md` when maturity, risks, or priorities
+2. Update `kernel-object-model.md` before implementing or changing an object
+   type, ownership rule, lifetime rule, or concurrency assumption.
+3. Update `roadmaps/kernel-assessment.md` when maturity, risks, or priorities
    change; retain its explicit assessment date.
-3. Update the relevant roadmap when future sequencing or acceptance criteria
+4. Update the relevant roadmap when future sequencing or acceptance criteria
    change.
-4. Keep commands and protocol details beside the subsystem that owns them.
-5. Describe experimental or metadata-only code explicitly; do not present names
+5. Keep commands and protocol details beside the subsystem that owns them.
+6. Describe experimental or metadata-only code explicitly; do not present names
    as proof of complete semantics.
-6. Add new documents to this index and verify all relative links.
+7. Add new documents to this index and verify all relative links.

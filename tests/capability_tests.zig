@@ -88,6 +88,40 @@ test "Capability: owner mismatch is rejected" {
     );
 }
 
+test "Capability: deleting and reusing a slot rejects the stale handle" {
+    testSetup();
+
+    const first = try kernel.capability.createAddressSpaceCapability(kernel.process.ROOT_PROCESS_HANDLE);
+    try kernel.capability.deleteCapability(kernel.process.ROOT_PROCESS_HANDLE, first);
+    try std.testing.expectError(
+        error.InvalidCapability,
+        kernel.capability.resolveAddressSpace(kernel.process.ROOT_PROCESS_HANDLE, first, .{}),
+    );
+
+    const second = try kernel.capability.createAddressSpaceCapability(kernel.process.ROOT_PROCESS_HANDLE);
+    try std.testing.expect(second != first);
+    try std.testing.expectEqual(
+        abi.capability.capabilitySlotIndex(first),
+        abi.capability.capabilitySlotIndex(second),
+    );
+    try std.testing.expect(
+        abi.capability.capabilityGeneration(second) != abi.capability.capabilityGeneration(first),
+    );
+    _ = try kernel.capability.resolveAddressSpace(kernel.process.ROOT_PROCESS_HANDLE, second, .{});
+}
+
+test "Capability: table exhaustion is explicit" {
+    testSetup();
+
+    for (0..16) |_| {
+        _ = try kernel.capability.createAddressSpaceCapability(kernel.process.ROOT_PROCESS_HANDLE);
+    }
+    try std.testing.expectError(
+        error.OutOfCapabilities,
+        kernel.capability.createAddressSpaceCapability(kernel.process.ROOT_PROCESS_HANDLE),
+    );
+}
+
 test "Capability: missing rights are rejected" {
     testSetup();
 
@@ -99,14 +133,14 @@ test "Capability: missing rights are rejected" {
     );
 }
 
-test "Capability: creation propagates underlying registry exhaustion" {
+test "Capability: creation reports capability exhaustion before backing exhaustion" {
     testSetup();
 
     for (0..16) |_| {
         _ = try kernel.capability.createAddressSpaceCapability(kernel.process.ROOT_PROCESS_HANDLE);
     }
     try std.testing.expectError(
-        error.OutOfAddressSpaces,
+        error.OutOfCapabilities,
         kernel.capability.createAddressSpaceCapability(kernel.process.ROOT_PROCESS_HANDLE),
     );
 }

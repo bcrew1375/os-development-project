@@ -114,8 +114,7 @@ fn handlePageFault(trap_frame: *const TrapFrame, diagnostic: diagnostics.Decisio
 }
 
 fn handleSyscall(trap_frame: *TrapFrame) void {
-    const result = kernel_common.syscall.dispatch(
-        kernel_common.process.ROOT_PROCESS_HANDLE,
+    const result = kernel_common.syscall.dispatchFromCurrentContext(
         .{
             .number = @truncate(trap_frame.rax),
             .arguments = .{
@@ -134,7 +133,12 @@ fn handleSyscallResult(trap_frame: *TrapFrame, result: kernel_common.syscall.Res
     switch (result) {
         .returned => |value| trap_frame.rax = value,
         .debug_write => |write| {
-            const message: [*]const u8 = @ptrFromInt(@as(usize, @intCast(write.address)));
+            var message: [kernel_common.user_memory.MAX_COPY_BYTES]u8 = undefined;
+            kernel_common.user_memory.copyFromUser(&message, write.address, write.length) catch |err| {
+                arch.platform.writer().print("debug_write failed: {s}\n", .{@errorName(err)}) catch {};
+                trap_frame.rax = abi.syscall.SYSCALL_FAILURE;
+                return;
+            };
             arch.platform.writer().writeAll(message[0..@intCast(write.length)]) catch {};
             trap_frame.rax = abi.syscall.SYSCALL_SUCCESS;
         },

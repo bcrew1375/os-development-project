@@ -8,7 +8,7 @@ extern const __start___sancov_guards: u32;
 extern const __stop___sancov_guards: u32;
 
 var seen: [protocol.max_points / 8]u8 linksection(runtime_data_section) = @splat(0);
-export var __sancov_lowest_stack: usize linksection(runtime_data_section) = 0;
+export var __sancov_lowest_stack: usize linksection(runtime_data_section) = std.math.maxInt(usize);
 
 pub fn instrumentationPointCount() usize {
     @disableInstrumentation();

@@ -8,13 +8,6 @@ pub const std_options: std.Options = .{
 
 var logged_errors: usize = 0;
 
-const FuzzerSlice = extern struct {
-    ptr: [*]const u8,
-    len: usize,
-};
-
-extern fn fuzzer_init(cache_dir: FuzzerSlice) void;
-
 const Counters = struct {
     values: []u8,
     program_counters: []const usize,
@@ -24,7 +17,7 @@ pub fn main(init: std.process.Init) void {
     @disableInstrumentation();
     run(init) catch |err| {
         std.debug.print("coverage failed: {s}\n", .{@errorName(err)});
-        if (@errorReturnTrace()) |trace| std.debug.dumpStackTrace(trace.*);
+        if (@errorReturnTrace()) |trace| std.debug.dumpErrorReturnTrace(trace);
         std.process.exit(1);
     };
 }
@@ -46,8 +39,6 @@ fn run(init: std.process.Init) !void {
     const common_root = try allocator.dupe(u8, canonical_common_root);
     defer allocator.free(common_root);
 
-    const cache_path = ".zig-cache/coverage";
-    fuzzer_init(.{ .ptr = cache_path.ptr, .len = cache_path.len });
     const counters = try coverageCounters();
     if (counters.values.len != counters.program_counters.len) {
         return error.InvalidInstrumentationTables;
@@ -60,7 +51,7 @@ fn run(init: std.process.Init) !void {
 
     const test_result = runTests(counters.values, seen);
 
-    const points = try resolveSourcePoints(allocator, counters.program_counters, seen);
+    const points = try resolveSourcePoints(init.io, allocator, counters.program_counters, seen);
     defer {
         for (points) |point| allocator.free(point.path);
         allocator.free(points);
@@ -120,7 +111,7 @@ fn runTests(counters: []const u8, seen: []bool) TestResult {
             else => {
                 result.failed += 1;
                 std.debug.print("FAIL ({s})\n", .{@errorName(err)});
-                if (@errorReturnTrace()) |trace| std.debug.dumpStackTrace(trace.*);
+                if (@errorReturnTrace()) |trace| std.debug.dumpErrorReturnTrace(trace);
             },
         }
 
@@ -135,13 +126,13 @@ fn runTests(counters: []const u8, seen: []bool) TestResult {
 }
 
 fn resolveSourcePoints(
+    io: std.Io,
     allocator: std.mem.Allocator,
     program_counters: []const usize,
     seen: []const bool,
 ) ![]report.SourcePoint {
     @disableInstrumentation();
-    var debug_info = try std.debug.SelfInfo.open(allocator);
-    defer debug_info.deinit();
+    const debug_info = try std.debug.getSelfDebugInfo();
 
     var points: std.ArrayListUnmanaged(report.SourcePoint) = .empty;
     errdefer {
@@ -149,10 +140,14 @@ fn resolveSourcePoints(
         points.deinit(allocator);
     }
 
+    var symbols: std.ArrayList(std.debug.Symbol) = .empty;
+    defer symbols.deinit(allocator);
+
     for (program_counters, seen) |address, covered| {
-        const module = debug_info.getModuleForAddress(address) catch continue;
-        const symbol = module.getSymbolAtAddress(allocator, address) catch continue;
-        const location = symbol.source_location orelse continue;
+        symbols.clearRetainingCapacity();
+        debug_info.getSymbols(io, allocator, allocator, address, false, &symbols) catch continue;
+        if (symbols.items.len == 0) continue;
+        const location = symbols.items[0].source_location orelse continue;
         const line = std.math.cast(u32, location.line) orelse {
             allocator.free(location.file_name);
             continue;

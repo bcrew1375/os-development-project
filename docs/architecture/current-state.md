@@ -1,6 +1,6 @@
 # Current Kernel Structure and Rationale
 
-Status date: 2026-09-20
+Status date: 2026-09-22
 
 This document summarizes the kernel as it is implemented now and explains why
 its current boundaries exist. It is the architectural starting point for readers
@@ -14,7 +14,9 @@ who need context before entering the source or the detailed roadmaps.
 
 The production system can boot on x86-32 and x86-64, load a freestanding root
 ELF, enter ring 3, service system calls, enforce basic capability ownership and
-rights, and observe a clean root-task exit. It cannot yet schedule multiple
+rights, and observe a clean root-task exit. This is a real initial userspace
+process, but it is still a bootstrap special case rather than a reusable process
+model. It cannot yet schedule multiple
 threads, contain a user fault, transfer capabilities, back memory objects with
 delegated physical frames, or provide IPC.
 
@@ -165,12 +167,18 @@ it does not yet prove shared physical storage.
 ### Capability table
 
 `src/common/capability` stores fixed-capacity capability slots with an owner,
-object type, and rights. It prevents a caller from resolving another owner's
-handle or using a handle with insufficient rights.
+object type, rights, and generation. The shared `u32` ABI uses 7 slot-index bits
+and 25 generation bits, with zero reserved as invalid. Slot reuse advances the
+generation, stale handles are rejected, and exhaustion is returned explicitly.
+It also prevents a caller from resolving another owner's handle or using a
+handle with insufficient rights. Per-process capability spaces remain future
+work; ownership is still the transitional isolation boundary.
 
 This is useful enforcement scaffolding, not a seL4-complete capability space.
 There is no per-task CSpace, derivation tree, copy, mint, attenuation, transfer,
-revocation, deletion, or object-lifetime coupling yet.
+revocation, or object-lifetime coupling yet. An internal/test-only slot deletion
+primitive exists solely to validate generation advancement and stale-handle
+rejection; it is not yet a public lifecycle syscall.
 
 ### Syscall policy
 
@@ -180,9 +188,14 @@ explicit result describing return values, debug writes, exit, unsupported calls,
 or failures.
 
 This keeps ABI decoding and authorization testable on the host and minimizes
-policy duplicated across x86 targets. Caller identity is still rooted in the
-single bootstrap task and must become explicit execution-context state before a
-second process can be isolated correctly.
+policy duplicated across x86 targets. Production syscall authorization obtains
+the caller process identity from the current execution context; explicit caller
+injection remains available only to common-policy test doubles.
+
+The ownership, lifetime, authorization, and initial uniprocessor concurrency
+contract for the planned object types is recorded in the [kernel object model](../kernel-object-model.md).
+That contract is design documentation, not evidence that the named objects are
+already implemented.
 
 ## Memory-policy direction
 
@@ -316,6 +329,8 @@ next architecture milestone into phased work.
    boot path;
 4. `src/architecture/architecture.zig` for the hardware abstraction contract;
 5. `src/common/syscall`, `capability`, and `process` for current object policy;
-6. the [kernel assessment](../roadmaps/kernel-assessment.md) for limitations;
-7. the [userspace process roadmap](../roadmaps/userspace-process-roadmap.md) before
+6. the [kernel object model](../kernel-object-model.md) before changing object
+   ownership, lifetime, authorization, or concurrency assumptions;
+7. the [kernel assessment](../roadmaps/kernel-assessment.md) for limitations;
+8. the [userspace process roadmap](../roadmaps/userspace-process-roadmap.md) before
    changing the object, memory-authority, execution, or IPC model.

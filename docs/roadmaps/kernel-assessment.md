@@ -1,6 +1,6 @@
 # Current Kernel Assessment
 
-Date: 2026-09-20
+Date: 2026-09-22
 
 This document records a high-level assessment of the current repository state.
 It is the single source of truth for implementation maturity and the prioritized
@@ -152,7 +152,7 @@ The build supports both x86 targets, independently builds the root task,
 accepts an externally supplied root-task artifact, runs component tests, emits
 API documentation, and launches QEMU. CI checks formatting, runs native tests,
 executes physical architecture tests, builds both targets, and runs production
-system-smoke tests with Zig 0.15.2.
+system-smoke tests with Zig 0.16.0.
 
 ## Prioritized actionable critique
 
@@ -237,9 +237,21 @@ still halt the system. Those concerns remain tracked by **P0.1**, **P0.2**, and
 marshalling and explicitly delegated architecture side effects. The common
 policy portion of this item is complete.
 
-#### P0.4 Make caller identity explicit
+#### P0.4 Make caller identity explicit — complete
 
-**Problem:** Every syscall is authorized as `ROOT_PROCESS_HANDLE`, regardless of
+**Completed:** 2026-09-22.
+
+**Verified status:** The root task is registered as an explicit execution context,
+production syscall dispatch reads its process identity through
+`currentProcessHandle()`, and both x86 syscall handlers use that production path.
+Native tests switch between synthetic callers and verify that capabilities created
+by one caller are rejected by another.
+
+**Remaining limitation:** Capability handles are still global fixed-capacity
+handles without per-process capability spaces; those concerns remain tracked by
+U1.4 and later milestones.
+
+**Problem:** Every syscall was authorized as `ROOT_PROCESS_HANDLE`, regardless of
 the actual caller.
 
 **Why it matters:** Ownership checks cannot protect multiple processes if the
@@ -256,12 +268,24 @@ kernel supplies a constant identity.
 6. Add tests using at least two synthetic caller identities.
 7. Document that CPU-local storage replaces the global accessor before SMP.
 
-**Done when:** No syscall path references `ROOT_PROCESS_HANDLE` directly and
-capability ownership tests exercise different current callers.
+**Done when:** No production syscall path references `ROOT_PROCESS_HANDLE` directly
+and capability ownership tests exercise different current callers.
 
 ### Priority 1: complete the minimum kernel object model
 
-#### P1.1 Write the object-model design contract
+#### P1.1 Write the object-model design contract — complete
+
+**Completed:** 2026-09-22.
+
+**Verified status:** `docs/kernel-object-model.md` now defines the responsibilities,
+ownership, lifetime, authorization, reclamation, bounded-storage, and initial
+uniprocessor concurrency rules for the planned kernel object types. The document
+also records which policies remain in the root task and explicitly distinguishes
+the design contract from implemented production semantics.
+
+**Remaining implementation work:** Address spaces, memory objects, capabilities,
+threads, endpoints, and notifications still require the implementation milestones
+listed below. This item completes the design prerequisite only.
 
 **Problem:** Address spaces, memory objects, and capabilities were added before
 their complete ownership and lifetime relationships were defined. Threads and
@@ -272,7 +296,7 @@ lock prototype ownership assumptions into public ABI and internal APIs.
 
 **Actions:**
 
-1. Add `docs/kernel-object-model.md`.
+1. Add and maintain `docs/kernel-object-model.md`.
 2. Define the responsibilities of `Thread`, `AddressSpace`, `MemoryObject`,
    `CapabilitySpace`, `Endpoint`, and `Notification`.
 3. Define which objects own physical frames and architecture resources.
@@ -284,7 +308,8 @@ lock prototype ownership assumptions into public ABI and internal APIs.
 8. Record which policies belong in the root task rather than the kernel.
 
 **Done when:** New object implementations can cite one reviewed document for
-ownership, lifetime, authorization, and concurrency semantics.
+ownership, lifetime, authorization, and concurrency semantics. This design
+prerequisite is complete; implementation milestones remain separately tracked.
 
 #### P1.2 Attach hardware roots to address-space objects
 
@@ -348,11 +373,19 @@ which user space controls physical-memory allocation policy.
 memory, shared mapping behavior is verified, and no runtime memory-object path
 implicitly calls a kernel PMM.
 
-#### P1.4 Evolve protected handles into capability spaces
+#### P1.4 Evolve protected handles into capability spaces — handle foundation complete
 
-**Problem:** The current global capability table has single-owner slots,
-monotonic handles, and no copy, derivation, attenuation, revocation, destruction,
-or stale-handle protection.
+**Completed:** 2026-09-22 for stable handle representation and stale-handle
+protection. The remaining capability-space work is still required.
+
+**Verified status:** Capability handles preserve a `u32` ABI using 7 slot bits and
+25 generation bits. Slot reuse advances the generation, stale handles are rejected,
+and capability-table exhaustion returns an explicit error instead of reaching
+`unreachable`.
+
+**Remaining problem:** The global capability table still has single-owner slots
+and no copy, derivation, attenuation, revocation, object destruction, or true
+per-process capability spaces.
 
 **Why it matters:** This cannot yet model independently held authority or safely
 recycle slots in a long-running system.
@@ -361,12 +394,12 @@ recycle slots in a long-running system.
 
 1. Separate kernel object identity from capability-slot identity.
 2. Add one capability space per process or execution domain.
-3. Replace monotonically unique handles with slot plus generation identifiers.
+3. Replace monotonically unique handles with slot plus generation identifiers — complete.
 4. Implement capability lookup within the caller's capability space.
 5. Implement copy with equal rights.
 6. Implement mint/derive with rights attenuation only.
 7. Track parent-child derivation relationships.
-8. Implement slot deletion and stale-handle rejection.
+8. Implement slot deletion and stale-handle rejection — handle-local foundation complete.
 9. Implement revocation of descendants.
 10. Add object reference accounting and destroy objects only when policy permits.
 11. Add tests for delegation, attenuation, stale handles, revocation, slot

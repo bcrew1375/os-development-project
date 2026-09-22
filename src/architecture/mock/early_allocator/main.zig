@@ -1,8 +1,6 @@
 const arch = @import("arch");
 const common_early_allocator = @import("../../early_allocator.zig");
 
-const mmu = @import("../mmu/main.zig");
-
 var reservedMap: arch.ReservedMap = arch.ReservedMap{};
 
 pub fn initialize() arch.EarlyAllocError!void {

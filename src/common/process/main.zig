@@ -28,6 +28,8 @@ pub const MemoryObjectHandle = u32;
 pub const ProcessHandle = u32;
 /// Reserved handle for the initial root process.
 pub const ROOT_PROCESS_HANDLE: ProcessHandle = 1;
+/// Current execution identity and its uniprocessor accessor.
+pub const execution_context = @import("execution_context.zig");
 
 const MAX_ADDRESS_SPACES = 16;
 const MAX_MEMORY_OBJECTS = 64;

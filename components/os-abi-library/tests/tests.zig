@@ -31,6 +31,17 @@ test "Capability rights containment is explicit" {
     try std.testing.expect(!(abi.capability.Rights{ .read = true }).contains(.{ .write = true }));
 }
 
+test "Capability handles encode stable slots and generations" {
+    const handle = abi.capability.makeCapabilityHandle(17, 23);
+    try std.testing.expectEqual(@as(u32, 17), abi.capability.capabilitySlotIndex(handle));
+    try std.testing.expectEqual(@as(u32, 23), abi.capability.capabilityGeneration(handle));
+
+    const parts = abi.capability.decodeCapabilityHandle(handle) orelse return error.InvalidCapabilityHandle;
+    try std.testing.expectEqual(@as(u32, 17), parts.slot_index);
+    try std.testing.expectEqual(@as(u32, 23), parts.generation);
+    try std.testing.expect(abi.capability.decodeCapabilityHandle(abi.capability.INVALID_CAPABILITY) == null);
+}
+
 test "system smoke protocol records are complete ordered serial lines" {
     try std.testing.expectEqual(@as(u32, 1), abi.system_smoke.PROTOCOL_VERSION);
     try std.testing.expectEqualStrings(

@@ -21,3 +21,5 @@ pub const process = @import("common/process/main.zig");
 pub const capability = @import("common/capability/main.zig");
 /// Architecture-independent syscall policy dispatcher.
 pub const syscall = @import("common/syscall/main.zig");
+/// Checked access helpers for userspace memory.
+pub const user_memory = @import("common/user_memory.zig");

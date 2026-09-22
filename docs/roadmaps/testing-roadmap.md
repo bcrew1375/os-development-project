@@ -1,6 +1,6 @@
 # Testing Roadmap
 
-Status date: 2026-09-19
+Status date: 2026-09-22
 
 This document is the operational plan for improving test fidelity and expanding
 what can be tested. The broader architectural priorities remain in the

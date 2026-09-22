@@ -168,6 +168,15 @@ Other:
         rewritten = REWRITE_IR.rewrite(source, "x86_64")
         self.assertNotIn("thread_local", rewritten)
 
+    def test_ir_rewriter_removes_namespaced_sanitizer_tls(self) -> None:
+        source = (
+            '@runtime.__sancov_lowest_stack = internal global i32 0, section ".multiboot.data"\n'
+            '@__sancov_lowest_stack.29 = external thread_local(initialexec) global i32\n'
+        )
+        rewritten = REWRITE_IR.rewrite(source, "x86_64")
+        self.assertNotIn("thread_local", rewritten)
+        self.assertNotIn("__sancov_lowest_stack.29", rewritten)
+
     def test_x86_32_rewriter_validates_bootstrap_sections(self) -> None:
         source = (
             '@__sancov_lowest_stack = thread_local(initialexec) global i32 0, section ".multiboot.data"\n'

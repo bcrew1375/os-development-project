@@ -2,7 +2,9 @@
 
 An early x86 microkernel project written in Zig. The repository currently boots
 on x86-32 and x86-64, loads an independently built root task, enters user mode,
-and exercises a small capability-shaped syscall ABI under QEMU.
+and exercises a small capability-shaped syscall ABI under QEMU. The root task is
+the first userspace process; the next execution milestone is a separately
+created child process.
 
 The project is intentionally **not described as a complete microkernel yet**.
 Its current object registries and capability checks establish useful boundaries,
@@ -68,7 +70,9 @@ validation semantics.
 ## Current priorities
 
 The next major milestone is to let the root task safely construct and run a
-second isolated userspace process. That requires explicit execution identity,
-complete address-space objects, delegated physical-memory authority, thread and
-scheduler objects, fault containment, and IPC. The detailed sequence is tracked
-in the [userspace process roadmap](docs/roadmaps/userspace-process-roadmap.md).
+second isolated userspace process. The shortest useful vertical slice is:
+explicit execution identity, safe user-memory access, contained user faults,
+complete address-space objects, one cooperative thread switch, and real child
+memory backing. The detailed sequence is tracked in the [userspace process
+roadmap](docs/roadmaps/userspace-process-roadmap.md), while ownership and
+lifetime rules are defined in the [kernel object model](docs/kernel-object-model.md).

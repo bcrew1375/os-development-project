@@ -78,6 +78,10 @@ pub export fn kernelMain() void {
         arch.cpu.unrecoverableHalt();
     };
 
+    kernel_common.process.execution_context.initializeRoot() catch {
+        arch.cpu.unrecoverableHalt();
+    };
+
     // arch.boot.finishBoot();
 
     // terminal.print.printString("Initializing interrupts...");

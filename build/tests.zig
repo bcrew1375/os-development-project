@@ -34,7 +34,6 @@ pub fn addCoverageStep(b: *std.Build) void {
             .target = b.graph.host,
             .optimize = .Debug,
             .code_model = .normal,
-            .fuzz = true,
         }),
         .test_runner = .{
             .path = b.path("tools/coverage/main.zig"),
@@ -44,8 +43,6 @@ pub fn addCoverageStep(b: *std.Build) void {
         .use_lld = true,
     });
 
-    common_modules.arch.fuzz = true;
-    common_modules.kernel_common.fuzz = true;
     modules.addCommonImports(tests.root_module, common_modules);
     addKernelTestImports(b, tests.root_module, common_modules, .Debug);
     tests.root_module.addImport("coverage_report", coverage_report);

@@ -1,6 +1,6 @@
 # Userspace Process Roadmap
 
-Status date: 2026-09-20
+Status date: 2026-09-22
 
 This document is the implementation plan for progressing from the bootstrapped
 root task to multiple isolated, useful userspace processes. The architectural
@@ -29,14 +29,16 @@ any deliberate limitation.
 
 ## Current baseline
 
-The current system already provides several foundations:
+The current system already provides several foundations. The root task is a
+real initial userspace process, but it is not yet a normal schedulable child
+process created through the runtime object model.
 
 - the kernel loads and enters one freestanding root-task ELF;
 - x86-32 and x86-64 have separate hardware page-table roots for the root task;
 - the shared ABI exposes debug output, exit, address-space creation,
   memory-object creation, and mapping requests;
 - common syscall policy is architecture independent and host tested;
-- capability handles enforce owner, object-type, and rights checks;
+- capability handles enforce owner, object-type, rights, generation, and stale-handle checks;
 - native, physical architecture, and production system-smoke tests run in CI.
 
 The current objects are not sufficient for multiple processes:
@@ -44,7 +46,7 @@ The current objects are not sufficient for multiple processes:
 - syscall caller identity is hard-coded to the root process;
 - registered address-space objects do not own hardware roots;
 - memory objects contain metadata but no delegated physical backing;
-- capability slots are global and cannot be copied, attenuated, or revoked;
+- capability slots are global and cannot yet be copied, attenuated, or revoked;
 - there are no thread objects, runnable queues, context switches, or IPC objects;
 - user faults and process exit can still halt the system.
 
@@ -110,6 +112,23 @@ Phase 5: IPC and useful process services
 Some implementation work may overlap, but a phase exit gate must be satisfied
 before the next phase is treated as operationally complete.
 
+## Immediate target: the first child process
+
+The existing root task already demonstrates the first userspace transition. The
+next milestone is the first independently created child process, not another
+bootstrap-only ring-3 transition. The shortest useful vertical slice is:
+
+1. explicit current execution context;
+2. checked userspace copy operations;
+3. user-fault containment;
+4. address-space objects that own hardware roots;
+5. one cooperative thread-switch path;
+6. real backing for the child memory object;
+7. root-task ELF loading and child exit while the root task continues.
+
+SMP, timer preemption, general IPC, and a full userspace service model remain
+later work unless a dependency requires them sooner.
+
 # Phase 1 — Establish execution identity and authorization
 
 **Objective:** Make the currently running userspace context explicit so every
@@ -119,13 +138,18 @@ address space.
 This phase does not create a second runnable process. It removes the global-root
 identity assumption that would otherwise invalidate all later isolation work.
 
-## [ ] U1.1 Define the kernel object and lifetime contract
+## [x] U1.1 Define the kernel object and lifetime contract
+
+- Completed: 2026-09-22
+- Validation: documentation review; Markdown link check; `git diff --check`
+- Limitation: this completes the design contract only; the named kernel objects
+  remain implementation work in later phases.
 
 **Related assessment:** P1.1.
 
 **Work:**
 
-- add `docs/kernel-object-model.md`;
+- maintain `docs/kernel-object-model.md`;
 - define `Thread`, `AddressSpace`, `CapabilitySpace`, `MemoryObject`, untyped or
   physical-range authority, `Endpoint`, and `Notification` responsibilities;
 - define whether kernel objects are referenced by stable object IDs, internal
@@ -147,7 +171,14 @@ identity assumption that would otherwise invalidate all later isolation work.
 
 **Validation:** Documentation review, Markdown checks, and `git diff --check`.
 
-## [ ] U1.2 Introduce explicit execution-context state
+## [x] U1.2 Introduce explicit execution-context state
+
+- Completed: 2026-09-22
+- Validation: `zig build tests`; architecture syscall ABI tests on x86-32 and
+  x86-64; `zig fmt --check`; `git diff --check`
+- Limitation: the current context uses fixed bootstrap identities and a single
+  uniprocessor storage location; CPU-local state and normal thread objects remain
+  later work.
 
 **Related assessment:** P0.4 and P2.1.
 
@@ -176,7 +207,13 @@ identity assumption that would otherwise invalidate all later isolation work.
 - use before context initialization fails as a kernel invariant violation;
 - the context API does not expose architecture trap-frame layouts to common code.
 
-## [ ] U1.3 Remove root-process identity from syscall authorization
+## [x] U1.3 Remove root-process identity from syscall authorization
+
+- Completed: 2026-09-22
+- Validation: `zig build tests`; architecture syscall ABI tests on x86-32 and
+  x86-64; both production system-smoke tests; `zig fmt --check`; `git diff --check`
+- Limitation: capability handles remain global fixed-capacity handles without
+  generations or per-process capability spaces; those are U1.4 and later work.
 
 **Related assessment:** P0.4.
 
@@ -196,7 +233,14 @@ identity assumption that would otherwise invalidate all later isolation work.
 - changing current context changes authorization without changing syscall input;
 - current root-task behavior remains unchanged.
 
-## [ ] U1.4 Define stable capability-handle semantics
+## [x] U1.4 Define stable capability-handle semantics
+
+- Completed: 2026-09-22
+- Validation: ABI component tests; `zig build tests`; architecture tests on
+  x86-32 and x86-64; both production system-smoke tests; `zig fmt --check`;
+  `git diff --check`
+- Limitation: lookup remains owner-based transitional isolation; capability
+  spaces, derivation, transfer, and revocation remain later work.
 
 **Related assessment:** P1.4.
 
@@ -216,7 +260,14 @@ identity assumption that would otherwise invalidate all later isolation work.
 - handle representation is architecture independent;
 - exhaustion returns an explicit error rather than reaching `unreachable`.
 
-## [ ] U1.5 Add safe userspace copy primitives
+## [x] U1.5 Add safe userspace copy primitives
+
+- Completed: 2026-09-22
+- Validation: `zig build tests`; x86-32 and x86-64 architecture tests;
+  both production system-smoke tests; `zig fmt --check`; `git diff --check`
+- Limitation: checked copies use a bounded fixed kernel buffer and the current
+  address-space/MMU lookup path; user-fault containment and independently
+  activatable child address spaces remain later phases.
 
 **Related assessment:** P0.1.
 
@@ -266,12 +317,24 @@ zig build system-smoke -Darch=x86_64
 
 ## Phase 1 exit gate
 
-- [ ] The root task has an explicit execution context.
-- [ ] Syscall authorization contains no hard-coded root identity.
-- [ ] Two caller identities have isolated capability lookup.
-- [ ] Stale handles are rejected after slot reuse.
-- [ ] All syscall user-pointer access uses checked copy primitives.
-- [ ] Existing production smoke tests still pass on both architectures.
+- [x] The root task has an explicit execution context.
+- [x] Syscall authorization contains no hard-coded root identity.
+- [x] Two caller identities have isolated capability lookup.
+- [x] Stale handles are rejected after slot reuse.
+- [x] All syscall user-pointer access uses checked copy primitives.
+- [x] Existing production smoke tests still pass on both architectures.
+
+**Phase 1 completed:** 2026-09-22.
+
+**Exit validation:** `zig build tests`; `zig build architecture-tests
+-Darch=x86_32`; `zig build architecture-tests -Darch=x86_64`; `zig build
+system-smoke -Darch=x86_32`; `zig build system-smoke -Darch=x86_64`;
+`zig fmt --check`; `git diff --check`.
+
+**Known validation limitation:** `zig build coverage` currently fails in the
+existing coverage runner because it uses two APIs incompatible with the Zig
+toolchain installed in this workspace (`std.debug.SelfInfo.Elf.open` and the
+`dumpStackTrace` argument shape). The ordinary native test suite remains green.
 
 # Phase 2 — Make address spaces complete kernel objects
 
