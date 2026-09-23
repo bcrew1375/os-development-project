@@ -136,9 +136,7 @@ fn allocatePageDirectory() linksection(boot_text_section) (arch.EarlyAllocError 
         arch.ReservedMapRegionType.PERSISTENT,
     )));
 
-    for (page_directory) |*entry| {
-        entry.* = .{};
-    }
+    clearPageEntries(page_directory, common.ENTRIES_PER_DIRECTORY);
 
     return page_directory;
 }
@@ -159,12 +157,20 @@ fn allocatePageTables(
     )[0..page_table_count];
 
     for (page_tables) |*page_table| {
-        for (page_table) |*entry| {
-            entry.* = .{};
-        }
+        clearPageEntries(@ptrCast(page_table), common.ENTRIES_PER_TABLE);
     }
 
     return page_tables;
+}
+
+fn clearPageEntries(
+    page_entries: [*]volatile common.PageEntry,
+    entry_count: usize,
+) linksection(boot_text_section) void {
+    var entry_index: usize = 0;
+    while (entry_index < entry_count) : (entry_index += 1) {
+        page_entries[entry_index] = .{};
+    }
 }
 
 fn initializeBootstrapMappings(
@@ -192,9 +198,7 @@ fn initializeReservedMappings(
     for (page_tables, 0..) |*page_table, table_offset| {
         page_directory[reserved_directory_index + table_offset] = makePageDirectoryEntry(page_table);
 
-        for (page_table) |*entry| {
-            entry.* = .{};
-        }
+        clearPageEntries(@ptrCast(page_table), common.ENTRIES_PER_TABLE);
     }
 
     mapFramebufferIntoReservedWindow(page_directory, reserved_map);
@@ -331,6 +335,7 @@ fn getBootstrapPhysicalAddress(address: usize) linksection(boot_text_section) us
 }
 
 fn activatePaging(page_directory: common.PageDirectory) linksection(boot_text_section) void {
+    @disableInstrumentation();
     const page_directory_physical_address = getBootstrapPhysicalAddress(@intFromPtr(page_directory));
 
     asm volatile (

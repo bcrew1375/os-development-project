@@ -42,6 +42,21 @@ pub fn addCoverageStep(b: *std.Build) void {
         .use_llvm = true,
         .use_lld = true,
     });
+    tests.sanitize_coverage_trace_pc_guard = true;
+    tests.bundle_ubsan_rt = false;
+    const sanitizer_runtime_module = b.createModule(.{
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
+    sanitizer_runtime_module.addCSourceFiles(.{
+        .files = &.{"tools/coverage/sanitizer_runtime.c"},
+        .flags = &.{"-fno-sanitize=undefined"},
+    });
+    const sanitizer_runtime = b.addObject(.{
+        .name = "coverage-sanitizer-runtime",
+        .root_module = sanitizer_runtime_module,
+    });
+    tests.root_module.addObject(sanitizer_runtime);
 
     modules.addCommonImports(tests.root_module, common_modules);
     addKernelTestImports(b, tests.root_module, common_modules, .Debug);
@@ -53,6 +68,15 @@ pub fn addCoverageStep(b: *std.Build) void {
     });
     architecture_points_file.addImport("coverage_report", coverage_report);
     tests.root_module.addImport("architecture_points_file", architecture_points_file);
+    const architecture_coverage_source_manifest = b.createModule(.{
+        .root_source_file = b.path("tools/architecture_coverage/source_manifest.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
+    tests.root_module.addImport(
+        "architecture_coverage_source_manifest",
+        architecture_coverage_source_manifest,
+    );
     tests.root_module.error_tracing = true;
 
     const run_coverage = b.addRunArtifact(tests);
@@ -92,6 +116,15 @@ fn addKernelTests(
     });
     architecture_points_file.addImport("coverage_report", coverage_report);
     tests.root_module.addImport("architecture_points_file", architecture_points_file);
+    const architecture_coverage_source_manifest = b.createModule(.{
+        .root_source_file = b.path("tools/architecture_coverage/source_manifest.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    });
+    tests.root_module.addImport(
+        "architecture_coverage_source_manifest",
+        architecture_coverage_source_manifest,
+    );
     tests.root_module.error_tracing = true;
 
     const run_tests = b.addRunArtifact(tests);

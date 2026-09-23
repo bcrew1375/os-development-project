@@ -27,6 +27,7 @@ SECTIONS
 	.data ALIGN (4K) : AT (ADDR (.data) - KERNEL_VIRTUAL_ADDRESS) {
 		_data_start = .;
 		*(.data .data.*)
+		*(.got .got.* .igot.plt)
 		_data_end = .;
 	}
 	.sancov_guards ALIGN (8) : AT (ADDR (.sancov_guards) - KERNEL_VIRTUAL_ADDRESS) {

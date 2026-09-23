@@ -3,24 +3,28 @@ const points_file = @import("architecture_points_file");
 
 test "architecture points file parses valid and empty point lists" {
     var parsed = try readFixture(
-        "OS_ARCHITECTURE_COVERAGE_POINTS\t2\n" ++
+        "OS_ARCHITECTURE_COVERAGE_POINTS\t3\n" ++
             "architecture\tx86_64\n" ++
             "instrumentation_points\t2\n" ++
-            "source_points\t2\n" ++
+            "source_points\t3\n" ++
             "points\n" ++
             "src/architecture/a.zig\t12\t1\n" ++
-            "src/architecture/b.zig\t34\t0\n",
+            "src/architecture/b.zig\t34\t0\n" ++
+            "src/architecture/c.zig\t56\t2\n",
         "x86_64",
     );
     defer parsed.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(usize, 2), parsed.source_points.len);
+    try std.testing.expectEqual(@as(usize, 3), parsed.source_points.len);
     try std.testing.expectEqualStrings("src/architecture/a.zig", parsed.source_points[0].path);
     try std.testing.expectEqual(@as(u32, 12), parsed.source_points[0].line);
     try std.testing.expect(parsed.source_points[0].covered);
+    try std.testing.expect(parsed.source_points[0].coverable);
+    try std.testing.expect(!parsed.source_points[2].covered);
+    try std.testing.expect(!parsed.source_points[2].coverable);
 
     var empty = try readFixture(
-        "OS_ARCHITECTURE_COVERAGE_POINTS\t2\n" ++
+        "OS_ARCHITECTURE_COVERAGE_POINTS\t3\n" ++
             "architecture\tx86_32\n" ++
             "instrumentation_points\t0\n" ++
             "source_points\t0\n" ++
@@ -43,19 +47,19 @@ test "architecture points file rejects invalid headers" {
     try std.testing.expectError(
         error.ArchitectureMismatch,
         readFixture(
-            "OS_ARCHITECTURE_COVERAGE_POINTS\t2\narchitecture\tx86_32\n" ++
+            "OS_ARCHITECTURE_COVERAGE_POINTS\t3\narchitecture\tx86_32\n" ++
                 "instrumentation_points\t0\nsource_points\t0\npoints\n",
             "x86_64",
         ),
     );
     try std.testing.expectError(
         error.InvalidPointsHeader,
-        readFixture("OS_ARCHITECTURE_COVERAGE_POINTS\t2\n", "x86_64"),
+        readFixture("OS_ARCHITECTURE_COVERAGE_POINTS\t3\n", "x86_64"),
     );
     try std.testing.expectError(
         error.InvalidPointsHeader,
         readFixture(
-            "OS_ARCHITECTURE_COVERAGE_POINTS\t2\narchitecture\tx86_64\n" ++
+            "OS_ARCHITECTURE_COVERAGE_POINTS\t3\narchitecture\tx86_64\n" ++
                 "instrumentation_points\tnot-a-number\nsource_points\t0\npoints\n",
             "x86_64",
         ),
@@ -63,7 +67,7 @@ test "architecture points file rejects invalid headers" {
     try std.testing.expectError(
         error.InvalidPointsHeader,
         readFixture(
-            "OS_ARCHITECTURE_COVERAGE_POINTS\t2\narchitecture\tx86_64\n" ++
+            "OS_ARCHITECTURE_COVERAGE_POINTS\t3\narchitecture\tx86_64\n" ++
                 "instrumentation_points\t0\nsource_points\tnan\npoints\n",
             "x86_64",
         ),
@@ -71,7 +75,7 @@ test "architecture points file rejects invalid headers" {
 }
 
 test "architecture points file rejects malformed records and count mismatch" {
-    const header = "OS_ARCHITECTURE_COVERAGE_POINTS\t2\n" ++
+    const header = "OS_ARCHITECTURE_COVERAGE_POINTS\t3\n" ++
         "architecture\tx86_64\n" ++
         "instrumentation_points\t1\n" ++
         "source_points\t1\n" ++
@@ -79,7 +83,7 @@ test "architecture points file rejects malformed records and count mismatch" {
 
     try std.testing.expectError(
         error.InvalidPoint,
-        readFixture(header ++ "path\t1\t2\n", "x86_64"),
+        readFixture(header ++ "path\t1\t3\n", "x86_64"),
     );
     try std.testing.expectError(
         error.InvalidPoint,

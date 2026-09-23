@@ -1,6 +1,7 @@
 const std = @import("std");
 const coverage_points_file = @import("coverage_points_file");
 const coverage_report = @import("coverage_report");
+const source_manifest = @import("source_manifest");
 
 const architecture_source_prefix = "src/architecture/";
 
@@ -22,11 +23,11 @@ pub fn main(init: std.process.Init) !void {
     defer parsed_points.deinit(allocator);
 
     const coverage_scopes = try createCoverageScopes(allocator, arguments);
-    defer freeCoverageScopes(allocator, &coverage_scopes);
+    defer freeCoverageScopes(allocator, coverage_scopes);
     var summary = try coverage_report.summarizeScopes(
         init.io,
         allocator,
-        &coverage_scopes,
+        coverage_scopes,
         parsed_points.source_points,
     );
     defer summary.deinit(allocator);
@@ -51,46 +52,33 @@ fn parseCommandArguments(args: *const std.process.Args) !CommandArguments {
 fn createCoverageScopes(
     allocator: std.mem.Allocator,
     arguments: CommandArguments,
-) ![4]coverage_report.Scope {
-    const architecture_directory = try architectureSourceDirectory(
+) ![]coverage_report.Scope {
+    const manifest_scopes = try source_manifest.scopesForArchitecture(
         arguments.architecture_name,
     );
-    return .{
-        try createScope(
-            allocator,
-            arguments.repository_root,
-            "src/architecture/architecture.zig",
-            .file,
-        ),
-        try createScope(
-            allocator,
-            arguments.repository_root,
-            "src/architecture/early_allocator.zig",
-            .file,
-        ),
-        try createScope(
-            allocator,
-            arguments.repository_root,
-            "src/architecture/x86/common",
-            .directory,
-        ),
-        try createScope(
-            allocator,
-            arguments.repository_root,
-            architecture_directory,
-            .directory,
-        ),
-    };
-}
+    const coverage_scopes = try allocator.alloc(
+        coverage_report.Scope,
+        manifest_scopes.len,
+    );
+    var initialized: usize = 0;
+    errdefer {
+        for (coverage_scopes[0..initialized]) |scope| allocator.free(scope.absolute_path);
+        allocator.free(coverage_scopes);
+    }
 
-fn architectureSourceDirectory(architecture_name: []const u8) ![]const u8 {
-    if (std.mem.eql(u8, architecture_name, "x86_32")) {
-        return "src/architecture/x86/32";
+    for (manifest_scopes, coverage_scopes) |manifest_scope, *coverage_scope| {
+        coverage_scope.* = try createScope(
+            allocator,
+            arguments.repository_root,
+            manifest_scope.repository_path,
+            switch (manifest_scope.kind) {
+                .file => .file,
+                .directory => .directory,
+            },
+        );
+        initialized += 1;
     }
-    if (std.mem.eql(u8, architecture_name, "x86_64")) {
-        return "src/architecture/x86/64";
-    }
-    return error.InvalidArchitecture;
+    return coverage_scopes;
 }
 
 fn createScope(
@@ -117,6 +105,7 @@ fn freeCoverageScopes(
     coverage_scopes: []const coverage_report.Scope,
 ) void {
     for (coverage_scopes) |scope| allocator.free(scope.absolute_path);
+    allocator.free(coverage_scopes);
 }
 
 fn writeReport(

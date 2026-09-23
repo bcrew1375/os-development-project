@@ -143,21 +143,109 @@ Other:
             source_points,
         )
 
+    def test_ir_parser_marks_emitted_uninstrumented_functions_not_coverable(self) -> None:
+        llvm_ir_text = """
+@__sancov_gen_ = private global [1 x i32] zeroinitializer, section "__sancov_guards"
+define void @instrumented() {
+Entry:
+  call void @__sanitizer_cov_trace_pc_guard(ptr @__sancov_gen_), !dbg !3
+  ret void, !dbg !4
+}
+define void @uninstrumented() {
+Entry:
+  call void asm sideeffect "emitted", ""(), !dbg !5
+  ret void, !dbg !6
+}
+!1 = !DIFile(filename: "example.zig", directory: "/workspace/src/architecture")
+!2 = distinct !DISubprogram(name: "example", file: !1, scope: !1)
+!3 = !DILocation(line: 10, scope: !2)
+!4 = !DILocation(line: 11, scope: !2)
+!5 = !DILocation(line: 20, scope: !2)
+!6 = !DILocation(line: 21, scope: !2)
+"""
+        source_points, instrumentation_point_count = LLVM_IR.coverage_points(
+            llvm_ir_text,
+            bytes([1]),
+        )
+        self.assertEqual(1, instrumentation_point_count)
+        self.assertIn(
+            ("/workspace/src/architecture/example.zig", 20, None),
+            source_points,
+        )
+        self.assertIn(
+            ("/workspace/src/architecture/example.zig", 21, None),
+            source_points,
+        )
+
+    def test_ir_parser_uses_function_debug_metadata_for_emitted_code(self) -> None:
+        llvm_ir_text = """
+@__sancov_gen_ = private global [1 x i32] zeroinitializer, section "__sancov_guards"
+define void @instrumented() {
+Entry:
+  call void @__sanitizer_cov_trace_pc_guard(ptr @__sancov_gen_), !dbg !3
+  ret void
+}
+define void @assembly_only() !dbg !4 {
+Entry:
+  call void asm sideeffect "emitted", ""()
+  ret void
+}
+!1 = !DIFile(filename: "guarded.zig", directory: "/workspace/src/architecture")
+!2 = distinct !DISubprogram(name: "instrumented", file: !1, scope: !1, line: 10)
+!3 = !DILocation(line: 11, scope: !2)
+!4 = distinct !DISubprogram(name: "assembly_only", file: !5, scope: !5, line: 27)
+!5 = !DIFile(filename: "assembly.zig", directory: "/workspace/src/architecture")
+"""
+        source_points, instrumentation_point_count = LLVM_IR.coverage_points(
+            llvm_ir_text,
+            bytes([1]),
+        )
+        self.assertEqual(1, instrumentation_point_count)
+        self.assertIn(
+            ("/workspace/src/architecture/assembly.zig", 27, None),
+            source_points,
+        )
+
     def test_ir_parser_rejects_missing_guard_arrays(self) -> None:
         with self.assertRaisesRegex(ValueError, "no sanitizer guard arrays"):
             LLVM_IR.coverage_points("define void @example() { ret void }", b"")
 
+    def test_ir_function_body_can_verify_bootstrap_instrumentation_boundary(self) -> None:
+        llvm_ir_text = """
+define void @boot() {
+  ret void
+}
+define void @runtime() {
+  call void @__sanitizer_cov_trace_pc_guard(ptr @guard)
+  ret void
+}
+"""
+        self.assertNotIn(
+            "@__sanitizer_cov_trace_pc_guard(",
+            LLVM_IR.function_body(llvm_ir_text, "boot"),
+        )
+        self.assertIn(
+            "@__sanitizer_cov_trace_pc_guard(",
+            LLVM_IR.function_body(llvm_ir_text, "runtime"),
+        )
+
     def test_points_stream_is_versioned_and_records_architecture(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "coverage.points"
-            COLLECT.write_points(path, "x86_64", 1, [("example.zig", 4, True)])
+            COLLECT.write_points(
+                path,
+                "x86_64",
+                1,
+                [("covered.zig", 4, True), ("emitted.zig", 9, None)],
+            )
             self.assertEqual(
-                "OS_ARCHITECTURE_COVERAGE_POINTS\t2\n"
+                "OS_ARCHITECTURE_COVERAGE_POINTS\t3\n"
                 "architecture\tx86_64\n"
                 "instrumentation_points\t1\n"
-                "source_points\t1\n"
+                "source_points\t2\n"
                 "points\n"
-                "example.zig\t4\t1\n",
+                "covered.zig\t4\t1\n"
+                "emitted.zig\t9\t2\n",
                 path.read_text(),
             )
 

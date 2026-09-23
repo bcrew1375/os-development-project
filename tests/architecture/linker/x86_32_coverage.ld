@@ -29,6 +29,10 @@ SECTIONS
 	.multiboot.data ALIGN (4K) : AT (ADDR (.multiboot.data)) {
 		_multiboot_data_start = .;
 		*(.multiboot.data .multiboot.data.*)
+		. = ALIGN(4);
+		__start___sancov_guards = .;
+		KEEP(*(__sancov_guards))
+		__stop___sancov_guards = .;
 		_multiboot_data_end = .;
 	}
 	.multiboot.bss ALIGN (4K) : AT (ADDR (.multiboot.bss)) {
@@ -52,10 +56,6 @@ SECTIONS
 	.data ALIGN (4K) : AT (ADDR (.data) - KERNEL_VIRTUAL_ADDRESS) {
 		_data_start = . - KERNEL_VIRTUAL_ADDRESS;
 		*(.data .data.*)
-		. = ALIGN(4);
-		__start___sancov_guards = .;
-		KEEP(*(__sancov_guards))
-		__stop___sancov_guards = .;
 		_data_end = . - KERNEL_VIRTUAL_ADDRESS;
 	}
 	.bss ALIGN (4K) : AT (ADDR (.bss) - KERNEL_VIRTUAL_ADDRESS) {

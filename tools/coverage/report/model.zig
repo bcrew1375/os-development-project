@@ -4,6 +4,7 @@ pub const SourcePoint = struct {
     path: []const u8,
     line: u32,
     covered: bool,
+    coverable: bool = true,
 };
 
 pub const Scope = struct {
@@ -28,8 +29,13 @@ pub const CoverageCounts = struct {
 
 pub const FileCoverage = struct {
     path: []const u8,
+    emitted_lines: usize = 0,
     coverable_lines: usize,
     missing_lines: []const u32,
+
+    pub fn hasEmittedCode(self: FileCoverage) bool {
+        return self.emitted_lines != 0 or self.coverable_lines != 0;
+    }
 
     pub fn deinit(self: *FileCoverage, allocator: std.mem.Allocator) void {
         allocator.free(self.path);

@@ -18,7 +18,7 @@ pub const ProcessError = error{
     ObjectRangeOutOfBounds,
     UnalignedMemoryObjectRange,
     InvalidMemoryPermissions,
-} || vmm.VMMError;
+} || vmm.VMMError || arch.MmuError;
 
 /// Opaque handle for a registered address space.
 pub const AddressSpaceHandle = u32;
@@ -40,6 +40,7 @@ const AddressSpaceSlot = struct {
     handle: AddressSpaceHandle = abi.syscall.INVALID_HANDLE,
     owner_process_handle: ProcessHandle = 0,
     address_space: vmm.AddressSpace = .{},
+    hardware_root: arch.AddressSpaceRoot = .{ .value = 0 },
     vma_backing: [MAX_VMAS_PER_ADDRESS_SPACE]vmm.VirtualMemoryArea = undefined,
     used: bool = false,
 };
@@ -65,11 +66,14 @@ pub fn createAddressSpace() ProcessError!AddressSpaceHandle {
 pub fn createAddressSpaceForOwner(owner_process_handle: ProcessHandle) ProcessError!AddressSpaceHandle {
     const slot = findFreeAddressSpaceSlot() orelse return ProcessError.OutOfAddressSpaces;
 
+    const hardware_root = arch.mmu.createAddressSpaceRoot() catch |err| return err;
+
     const handle = nextAddressSpaceHandle;
     nextAddressSpaceHandle += 1;
 
     slot.handle = handle;
     slot.owner_process_handle = owner_process_handle;
+    slot.hardware_root = hardware_root;
     slot.address_space = .{
         .virtual_memory_areas = &slot.vma_backing,
         .length = 0,
@@ -83,6 +87,12 @@ pub fn createAddressSpaceForOwner(owner_process_handle: ProcessHandle) ProcessEr
 pub fn getAddressSpace(handle: AddressSpaceHandle) ProcessError!*vmm.AddressSpace {
     const slot = findAddressSpaceSlot(handle) orelse return ProcessError.InvalidAddressSpaceHandle;
     return &slot.address_space;
+}
+
+/// Returns the architecture-owned hardware root for an address space.
+pub fn getAddressSpaceRoot(handle: AddressSpaceHandle) ProcessError!arch.AddressSpaceRoot {
+    const slot = findAddressSpaceSlot(handle) orelse return ProcessError.InvalidAddressSpaceHandle;
+    return slot.hardware_root;
 }
 
 /// Returns the process that owns the address space referenced by `handle`.

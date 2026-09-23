@@ -107,9 +107,15 @@ fn createReporter(
         .target = build.graph.host,
         .optimize = .Debug,
     });
+    const source_manifest_module = build.createModule(.{
+        .root_source_file = build.path("tools/architecture_coverage/source_manifest.zig"),
+        .target = build.graph.host,
+        .optimize = .Debug,
+    });
     coverage_points_file_module.addImport("coverage_report", coverage_report_module);
     reporter.root_module.addImport("coverage_report", coverage_report_module);
     reporter.root_module.addImport("coverage_points_file", coverage_points_file_module);
+    reporter.root_module.addImport("source_manifest", source_manifest_module);
 
     const run_reporter = build.addRunArtifact(reporter);
     run_reporter.addFileArg(source_points);

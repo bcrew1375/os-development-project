@@ -3,13 +3,18 @@ const model = @import("model.zig");
 
 const FileState = struct {
     display_path: []u8,
-    lines: std.AutoHashMapUnmanaged(u32, bool) = .empty,
+    lines: std.AutoHashMapUnmanaged(u32, LineState) = .empty,
 
     fn deinit(self: *FileState, allocator: std.mem.Allocator) void {
         allocator.free(self.display_path);
         self.lines.deinit(allocator);
         self.* = undefined;
     }
+};
+
+const LineState = struct {
+    coverable: bool = false,
+    covered: bool = false,
 };
 
 const NormalizedScope = struct {
@@ -164,8 +169,10 @@ fn aggregatePoints(
         defer allocator.free(absolute_path);
         const state = states.getPtr(absolute_path) orelse continue;
         const line = try state.lines.getOrPut(allocator, point.line);
-        if (!line.found_existing) line.value_ptr.* = false;
-        line.value_ptr.* = line.value_ptr.* or point.covered;
+        if (!line.found_existing) line.value_ptr.* = .{};
+        line.value_ptr.coverable = line.value_ptr.coverable or point.coverable;
+        line.value_ptr.covered = line.value_ptr.covered or point.covered;
+        std.debug.assert(!line.value_ptr.covered or line.value_ptr.coverable);
     }
 }
 
@@ -190,23 +197,28 @@ fn createFileCoverage(
     const path = try allocator.dupe(u8, state.display_path);
     errdefer allocator.free(path);
 
+    var coverable_count: usize = 0;
     var missing_count: usize = 0;
-    var covered_iterator = state.lines.valueIterator();
-    while (covered_iterator.next()) |covered| missing_count += @intFromBool(!covered.*);
+    var line_state_iterator = state.lines.valueIterator();
+    while (line_state_iterator.next()) |line_state| {
+        coverable_count += @intFromBool(line_state.coverable);
+        missing_count += @intFromBool(line_state.coverable and !line_state.covered);
+    }
     const missing_lines = try allocator.alloc(u32, missing_count);
     errdefer allocator.free(missing_lines);
 
     var missing_index: usize = 0;
     var line_iterator = state.lines.iterator();
     while (line_iterator.next()) |entry| {
-        if (entry.value_ptr.*) continue;
+        if (!entry.value_ptr.coverable or entry.value_ptr.covered) continue;
         missing_lines[missing_index] = entry.key_ptr.*;
         missing_index += 1;
     }
     std.mem.sort(u32, missing_lines, {}, std.sort.asc(u32));
     return .{
         .path = path,
-        .coverable_lines = state.lines.count(),
+        .emitted_lines = state.lines.count(),
+        .coverable_lines = coverable_count,
         .missing_lines = missing_lines,
     };
 }

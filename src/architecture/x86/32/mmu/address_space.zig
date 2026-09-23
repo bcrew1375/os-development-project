@@ -46,6 +46,12 @@ fn clearPageDirectory(page_directory: common.PageDirectory) void {
 fn cloneKernelMappings(page_directory: common.PageDirectory) void {
     const current_page_directory = getCurrentPageDirectory();
 
+    // Runtime address-space creation still uses bootstrap code and allocator
+    // state linked into the identity-mapped multiboot region. Keep that
+    // supervisor-only mapping available after switching away from the initial
+    // kernel page directory.
+    page_directory[0] = current_page_directory[0];
+
     for (common.HIGHER_HALF_INDEX..common.ENTRIES_PER_DIRECTORY) |directory_index| {
         page_directory[directory_index] = current_page_directory[directory_index];
     }

@@ -19,7 +19,10 @@ original LLVM IR without running QEMU.
 
 1. `build/architecture_test_kernel.zig` defines the shared physical-test kernel.
    `build/architecture_coverage_kernel.zig` enables LLVM trace-pc-guard
-   instrumentation and owns the compatibility relink.
+   instrumentation and owns the compatibility relink. Coverage executes the
+   architecture manifest's `shared_machine` tests; isolated and expected-fault
+   kernels are validated by `architecture-tests` but are not merged into the
+   coverage bitmap.
 2. `tools/architecture_coverage/rewrite_ir.py` applies the Zig 0.15.2 sanitizer
    TLS compatibility rewrite. This is the intentionally version-sensitive part
    of the pipeline.
@@ -33,29 +36,48 @@ original LLVM IR without running QEMU.
    locations in the original IR.
 7. `collect.py` validates the ELF architecture and writes a versioned points
    stream. `points_file.zig` validates and parses that stream before aggregation
-   with `tools/coverage/report/main.zig`.
+   with `tools/coverage/report/main.zig`. The architecture reporter inventories
+   sources from `source_manifest.zig`, so each report includes only source trees
+   applicable to that coverage artifact's architecture and boot protocol.
 
 ## Coverage semantics
 
 A line is coverable when the exact instrumented binary contains a debug-mapped
 instruction in a sanitizer-guarded basic block. It is covered when that block's
 guard executes. Zig compiles declarations lazily and ReleaseFast can inline or
-eliminate helpers, so source files with no emitted runtime locations are shown
-as `no emitted code`; they are neither 0% nor 100% covered. The `Missing` column
-contains only compiler-emitted coverable lines whose guarded blocks did not
-execute. It does not classify unreferenced or optimized-away source as missing.
+eliminate helpers, while Debug retains more independently mapped instructions.
+Source files with debug-mapped executable code but no guarded locations are shown
+as `no coverable code`. Files with no emitted runtime locations are shown as
+`no emitted code`; neither classification is treated as 0% or 100% covered. The
+`Missing` column contains only compiler-emitted coverable lines whose guarded
+blocks did not execute. It does not classify intentionally uninstrumented,
+unreferenced, or optimized-away source as missing.
+
+The x86-32 artifact boots through Multiboot, so its report excludes the inactive
+x86-32 and shared Limine source trees. The x86-64 artifact boots through Limine
+and includes both its architecture frontend and the shared Limine implementation.
 
 Tests should validate supported architecture behavior. Production interfaces
 must not expose private implementation hooks solely to make code appear in the
-coverage denominator.
+coverage denominator. Behavior that must appear in the shared coverage artifact
+must be exercised by a safe `shared_machine` test. Each x86 descriptor-table
+initialization test runs last in its architecture's shared sequence so the real
+GDT, IDT, and common interrupt initialization code is emitted and measured
+without affecting later shared tests.
 
 ## x86-32 early boot
 
 Instrumentation executes before paging is enabled. The x86-32 coverage linker
 script therefore keeps the sanitizer callback, bitmap, stack state, and required
-compiler memory primitives in low bootstrap sections. Sanitizer guards remain
-in writable kernel data. These rules belong to the coverage test artifact, not
-the production Multiboot linker script.
+compiler memory primitives in low bootstrap sections. The coverage-only linker
+script also keeps sanitizer guards in writable low bootstrap data so guarded
+functions can execute before paging is enabled. These rules belong to the
+coverage test artifact, not the production Multiboot linker script.
+
+The x86-32 coverage kernel uses ReleaseFast because the Debug artifact does not
+reach the test protocol under Multiboot. The x86-64 coverage kernel uses Debug
+because it boots reliably and retains substantially more source locations. Both
+settings apply only to coverage artifacts; production optimization is unchanged.
 
 ## Updating Zig
 

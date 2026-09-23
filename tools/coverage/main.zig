@@ -8,6 +8,12 @@ pub const std_options: std.Options = .{
 
 var logged_errors: usize = 0;
 
+const max_coverage_points = 100_000;
+
+extern var coverage_program_counters: [max_coverage_points]usize;
+extern var coverage_values: [max_coverage_points]u8;
+extern var coverage_point_count: usize;
+
 const Counters = struct {
     values: []u8,
     program_counters: []const usize,
@@ -40,6 +46,9 @@ fn run(init: std.process.Init) !void {
     defer allocator.free(common_root);
 
     const counters = try coverageCounters();
+    if (counters.values.len == 0 or counters.program_counters.len == 0) {
+        return error.MissingCoverageInstrumentation;
+    }
     if (counters.values.len != counters.program_counters.len) {
         return error.InvalidInstrumentationTables;
     }
@@ -144,6 +153,7 @@ fn resolveSourcePoints(
     defer symbols.deinit(allocator);
 
     for (program_counters, seen) |address, covered| {
+        if (address == 0) continue;
         symbols.clearRetainingCapacity();
         debug_info.getSymbols(io, allocator, allocator, address, false, &symbols) catch continue;
         if (symbols.items.len == 0) continue;
@@ -156,6 +166,7 @@ fn resolveSourcePoints(
             .path = location.file_name,
             .line = line,
             .covered = covered,
+            .coverable = true,
         }) catch |err| {
             allocator.free(location.file_name);
             return err;
@@ -166,25 +177,10 @@ fn resolveSourcePoints(
 
 fn coverageCounters() !Counters {
     @disableInstrumentation();
-    const counters_start = @extern([*]u8, .{
-        .name = "__start___sancov_cntrs",
-        .linkage = .weak,
-    }) orelse return error.MissingCoverageCounters;
-    const counters_end = @extern([*]u8, .{
-        .name = "__stop___sancov_cntrs",
-        .linkage = .weak,
-    }) orelse return error.MissingCoverageCounters;
-    const pcs_start = @extern([*]usize, .{
-        .name = "__start___sancov_pcs1",
-        .linkage = .weak,
-    }) orelse return error.MissingCoverageProgramCounters;
-    const pcs_end = @extern([*]usize, .{
-        .name = "__stop___sancov_pcs1",
-        .linkage = .weak,
-    }) orelse return error.MissingCoverageProgramCounters;
+    if (coverage_point_count > max_coverage_points) return error.InvalidInstrumentationTables;
     return .{
-        .values = counters_start[0 .. counters_end - counters_start],
-        .program_counters = pcs_start[0 .. pcs_end - pcs_start],
+        .values = coverage_values[0..coverage_point_count],
+        .program_counters = coverage_program_counters[0..coverage_point_count],
     };
 }
 

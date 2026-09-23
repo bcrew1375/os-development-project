@@ -3,8 +3,6 @@ const std = @import("std");
 const architecture_test_kernel = @import("architecture_test_kernel.zig");
 const configuration = @import("configuration.zig");
 
-const coverage_optimization: std.builtin.OptimizeMode = .ReleaseFast;
-
 pub const Artifacts = struct {
     original_llvm_ir: std.Build.LazyPath,
     instrumented_kernel_elf: std.Build.LazyPath,
@@ -14,10 +12,11 @@ pub fn add(
     build: *std.Build,
     build_configuration: configuration.BuildConfig,
 ) Artifacts {
+    const optimization = coverageOptimization(build_configuration.architecture);
     const compiler_output = architecture_test_kernel.addKernel(build, build_configuration, .{
         .executable_name = "architecture-coverage-source.elf",
         .entry_point_source = "tests/architecture/coverage_main.zig",
-        .optimization = coverage_optimization,
+        .optimization = optimization,
         .instrumentation = .sanitizer_guards,
         .execution_mode = "shared_machine",
     });
@@ -86,13 +85,14 @@ fn createLinkCommand(
     build: *std.Build,
     build_configuration: configuration.BuildConfig,
 ) *std.Build.Step.Run {
+    const optimization = coverageOptimization(build_configuration.architecture);
     const link_kernel = build.addSystemCommand(&.{
         build.graph.zig_exe,
         "build-exe",
         "-fllvm",
         "-flld",
     });
-    link_kernel.addArg(optimizationArgument(coverage_optimization));
+    link_kernel.addArg(optimizationArgument(optimization));
     if (configuration.codeModelArgument(build_configuration.kernel_code_model)) |argument| {
         link_kernel.addArg(argument);
     }
@@ -108,6 +108,15 @@ fn createLinkCommand(
         )),
     });
     return link_kernel;
+}
+
+fn coverageOptimization(
+    architecture: configuration.Architecture,
+) std.builtin.OptimizeMode {
+    return switch (architecture) {
+        .x86_32 => .ReleaseFast,
+        .x86_64 => .Debug,
+    };
 }
 
 fn optimizationArgument(optimization: std.builtin.OptimizeMode) []const u8 {

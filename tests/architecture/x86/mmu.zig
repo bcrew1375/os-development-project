@@ -17,6 +17,15 @@ pub fn addressSpaceRootCanBeCreated() !void {
         @as(?usize, expected_physical_address),
         arch.mmu.getPhysicalAddressInAddressSpace(root, kernel_virtual_address),
     );
+
+    arch.mmu.switchAddressSpaceRoot(root);
+    const nested_root = try arch.mmu.createAddressSpaceRoot();
+    try framework.expect(nested_root.value != 0);
+    try framework.expect(nested_root.value != root.value);
+    try framework.expectEqual(
+        @as(?usize, expected_physical_address),
+        arch.mmu.getPhysicalAddressInAddressSpace(nested_root, kernel_virtual_address),
+    );
 }
 
 pub fn explicitRootMappingTranslates() !void {

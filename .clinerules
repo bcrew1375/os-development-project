@@ -1,5 +1,10 @@
 # Project: OS Development - an early development hobby kernel.
 
+## Cardinal Rules - These rule overrides all others:
+- Only implement a solution once it is verified and proven to solve a given objective, never assume success.
+- A solution must not be implemented until all build paths are proven to successfully reach the root task.
+- If a solution cannot be made to reasonably meet the previous two rules, the task should be aborted and considered a failure.
+
 ## General Instructions:
 - Follow guidelines in 'docs/reference/kernel-code-organization.md'
 

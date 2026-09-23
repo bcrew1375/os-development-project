@@ -341,7 +341,14 @@ toolchain installed in this workspace (`std.debug.SelfInfo.Elf.open` and the
 **Objective:** Ensure every address-space capability refers to an independently
 activatable, mappable, and destructible hardware address space.
 
-## [ ] U2.1 Attach hardware roots to address-space objects
+## [x] U2.1 Attach hardware roots to address-space objects
+
+- Completed: 2026-09-22
+- Validation: `zig build tests`; `zig fmt --check`; `git diff --check`; native
+  architecture builds and physical architecture tests on x86-32 and x86-64
+- Limitation: address-space roots are now owned by registered objects, but root
+  task registration, explicit-root process mapping integration, root destruction,
+  and physical-memory delegation remain U2.2-U2.5 and later phase work.
 
 **Related assessment:** P1.2.
 

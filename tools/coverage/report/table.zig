@@ -2,17 +2,25 @@ const std = @import("std");
 const model = @import("model.zig");
 
 const Layout = struct {
-    const table_width = 100;
-    const path_width = 42;
     const covered_width = 7;
     const coverable_width = 9;
-    const coverage_width = 15;
+    const coverage_width = 17;
     const missing_width = 23;
-    const missing_offset = path_width + covered_width + coverable_width +
-        coverage_width + 4;
 
-    comptime {
-        std.debug.assert(missing_offset + missing_width == table_width);
+    path_width: usize,
+
+    fn init(summary: model.Summary) Layout {
+        var path_width: usize = @max("File".len, "TOTAL".len);
+        for (summary.files) |file| path_width = @max(path_width, file.path.len);
+        return .{ .path_width = path_width };
+    }
+
+    fn missingOffset(self: Layout) usize {
+        return self.path_width + covered_width + coverable_width + coverage_width + 4;
+    }
+
+    fn tableWidth(self: Layout) usize {
+        return self.missingOffset() + missing_width;
     }
 };
 
@@ -62,47 +70,60 @@ pub fn writeCommon(writer: *std.Io.Writer, summary: model.Summary) !void {
 }
 
 pub fn write(writer: *std.Io.Writer, summary: model.Summary) !void {
-    try writeHeader(writer);
-    for (summary.files) |file| try writeFile(writer, file);
-    try writer.splatByteAll('-', Layout.table_width);
+    const layout = Layout.init(summary);
+    try writeHeader(writer, layout);
+    for (summary.files) |file| try writeFile(writer, layout, file);
+    try writer.splatByteAll('-', layout.tableWidth());
     try writer.writeByte('\n');
-    try writeSummary(writer, summary);
+    try writeSummary(writer, layout, summary);
 }
 
-fn writeHeader(writer: *std.Io.Writer) !void {
-    try writePath(writer, "File");
-    try writer.print(" {s:>7} {s:>9} {s:>15} {s:<23}\n", .{
+fn writeHeader(writer: *std.Io.Writer, layout: Layout) !void {
+    try writePath(writer, layout, "File");
+    try writer.print(" {s:>7} {s:>9} {s:>17} {s:<23}\n", .{
         "Covered", "Coverable", "Coverage", "Missing",
     });
 }
 
-fn writeFile(writer: *std.Io.Writer, file: model.FileCoverage) !void {
-    try writePath(writer, file.path);
-    try writeCounts(writer, file.counts());
-    try writeMissingLines(writer, file.missing_lines);
+fn writeFile(writer: *std.Io.Writer, layout: Layout, file: model.FileCoverage) !void {
+    try writePath(writer, layout, file.path);
+    try writeCounts(writer, file.counts(), file.hasEmittedCode());
+    try writeMissingLines(writer, layout, file.missing_lines);
 }
 
-fn writeSummary(writer: *std.Io.Writer, summary: model.Summary) !void {
-    try writePath(writer, "TOTAL");
-    try writeCounts(writer, summary.counts());
+fn writeSummary(writer: *std.Io.Writer, layout: Layout, summary: model.Summary) !void {
+    try writePath(writer, layout, "TOTAL");
+    var has_emitted_code = false;
+    for (summary.files) |file| has_emitted_code = has_emitted_code or file.hasEmittedCode();
+    try writeCounts(writer, summary.counts(), has_emitted_code);
     try writer.splatByteAll(' ', Layout.missing_width);
     try writer.writeByte('\n');
 }
 
-fn writeCounts(writer: *std.Io.Writer, counts: model.CoverageCounts) !void {
+fn writeCounts(
+    writer: *std.Io.Writer,
+    counts: model.CoverageCounts,
+    has_emitted_code: bool,
+) !void {
     var percentage_buffer: [32]u8 = undefined;
     const coverage = if (counts.percentage()) |percentage|
         try std.fmt.bufPrint(&percentage_buffer, "{d:.2}%", .{percentage})
+    else if (has_emitted_code)
+        "no coverable code"
     else
         "no emitted code";
-    try writer.print(" {d:>7} {d:>9} {s:>15} ", .{
+    try writer.print(" {d:>7} {d:>9} {s:>17} ", .{
         counts.covered,
         counts.coverable,
         coverage,
     });
 }
 
-fn writeMissingLines(writer: *std.Io.Writer, missing_lines: []const u32) !void {
+fn writeMissingLines(
+    writer: *std.Io.Writer,
+    layout: Layout,
+    missing_lines: []const u32,
+) !void {
     var ranges: LineRangeIterator = .{ .lines = missing_lines };
     var written: usize = 0;
     while (ranges.next()) |range| {
@@ -111,7 +132,7 @@ fn writeMissingLines(writer: *std.Io.Writer, missing_lines: []const u32) !void {
             written + separator_length + range.formattedLength() > Layout.missing_width)
         {
             try finishMissingColumn(writer, written);
-            try writer.splatByteAll(' ', Layout.missing_offset);
+            try writer.splatByteAll(' ', layout.missingOffset());
             written = 0;
         }
         if (written != 0) {
@@ -129,20 +150,9 @@ fn finishMissingColumn(writer: *std.Io.Writer, written: usize) !void {
     try writer.writeByte('\n');
 }
 
-fn writePath(writer: *std.Io.Writer, path: []const u8) !void {
-    const ellipsis = "...";
-    if (path.len <= Layout.path_width) {
-        try writer.writeAll(path);
-        try writer.splatByteAll(' ', Layout.path_width - path.len);
-        return;
-    }
-
-    const content_width = Layout.path_width - ellipsis.len;
-    const prefix_length = content_width / 2;
-    const suffix_length = content_width - prefix_length;
-    try writer.writeAll(path[0..prefix_length]);
-    try writer.writeAll(ellipsis);
-    try writer.writeAll(path[path.len - suffix_length ..]);
+fn writePath(writer: *std.Io.Writer, layout: Layout, path: []const u8) !void {
+    try writer.writeAll(path);
+    try writer.splatByteAll(' ', layout.path_width - path.len);
 }
 
 fn decimalLength(value: u32) usize {

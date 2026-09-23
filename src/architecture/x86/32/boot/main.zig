@@ -44,6 +44,7 @@ pub fn kernelSetup() linksection(boot_text_section) noreturn {
 }
 
 fn higherHalfEntry() noreturn {
+    @disableInstrumentation();
     asm volatile (
         \\mov %[kernelStack], %esp
         :
@@ -53,6 +54,10 @@ fn higherHalfEntry() noreturn {
           .esp = true,
         });
 
+    higherHalfRuntime();
+}
+
+noinline fn higherHalfRuntime() noreturn {
     multiboot_modules.cacheBootModules();
     kernelMain();
 
@@ -63,5 +68,4 @@ fn higherHalfEntry() noreturn {
 pub fn finishBoot() void {
     gdt.initialize(@intFromPtr(@as([*]u8, &kernelStack) + kernelStack.len));
     idt.initialize();
-    mmu.removeIdentityMapping();
 }

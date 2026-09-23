@@ -100,6 +100,7 @@ pub fn framebufferByteSize() linksection(".multiboot.text") ?usize {
 }
 
 pub fn _start() linksection(".multiboot.text") callconv(.naked) noreturn {
+    @disableInstrumentation();
     asm volatile (
         \\cli
         \\movl %ebx, (%[multibootTable:P])

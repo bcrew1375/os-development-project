@@ -1,10 +1,12 @@
 const std = @import("std");
 const abi = @import("abi");
+const arch = @import("arch");
 const kernel = @import("kernel_common");
 
 fn testSetup() void {
     kernel.process.resetForTest();
     kernel.process.execution_context.resetForTest();
+    arch.impl.test_support.resetState();
 }
 
 test "Execution context: root context is explicit and replaceable" {
@@ -50,7 +52,7 @@ test "Execution context: production syscall dispatch rejects an uninitialized co
     }
 }
 
-test "Process: createAddressSpace returns tracked address space object" {
+test "Process: createAddressSpace returns tracked address space object with hardware root" {
     testSetup();
 
     const handle = try kernel.process.createAddressSpace();
@@ -59,6 +61,43 @@ test "Process: createAddressSpace returns tracked address space object" {
     const address_space = try kernel.process.getAddressSpace(handle);
     try std.testing.expectEqual(@as(usize, 0), address_space.length);
     try std.testing.expect(address_space.virtual_memory_areas.len > 0);
+    const root = try kernel.process.getAddressSpaceRoot(handle);
+    try std.testing.expect(root.value != 0);
+}
+
+test "Process: address spaces receive independent hardware roots" {
+    testSetup();
+
+    const first_handle = try kernel.process.createAddressSpace();
+    const second_handle = try kernel.process.createAddressSpace();
+    const first_root = try kernel.process.getAddressSpaceRoot(first_handle);
+    const second_root = try kernel.process.getAddressSpaceRoot(second_handle);
+
+    try std.testing.expect(first_root.value != 0);
+    try std.testing.expect(second_root.value != 0);
+    try std.testing.expect(first_root.value != second_root.value);
+
+    try arch.mmu.mapTableInAddressSpace(first_root, 0x0040_0000, 0, .{});
+    try arch.mmu.mapPageInAddressSpace(first_root, 0x0040_0000, 0x1000, .{});
+    try arch.mmu.mapTableInAddressSpace(second_root, 0x0040_0000, 0, .{});
+    try arch.mmu.mapPageInAddressSpace(second_root, 0x0040_0000, 0x2000, .{});
+
+    try std.testing.expectEqual(@as(?usize, 0x1000), arch.mmu.getPhysicalAddressInAddressSpace(first_root, 0x0040_0000));
+    try std.testing.expectEqual(@as(?usize, 0x2000), arch.mmu.getPhysicalAddressInAddressSpace(second_root, 0x0040_0000));
+}
+
+test "Process: address-space creation failure does not publish a slot" {
+    testSetup();
+    arch.mmu.failAddressSpaceRootCreationForTest(true);
+
+    try std.testing.expectError(
+        error.AddressSpaceRootAllocationFailed,
+        kernel.process.createAddressSpace(),
+    );
+    arch.mmu.failAddressSpaceRootCreationForTest(false);
+
+    const handle = try kernel.process.createAddressSpace();
+    try std.testing.expectEqual(@as(u32, 1), handle);
 }
 
 test "Process: owner-aware creation preserves object ownership" {

@@ -2,7 +2,7 @@ const std = @import("std");
 const coverage_report = @import("coverage_report");
 
 const maximum_file_size = 64 * 1024 * 1024;
-const format_header = "OS_ARCHITECTURE_COVERAGE_POINTS\t2";
+const format_header = "OS_ARCHITECTURE_COVERAGE_POINTS\t3";
 
 pub const Parsed = struct {
     file_contents: []u8,
@@ -77,10 +77,11 @@ fn parseSourcePoint(line: []const u8) !coverage_report.SourcePoint {
     var fields = std.mem.splitScalar(u8, line, '\t');
     const source_path = fields.next() orelse return error.InvalidPoint;
     const line_number_text = fields.next() orelse return error.InvalidPoint;
-    const covered_text = fields.next() orelse return error.InvalidPoint;
+    const state_text = fields.next() orelse return error.InvalidPoint;
     if (fields.next() != null) return error.InvalidPoint;
-    if (!std.mem.eql(u8, covered_text, "0") and
-        !std.mem.eql(u8, covered_text, "1"))
+    if (!std.mem.eql(u8, state_text, "0") and
+        !std.mem.eql(u8, state_text, "1") and
+        !std.mem.eql(u8, state_text, "2"))
     {
         return error.InvalidPoint;
     }
@@ -89,7 +90,8 @@ fn parseSourcePoint(line: []const u8) !coverage_report.SourcePoint {
         .line = std.fmt.parseUnsigned(u32, line_number_text, 10) catch {
             return error.InvalidPoint;
         },
-        .covered = std.mem.eql(u8, covered_text, "1"),
+        .covered = std.mem.eql(u8, state_text, "1"),
+        .coverable = !std.mem.eql(u8, state_text, "2"),
     };
 }
 

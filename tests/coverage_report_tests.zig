@@ -47,6 +47,35 @@ test "coverage report inventories files with no emitted code" {
     try std.testing.expectEqual(@as(?f64, null), summary.counts().percentage());
 }
 
+test "coverage report distinguishes emitted code without coverable lines" {
+    const architecture_file = try realPath("src/architecture/architecture.zig");
+    defer std.testing.allocator.free(architecture_file);
+    const scopes = [_]report.Scope{.{
+        .absolute_path = architecture_file,
+        .display_path = "architecture.zig",
+        .kind = .file,
+    }};
+    const points = [_]report.SourcePoint{.{
+        .path = architecture_file,
+        .line = 10,
+        .covered = false,
+        .coverable = false,
+    }};
+    var summary = try report.summarizeScopes(
+        std.testing.io,
+        std.testing.allocator,
+        &scopes,
+        &points,
+    );
+    defer summary.deinit(std.testing.allocator);
+
+    const architecture = summary.files[0];
+    try std.testing.expect(architecture.hasEmittedCode());
+    try std.testing.expectEqual(@as(usize, 1), architecture.emitted_lines);
+    try expectCounts(architecture.counts(), 0, 0);
+    try std.testing.expectEqual(@as(usize, 0), architecture.missing_lines.len);
+}
+
 test "coverage report sorts missing lines, files, and derives totals" {
     const common_root = try realPath("src/common");
     defer std.testing.allocator.free(common_root);
@@ -139,7 +168,7 @@ test "coverage report releases partial state after allocation failures" {
     );
 }
 
-test "coverage table has fixed columns, compressed ranges, and distinct paths" {
+test "coverage table preserves complete paths and compresses ranges" {
     var files = [_]report.FileCoverage{
         .{
             .path = "short.zig",
@@ -161,6 +190,12 @@ test "coverage table has fixed columns, compressed ranges, and distinct paths" {
             .coverable_lines = 0,
             .missing_lines = &.{},
         },
+        .{
+            .path = "emitted_without_instrumentation.zig",
+            .emitted_lines = 2,
+            .coverable_lines = 0,
+            .missing_lines = &.{},
+        },
     };
     const summary: report.Summary = .{ .files = &files };
     var output_buffer: [4096]u8 = undefined;
@@ -172,13 +207,34 @@ test "coverage table has fixed columns, compressed ranges, and distinct paths" {
     try expectColumns(lines.next().?, "short.zig", "1", "7", "14.29%", "12-14, 31, 44-45");
     const x86_32 = lines.next().?;
     const x86_64 = lines.next().?;
-    try expectColumns(x86_32, null, "14", "14", "100.00%", "");
-    try expectColumns(x86_64, null, "18", "18", "100.00%", "");
-    try std.testing.expect(!std.mem.eql(u8, pathColumn(x86_32), pathColumn(x86_64)));
-    try std.testing.expect(std.mem.startsWith(u8, pathColumn(x86_32), "x86/32/"));
-    try std.testing.expect(std.mem.startsWith(u8, pathColumn(x86_64), "x86/64/"));
+    try expectColumns(
+        x86_32,
+        "x86/32/interrupts/interrupt_descriptor_table.zig",
+        "14",
+        "14",
+        "100.00%",
+        "",
+    );
+    try expectColumns(
+        x86_64,
+        "x86/64/interrupts/interrupt_descriptor_table.zig",
+        "18",
+        "18",
+        "100.00%",
+        "",
+    );
     try expectColumns(lines.next().?, "namespace.zig", "0", "0", "no emitted code", "");
-    try std.testing.expectEqualStrings("-" ** 100, lines.next().?);
+    try expectColumns(
+        lines.next().?,
+        "emitted_without_instrumentation.zig",
+        "0",
+        "0",
+        "no coverable code",
+        "",
+    );
+    const separator = lines.next().?;
+    try std.testing.expectEqual(@as(usize, 108), separator.len);
+    for (separator) |character| try std.testing.expectEqual(@as(u8, '-'), character);
     try expectColumns(lines.next().?, "TOTAL", "33", "39", "84.62%", "");
     try std.testing.expectEqualStrings("", lines.next().?);
 }
@@ -248,22 +304,22 @@ fn expectColumns(
     expected_coverage: []const u8,
     expected_missing: []const u8,
 ) !void {
-    try std.testing.expectEqual(@as(usize, 100), line.len);
-    if (expected_path) |path| try std.testing.expectEqualStrings(path, pathColumn(line));
-    try std.testing.expectEqualStrings(expected_covered, trimColumn(line[43..50]));
-    try std.testing.expectEqualStrings(expected_coverable, trimColumn(line[51..60]));
-    try std.testing.expectEqualStrings(expected_coverage, trimColumn(line[61..76]));
-    try std.testing.expectEqualStrings(expected_missing, trimColumn(line[77..100]));
+    const path_width = line.len - 60;
+    if (expected_path) |path| try std.testing.expectEqualStrings(path, pathColumn(line, path_width));
+    try std.testing.expectEqualStrings(expected_covered, trimColumn(line[path_width + 1 .. path_width + 8]));
+    try std.testing.expectEqualStrings(expected_coverable, trimColumn(line[path_width + 9 .. path_width + 18]));
+    try std.testing.expectEqualStrings(expected_coverage, trimColumn(line[path_width + 19 .. path_width + 36]));
+    try std.testing.expectEqualStrings(expected_missing, trimColumn(line[path_width + 37 ..]));
 }
 
 fn expectContinuation(line: []const u8, expected_missing: []const u8) !void {
-    try std.testing.expectEqual(@as(usize, 100), line.len);
-    try std.testing.expectEqualStrings("", trimColumn(line[0..77]));
-    try std.testing.expectEqualStrings(expected_missing, trimColumn(line[77..100]));
+    const missing_offset = line.len - 23;
+    try std.testing.expectEqualStrings("", trimColumn(line[0..missing_offset]));
+    try std.testing.expectEqualStrings(expected_missing, trimColumn(line[missing_offset..]));
 }
 
-fn pathColumn(line: []const u8) []const u8 {
-    return trimColumn(line[0..42]);
+fn pathColumn(line: []const u8, path_width: usize) []const u8 {
+    return trimColumn(line[0..path_width]);
 }
 
 fn trimColumn(column: []const u8) []const u8 {

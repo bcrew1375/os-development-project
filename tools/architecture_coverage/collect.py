@@ -9,7 +9,7 @@ import llvm_ir
 
 
 POINTS_FORMAT = "OS_ARCHITECTURE_COVERAGE_POINTS"
-POINTS_VERSION = 2
+POINTS_VERSION = 3
 
 
 def validate_executable(executable_path: pathlib.Path, architecture: str) -> None:
@@ -33,7 +33,7 @@ def write_points(
     output_path: pathlib.Path,
     architecture: str,
     instrumentation_point_count: int,
-    source_points: list[tuple[str, int, bool]],
+    source_points: list[tuple[str, int, bool | None]],
 ) -> None:
     lines = [
         f"{POINTS_FORMAT}\t{POINTS_VERSION}\n",
@@ -43,7 +43,7 @@ def write_points(
         "points\n",
     ]
     lines.extend(
-        f"{source_path}\t{line}\t{int(covered)}\n"
+        f"{source_path}\t{line}\t{2 if covered is None else int(covered)}\n"
         for source_path, line, covered in source_points
     )
     output_path.write_text("".join(lines))

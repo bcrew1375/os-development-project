@@ -41,6 +41,7 @@ const FailureInjection = struct {
     fail_table_mapping_call: ?usize = null,
     fail_page_mapping_call: ?usize = null,
     fail_physical_lookup_call: ?usize = null,
+    fail_address_space_root_creation: bool = false,
     table_mapping_calls: usize = 0,
     page_mapping_calls: usize = 0,
     physical_lookup_calls: usize = 0,
@@ -48,6 +49,10 @@ const FailureInjection = struct {
 var failureInjection: FailureInjection = .{};
 
 pub fn createAddressSpaceRoot() arch.MmuError!arch.AddressSpaceRoot {
+    if (failureInjection.fail_address_space_root_creation) {
+        return arch.MmuError.AddressSpaceRootAllocationFailed;
+    }
+
     const address_space_root = arch.AddressSpaceRoot{
         .value = nextAddressSpaceRootValue,
     };
@@ -357,6 +362,10 @@ pub fn failTableMappingCallForTest(call: ?usize) void {
 pub fn failPageMappingCallForTest(call: ?usize) void {
     failureInjection.fail_page_mapping_call = call;
     failureInjection.page_mapping_calls = 0;
+}
+
+pub fn failAddressSpaceRootCreationForTest(should_fail: bool) void {
+    failureInjection.fail_address_space_root_creation = should_fail;
 }
 
 pub fn failPhysicalLookupCallForTest(call: ?usize) void {
