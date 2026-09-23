@@ -252,9 +252,7 @@ fn mapAllocatedPage(virtualAddress: usize, memoryPermissions: MemoryPermissions)
     };
 
     if (!arch.mmu.isTablePresent(tableAlignedAddress)) {
-        const tablePhysicalAddress = try allocatePhysicalPage();
-
-        arch.mmu.mapTable(tableAlignedAddress, tablePhysicalAddress, pageProtection) catch {
+        arch.mmu.ensurePageTable(tableAlignedAddress, pageProtection) catch {
             return VMMError.MappingFailed;
         };
     }
@@ -280,9 +278,7 @@ fn mapAllocatedPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: u
     };
 
     if (!arch.mmu.isTablePresentInAddressSpace(root, tableAlignedAddress)) {
-        const tablePhysicalAddress = try allocatePhysicalPage();
-
-        arch.mmu.mapTableInAddressSpace(root, tableAlignedAddress, tablePhysicalAddress, pageProtection) catch {
+        arch.mmu.ensurePageTableInAddressSpace(root, tableAlignedAddress, pageProtection) catch {
             return VMMError.MappingFailed;
         };
     }
@@ -328,8 +324,7 @@ fn mapBootstrapContiguousPagesInAddressSpace(
         const tableAlignedAddress = virtualAddress & ~(arch.mmu.getPageTableRegionSize() - 1);
 
         if (!arch.mmu.isTablePresentInAddressSpace(root, tableAlignedAddress)) {
-            const tablePhysicalAddress = try allocatePhysicalPage();
-            arch.mmu.mapTableInAddressSpace(root, tableAlignedAddress, tablePhysicalAddress, pageProtection) catch {
+            arch.mmu.ensurePageTableInAddressSpace(root, tableAlignedAddress, pageProtection) catch {
                 return VMMError.MappingFailed;
             };
         }

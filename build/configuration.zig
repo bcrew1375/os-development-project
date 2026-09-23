@@ -126,6 +126,10 @@ fn addRootTaskComponentBuild(b: *std.Build, config: BuildConfig) std.Build.LazyP
     ;
 
     const build_root_task = b.addSystemCommand(&.{ "bash", "-c", script, "build-root-task" });
+    // The nested component build reads source and ABI files below two directory
+    // arguments. Zig's outer build cache does not track those contents deeply
+    // enough to make ABI layout changes reliably invalidate this command.
+    build_root_task.has_side_effects = true;
     build_root_task.addArg(@tagName(config.architecture));
 
     const output = build_root_task.addOutputFileArg(b.fmt(

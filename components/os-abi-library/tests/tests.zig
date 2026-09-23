@@ -3,12 +3,32 @@ const abi = @import("abi");
 const shared = @import("shared");
 
 test "BootInfo ABI layout is stable" {
-    try std.testing.expectEqual(@as(usize, 16), @sizeOf(abi.boot_info.BootInfo));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(abi.boot_info.BootInfo));
     try std.testing.expectEqual(@as(usize, 4), @alignOf(abi.boot_info.BootInfo));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(abi.boot_info.BootInfo, "magic"));
     try std.testing.expectEqual(@as(usize, 4), @offsetOf(abi.boot_info.BootInfo, "version"));
     try std.testing.expectEqual(@as(usize, 8), @offsetOf(abi.boot_info.BootInfo, "module_count"));
     try std.testing.expectEqual(@as(usize, 12), @offsetOf(abi.boot_info.BootInfo, "modules_address"));
+    try std.testing.expectEqual(@as(usize, 16), @offsetOf(abi.boot_info.BootInfo, "physical_memory_count"));
+    try std.testing.expectEqual(@as(usize, 20), @offsetOf(abi.boot_info.BootInfo, "physical_memory_address"));
+    try std.testing.expectEqual(@as(u32, 2), abi.boot_info.BOOT_INFO_VERSION);
+}
+
+test "PhysicalMemoryInfo ABI layout is stable and retains 64-bit addresses" {
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(abi.boot_info.PhysicalMemoryInfo));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(abi.boot_info.PhysicalMemoryInfo));
+    try std.testing.expectEqual(@as(usize, 0), @offsetOf(abi.boot_info.PhysicalMemoryInfo, "physical_start"));
+    try std.testing.expectEqual(@as(usize, 8), @offsetOf(abi.boot_info.PhysicalMemoryInfo, "size"));
+    try std.testing.expectEqual(@as(usize, 16), @offsetOf(abi.boot_info.PhysicalMemoryInfo, "attributes"));
+    try std.testing.expectEqual(@as(usize, 20), @offsetOf(abi.boot_info.PhysicalMemoryInfo, "capability"));
+
+    const above_four_gib = abi.boot_info.PhysicalMemoryInfo{
+        .physical_start = 0x1_0000_0000,
+        .size = 0x2000,
+        .attributes = abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM,
+        .capability = abi.capability.INVALID_CAPABILITY,
+    };
+    try std.testing.expectEqual(@as(u64, 0x1_0000_0000), above_four_gib.physical_start);
 }
 
 test "BootModuleInfo ABI layout is stable" {
@@ -29,6 +49,31 @@ test "Capability rights containment is explicit" {
     try std.testing.expect(all.contains(.{ .read = true }));
     try std.testing.expect(all.contains(.{ .read = true, .write = true }));
     try std.testing.expect(!(abi.capability.Rights{ .read = true }).contains(.{ .write = true }));
+}
+
+test "Capability object type values are stable" {
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(abi.capability.ObjectType.null));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(abi.capability.ObjectType.address_space));
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(abi.capability.ObjectType.memory_object));
+    try std.testing.expectEqual(@as(u32, 3), @intFromEnum(abi.capability.ObjectType.untyped_memory));
+    try std.testing.expectEqual(@as(u32, 4), @intFromEnum(abi.capability.ObjectType.physical_frame));
+}
+
+test "Retype ABI packing preserves target rights and 64-bit offsets" {
+    const rights = abi.capability.Rights{ .read = true, .manage = true };
+    const encoded = abi.syscall.packRetypeTarget(.physical_frame, rights);
+    try std.testing.expectEqual(abi.capability.ObjectType.physical_frame, abi.syscall.retypeTargetObjectType(encoded));
+    try std.testing.expectEqual(rights, abi.capability.rightsFromBits(abi.syscall.retypeTargetRightsBits(encoded)).?);
+
+    const offset: u64 = 0x1234_5678_9abc_def0;
+    try std.testing.expectEqual(offset, abi.syscall.joinU64(abi.syscall.lowU32(offset), abi.syscall.highU32(offset)));
+    try std.testing.expect(abi.capability.rightsFromBits(abi.capability.KNOWN_RIGHTS_MASK + 1) == null);
+}
+
+test "Physical-memory syscall numbers are stable" {
+    try std.testing.expectEqual(@as(u32, 18), @intFromEnum(abi.syscall.SyscallNumber.retype_untyped_memory));
+    try std.testing.expectEqual(@as(u32, 19), @intFromEnum(abi.syscall.SyscallNumber.delete_physical_memory));
+    try std.testing.expectEqual(@as(u32, 20), @intFromEnum(abi.syscall.SyscallNumber.revoke_physical_memory));
 }
 
 test "Capability handles encode stable slots and generations" {

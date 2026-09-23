@@ -25,6 +25,7 @@ pub fn initializeMemoryFixture(
 
 pub fn resetState() void {
     arch.earlyAllocatorActive = true;
+    arch.page_table_pool.resetForTest();
     early_allocator.resetForTest();
     mmu.resetForTest();
     boot.resetForTest();

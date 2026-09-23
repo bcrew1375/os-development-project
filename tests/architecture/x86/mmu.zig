@@ -26,6 +26,15 @@ pub fn addressSpaceRootCanBeCreated() !void {
         @as(?usize, expected_physical_address),
         arch.mmu.getPhysicalAddressInAddressSpace(nested_root, kernel_virtual_address),
     );
+
+    const available_before_table = arch.mmu.getPageTablePoolAvailableFrameCount();
+    try arch.mmu.ensurePageTableInAddressSpace(nested_root, test_virtual_address, .{});
+    try framework.expect(arch.mmu.getPageTablePoolAvailableFrameCount() < available_before_table);
+    arch.mmu.destroyAddressSpaceRoot(nested_root);
+    try framework.expectEqual(
+        available_before_table + 1,
+        arch.mmu.getPageTablePoolAvailableFrameCount(),
+    );
 }
 
 pub fn explicitRootMappingTranslates() !void {
@@ -125,7 +134,7 @@ pub fn effectivePermissionsAreReported() !void {
 }
 
 pub fn allocatorExhaustionIsBounded() !void {
-    while (arch.early_allocator.getReservedMap().length < arch.MAX_EARLY_RESERVATIONS) {
+    while (arch.mmu.getPageTablePoolAvailableFrameCount() > 0) {
         _ = try arch.mmu.createAddressSpaceRoot();
     }
 
@@ -133,7 +142,7 @@ pub fn allocatorExhaustionIsBounded() !void {
     if (result) |_| {
         return framework.TestError.ExpectationFailed;
     } else |err| {
-        try framework.expectEqual(arch.MmuError.AddressSpaceRootAllocationFailed, err);
+        try framework.expectEqual(arch.MmuError.PageTablePoolExhausted, err);
     }
 }
 
@@ -143,17 +152,6 @@ fn mapTestPage(
     physical_address: usize,
     protection: arch.PageProtection,
 ) !void {
-    const page_size = arch.mmu.getPageSize();
-    const page_table_physical_address = @intFromPtr(try arch.early_allocator.allocate(
-        page_size,
-        page_size,
-        .PERSISTENT,
-    ));
-    try arch.mmu.mapTableInAddressSpace(
-        root,
-        virtual_address,
-        page_table_physical_address,
-        protection,
-    );
+    try arch.mmu.ensurePageTableInAddressSpace(root, virtual_address, protection);
     try arch.mmu.mapPageInAddressSpace(root, virtual_address, physical_address, protection);
 }

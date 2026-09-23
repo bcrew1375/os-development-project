@@ -215,6 +215,37 @@ test "Mock reset clears physical lookup failure injection but preserves backing"
     try std.testing.expectEqual(@as(?usize, 0x1000), arch.mmu.getPhysicalAddressInAddressSpace(reset_root, 0x400000));
 }
 
+test "Mock MMU reclaims root and lower-level page-table frames" {
+    arch.impl.test_support.resetState();
+    const initial_available = arch.mmu.getPageTablePoolAvailableFrameCount();
+
+    const root = try arch.mmu.createAddressSpaceRoot();
+    try std.testing.expectEqual(initial_available - 1, arch.mmu.getPageTablePoolAvailableFrameCount());
+    try arch.mmu.ensurePageTableInAddressSpace(root, 0x400000, .{});
+    try std.testing.expectEqual(initial_available - 2, arch.mmu.getPageTablePoolAvailableFrameCount());
+
+    arch.mmu.destroyAddressSpaceRoot(root);
+    try std.testing.expectEqual(initial_available, arch.mmu.getPageTablePoolAvailableFrameCount());
+}
+
+test "Mock MMU enforces the per-address-space page-table frame limit" {
+    arch.impl.test_support.resetState();
+    const root = try arch.mmu.createAddressSpaceRoot();
+    const region_size = arch.mmu.getPageTableRegionSize();
+
+    for (0..arch.page_table_pool.MAX_FRAMES_PER_ADDRESS_SPACE - 1) |index| {
+        try arch.mmu.ensurePageTableInAddressSpace(root, index * region_size, .{});
+    }
+    try std.testing.expectError(
+        error.AddressSpacePageTableLimitReached,
+        arch.mmu.ensurePageTableInAddressSpace(
+            root,
+            (arch.page_table_pool.MAX_FRAMES_PER_ADDRESS_SPACE - 1) * region_size,
+            .{},
+        ),
+    );
+}
+
 test "Mock interrupt services record externally visible operations" {
     arch.impl.test_support.resetState();
 

@@ -290,6 +290,7 @@ fn flagsForReservationType(region_type: arch.ReservedMapRegionType) linksection(
         arch.ReservedMapRegionType.PERSISTENT,
         arch.ReservedMapRegionType.KERNEL_WRITABLE,
         arch.ReservedMapRegionType.BOOTLOADER_DATA,
+        arch.ReservedMapRegionType.PAGE_TABLE_POOL,
         => writeable = true,
     }
 

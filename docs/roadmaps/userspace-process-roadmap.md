@@ -1,6 +1,6 @@
 # Userspace Process Roadmap
 
-Status date: 2026-09-22
+Status date: 2026-09-23
 
 This document is the implementation plan for progressing from the bootstrapped
 root task to multiple isolated, useful userspace processes. The architectural
@@ -517,7 +517,14 @@ memory and enough userspace policy to allocate, retype, map, and reclaim it.
 The kernel validates and enforces authority. The root task decides how memory is
 partitioned and used.
 
-## [ ] U3.1 Normalize allocatable physical-memory ranges
+## [x] U3.1 Normalize allocatable physical-memory ranges
+
+- Completed: 2026-09-23
+- Validation: `zig build tests`; `zig build coverage`; both production builds;
+  both `architecture-tests`; both `architecture-coverage`; both production
+  `system-smoke` tests; `zig fmt --check`; `git diff --check`
+- Limitation: normalization delegates only ordinary RAM. Device-memory authority
+  and reclamation of firmware/bootloader ranges remain later policy work.
 
 **Related assessment:** P3.1.
 
@@ -538,7 +545,15 @@ partitioned and used.
 - adversarial holes, overlaps, unaligned ranges, and width overflow are tested;
 - the kernel can explain every non-delegated physical range.
 
-## [ ] U3.2 Extend the boot and capability ABI for memory authority
+## [x] U3.2 Extend the boot and capability ABI for memory authority
+
+- Completed: 2026-09-23
+- Validation: ABI and root-task component tests; `zig build tests`;
+  `zig build coverage`; both production builds; both `architecture-tests`;
+  both `architecture-coverage`; both production `system-smoke` tests;
+  `zig fmt --check`; `git diff --check`
+- Limitation: bootstrap authorities are immutable root untyped-memory objects;
+  subdivision, retyping, derivation tracking, and revoke remain U3.3.
 
 **ABI work:**
 
@@ -557,7 +572,15 @@ partitioned and used.
 - capabilities cannot name reserved or out-of-range memory;
 - boot-info parsing rejects unsupported versions safely.
 
-## [ ] U3.3 Implement untyped-memory derivation and retyping
+## [x] U3.3 Implement untyped-memory derivation and retyping
+
+- Completed: 2026-09-23
+- Validation: ABI and root-task component tests; `zig build tests` (146 tests);
+  `zig build coverage` (546/546 common lines, 100%); both production builds;
+  both `architecture-tests`; both `architecture-coverage`; both production
+  `system-smoke` tests; `zig fmt --check`; `git diff --check`
+- Limitation: typed physical frames are authority leaves only. Attaching frames to
+  immutable memory-object backing and mapping them remains U3.4.
 
 **Related assessment:** P1.3 and P1.4.
 

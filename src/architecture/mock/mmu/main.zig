@@ -5,7 +5,6 @@ const std = @import("std");
 var memoryMap = arch.MemoryMap{};
 var memoryBacking: ?[]u8 = null;
 
-var nextAddressSpaceRootValue: usize = 1;
 var currentAddressSpaceRoot: arch.AddressSpaceRoot = .{ .value = 0 };
 
 pub const FixtureRegion = struct {
@@ -16,7 +15,7 @@ pub const FixtureRegion = struct {
 
 // Track mapped page tables so getPhysicalAddress can distinguish
 // "table not present" from "page not present".
-const MAX_MOCK_TABLES = 32;
+const MAX_MOCK_TABLES = arch.page_table_pool.FRAME_CAPACITY;
 const MockTableMapping = struct {
     root_value: usize,
     virtual_address: usize,
@@ -53,13 +52,13 @@ pub fn createAddressSpaceRoot() arch.MmuError!arch.AddressSpaceRoot {
         return arch.MmuError.AddressSpaceRootAllocationFailed;
     }
 
-    const address_space_root = arch.AddressSpaceRoot{
-        .value = nextAddressSpaceRootValue,
+    const root_value = arch.page_table_pool.allocateRootFrame() catch |err| {
+        return switch (err) {
+            error.PoolExhausted => arch.MmuError.PageTablePoolExhausted,
+            else => arch.MmuError.AddressSpaceRootAllocationFailed,
+        };
     };
-
-    nextAddressSpaceRootValue += 1;
-
-    return address_space_root;
+    return .{ .value = root_value };
 }
 
 pub fn destroyAddressSpaceRoot(root: arch.AddressSpaceRoot) void {
@@ -76,6 +75,7 @@ pub fn destroyAddressSpaceRoot(root: arch.AddressSpaceRoot) void {
         tableMappingCount -= 1;
         tableMappings[table_index] = tableMappings[tableMappingCount];
     }
+    arch.page_table_pool.freeAddressSpace(root);
 }
 
 pub fn switchAddressSpaceRoot(root: arch.AddressSpaceRoot) void {
@@ -138,6 +138,31 @@ pub fn isTablePresentInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress:
         }
     }
     return false;
+}
+
+pub fn ensurePageTable(virtualAddress: usize, flags: arch.PageProtection) arch.MmuError!void {
+    try ensurePageTableInAddressSpace(currentAddressSpaceRoot, virtualAddress, flags);
+}
+
+pub fn ensurePageTableInAddressSpace(
+    root: arch.AddressSpaceRoot,
+    virtualAddress: usize,
+    flags: arch.PageProtection,
+) arch.MmuError!void {
+    if (isTablePresentInAddressSpace(root, virtualAddress)) {
+        try mapTableInAddressSpace(root, virtualAddress, 0, flags);
+        return;
+    }
+
+    const physical_address = arch.page_table_pool.allocateFrame(root) catch |err| {
+        return switch (err) {
+            error.AddressSpaceLimitReached => arch.MmuError.AddressSpacePageTableLimitReached,
+            error.PoolExhausted => arch.MmuError.PageTablePoolExhausted,
+            else => arch.MmuError.MappingError,
+        };
+    };
+    errdefer arch.page_table_pool.freeFrame(root, physical_address) catch {};
+    try mapTableInAddressSpace(root, virtualAddress, physical_address, flags);
 }
 
 pub fn getMemoryMap() *arch.MemoryMap {
@@ -253,7 +278,6 @@ pub fn unmapPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usiz
 }
 
 pub fn resetForTest() void {
-    nextAddressSpaceRootValue = 1;
     currentAddressSpaceRoot = .{ .value = 0 };
     tableMappingCount = 0;
     pageMappingCount = 0;
@@ -397,6 +421,10 @@ pub fn getMaxAvailableAddress() u64 {
     return requireMemoryFixture().len;
 }
 
+pub fn getMaximumPhysicalAddress() u64 {
+    return std.math.maxInt(u64);
+}
+
 pub fn getDirectMapVirtualAddress() u64 {
     return @intFromPtr(requireMemoryFixture().ptr);
 }
@@ -423,6 +451,10 @@ pub fn getPageSize() usize {
 
 pub fn getPageTableRegionSize() usize {
     return 4096 * 1024;
+}
+
+pub fn getPageTablePoolAvailableFrameCount() usize {
+    return arch.page_table_pool.availableFrameCount();
 }
 
 fn requireMemoryFixture() []u8 {

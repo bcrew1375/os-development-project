@@ -1,5 +1,7 @@
 //! User/kernel syscall ABI numbers and low-level trap helpers.
 
+const capability = @import("capability.zig");
+
 /// Numeric syscall identifiers placed in the syscall number register.
 pub const SyscallNumber = enum(u32) {
     debug_write = 0,
@@ -13,6 +15,9 @@ pub const SyscallNumber = enum(u32) {
     unmap_address_space = 15,
     destroy_address_space = 16,
     query_address_space = 17,
+    retype_untyped_memory = 18,
+    delete_physical_memory = 19,
+    revoke_physical_memory = 20,
     _,
 };
 
@@ -69,6 +74,42 @@ pub const MAP_READ: u32 = 1 << 0;
 pub const MAP_WRITE: u32 = 1 << 1;
 /// Request an executable memory mapping.
 pub const MAP_EXECUTE: u32 = 1 << 2;
+
+/// Low bits occupied by the target object type in a retype request.
+pub const RETYPE_OBJECT_TYPE_BITS: u32 = 8;
+/// Mask selecting the packed retype target object type.
+pub const RETYPE_OBJECT_TYPE_MASK: u32 = (@as(u32, 1) << RETYPE_OBJECT_TYPE_BITS) - 1;
+
+/// Packs a retype target object type and attenuated capability rights.
+pub fn packRetypeTarget(object_type: capability.ObjectType, rights: capability.Rights) u32 {
+    return @intFromEnum(object_type) |
+        (capability.rightsBits(rights) << RETYPE_OBJECT_TYPE_BITS);
+}
+
+/// Returns the target object type from a packed retype request.
+pub fn retypeTargetObjectType(encoded: u32) capability.ObjectType {
+    return @enumFromInt(encoded & RETYPE_OBJECT_TYPE_MASK);
+}
+
+/// Returns the requested rights bits from a packed retype request.
+pub fn retypeTargetRightsBits(encoded: u32) u32 {
+    return encoded >> RETYPE_OBJECT_TYPE_BITS;
+}
+
+/// Joins low and high ABI words into a 64-bit physical offset.
+pub fn joinU64(low: u32, high: u32) u64 {
+    return @as(u64, low) | (@as(u64, high) << 32);
+}
+
+/// Returns the low ABI word of a 64-bit value.
+pub fn lowU32(value: u64) u32 {
+    return @truncate(value);
+}
+
+/// Returns the high ABI word of a 64-bit value.
+pub fn highU32(value: u64) u32 {
+    return @truncate(value >> 32);
+}
 
 /// Performs a syscall with three machine-word arguments.
 pub fn syscall3(number: u32, argument0: usize, argument1: usize, argument2: usize) callconv(.c) u32 {

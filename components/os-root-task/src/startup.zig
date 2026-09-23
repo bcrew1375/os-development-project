@@ -1,4 +1,5 @@
 const abi = @import("abi");
+const bootstrap_memory = @import("bootstrap_memory");
 const memory_manager = @import("memory_manager");
 
 pub const MANAGED_REGION_START: usize = 0x0100_0000;
@@ -15,6 +16,10 @@ pub fn run(comptime Environment: type, boot_info: *const abi.boot_info.BootInfo)
         Environment.debugWrite("root: invalid boot info\n");
         return abi.syscall.EXIT_FAILURE;
     }
+    bootstrap_memory.validateBootInfo(boot_info) catch {
+        Environment.debugWrite("root: invalid physical memory descriptors\n");
+        return abi.syscall.EXIT_FAILURE;
+    };
     Environment.debugWrite(abi.system_smoke.BOOT_INFO_VALIDATED);
     Environment.debugWrite("root: boot info received\n");
 

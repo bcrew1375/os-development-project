@@ -11,6 +11,10 @@ pub const initializePaging = @import("early_boot.zig").initializePaging;
 pub const getMemoryMap = @import("memory_map.zig").getMemoryMap;
 pub const getMaxAvailableAddress = @import("memory_map.zig").getMaxAvailableAddress;
 
+pub fn getMaximumPhysicalAddress() u64 {
+    return std.math.maxInt(u32);
+}
+
 const std = @import("std");
 
 inline fn getCurrentPageDirectory() common.PageDirectory {
@@ -81,6 +85,27 @@ pub fn isTablePresentInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress:
     const page_directory_index = getPageDirectoryIndex(virtualAddress);
     const page_dir = getPageDirectoryFromAddressSpaceRoot(root);
     return page_dir[page_directory_index].present;
+}
+
+pub fn ensurePageTable(virtualAddress: usize, flags: arch.PageProtection) arch.MmuError!void {
+    try ensurePageTableInAddressSpace(getCurrentAddressSpaceRoot(), virtualAddress, flags);
+}
+
+pub fn ensurePageTableInAddressSpace(
+    root: arch.AddressSpaceRoot,
+    virtualAddress: usize,
+    flags: arch.PageProtection,
+) arch.MmuError!void {
+    if (isTablePresentInAddressSpace(root, virtualAddress)) {
+        try mapTableInAddressSpace(root, virtualAddress, 0, flags);
+        return;
+    }
+
+    const physical_address = arch.page_table_pool.allocateFrame(root) catch |err| {
+        return pageTablePoolError(err);
+    };
+    errdefer arch.page_table_pool.freeFrame(root, physical_address) catch {};
+    try mapTableInAddressSpace(root, virtualAddress, physical_address, flags);
 }
 
 pub fn mapPage(virtualAddress: usize, physicalAddress: usize, flags: arch.PageProtection) arch.MmuError!void {
@@ -187,6 +212,10 @@ pub fn getPageTableRegionSize() usize {
     return common.PAGE_TABLE_REGION_SIZE;
 }
 
+pub fn getPageTablePoolAvailableFrameCount() usize {
+    return arch.page_table_pool.availableFrameCount();
+}
+
 pub fn removeIdentityMapping() void {
     const page_dir = getCurrentPageDirectory();
 
@@ -223,4 +252,12 @@ inline fn getPageDirectoryIndex(virtualAddress: usize) usize {
 
 inline fn getPageTableIndex(virtualAddress: usize) usize {
     return (virtualAddress >> 12) & 0x3FF;
+}
+
+fn pageTablePoolError(err: arch.page_table_pool.Error) arch.MmuError {
+    return switch (err) {
+        error.AddressSpaceLimitReached => arch.MmuError.AddressSpacePageTableLimitReached,
+        error.PoolExhausted => arch.MmuError.PageTablePoolExhausted,
+        else => arch.MmuError.MappingError,
+    };
 }

@@ -8,6 +8,14 @@ pub const MemoryObject = struct {
     capability: abi.capability.CapabilityHandle,
 };
 
+pub const UntypedMemory = struct {
+    capability: abi.capability.CapabilityHandle,
+};
+
+pub const PhysicalFrame = struct {
+    capability: abi.capability.CapabilityHandle,
+};
+
 pub const Error = error{
     InvalidCapability,
     InsufficientRights,
@@ -140,6 +148,82 @@ pub fn MemoryManager(comptime Transport: type) type {
             ));
         }
 
+        pub fn retypeUntypedMemory(
+            source: UntypedMemory,
+            offset: u64,
+            page_count: u32,
+            rights: abi.capability.Rights,
+        ) Error!UntypedMemory {
+            return .{ .capability = try retypePhysicalMemory(
+                source,
+                offset,
+                page_count,
+                .untyped_memory,
+                rights,
+            ) };
+        }
+
+        pub fn retypePhysicalFrames(
+            source: UntypedMemory,
+            offset: u64,
+            page_count: u32,
+            rights: abi.capability.Rights,
+        ) Error!PhysicalFrame {
+            return .{ .capability = try retypePhysicalMemory(
+                source,
+                offset,
+                page_count,
+                .physical_frame,
+                rights,
+            ) };
+        }
+
+        pub fn deletePhysicalMemory(memory: anytype) Error!void {
+            try voidResult(Transport.syscall3(
+                @intFromEnum(abi.syscall.SyscallNumber.delete_physical_memory),
+                physicalMemoryCapability(memory),
+                0,
+                0,
+            ));
+        }
+
+        pub fn revokePhysicalMemory(memory: anytype) Error!void {
+            try voidResult(Transport.syscall3(
+                @intFromEnum(abi.syscall.SyscallNumber.revoke_physical_memory),
+                physicalMemoryCapability(memory),
+                0,
+                0,
+            ));
+        }
+
+        fn retypePhysicalMemory(
+            source: UntypedMemory,
+            offset: u64,
+            page_count: u32,
+            target_type: abi.capability.ObjectType,
+            rights: abi.capability.Rights,
+        ) Error!abi.capability.CapabilityHandle {
+            const result = Transport.syscall5(
+                @intFromEnum(abi.syscall.SyscallNumber.retype_untyped_memory),
+                source.capability,
+                abi.syscall.lowU32(offset),
+                abi.syscall.highU32(offset),
+                page_count,
+                abi.syscall.packRetypeTarget(target_type, rights),
+            );
+            try checkError(result);
+            if (result == abi.capability.INVALID_CAPABILITY) return Error.InternalFailure;
+            return result;
+        }
+
+        fn physicalMemoryCapability(memory: anytype) abi.capability.CapabilityHandle {
+            const Memory = @TypeOf(memory);
+            if (Memory != UntypedMemory and Memory != PhysicalFrame) {
+                @compileError("physical-memory operation requires UntypedMemory or PhysicalFrame");
+            }
+            return memory.capability;
+        }
+
         fn addressSpaceResult(result: u32) Error!AddressSpace {
             try checkError(result);
             if (result == abi.capability.INVALID_CAPABILITY) return Error.InternalFailure;
@@ -184,3 +268,7 @@ pub const unmapAddressSpace = native.unmapAddressSpace;
 pub const destroyAddressSpace = native.destroyAddressSpace;
 pub const createMemoryObject = native.createMemoryObject;
 pub const mapMemoryObject = native.mapMemoryObject;
+pub const retypeUntypedMemory = native.retypeUntypedMemory;
+pub const retypePhysicalFrames = native.retypePhysicalFrames;
+pub const deletePhysicalMemory = native.deletePhysicalMemory;
+pub const revokePhysicalMemory = native.revokePhysicalMemory;

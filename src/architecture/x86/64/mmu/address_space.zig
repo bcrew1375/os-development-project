@@ -4,11 +4,14 @@ const common = @import("common.zig");
 const limine_requests = @import("../../common/boot/limine/requests.zig");
 
 pub fn createAddressSpaceRoot() arch.MmuError!arch.AddressSpaceRoot {
-    const page_table_root_physical_address = allocatePageTableRoot() catch {
-        return arch.MmuError.AddressSpaceRootAllocationFailed;
+    const page_table_root_physical_address = arch.page_table_pool.allocateRootFrame() catch |err| {
+        return switch (err) {
+            error.PoolExhausted => arch.MmuError.PageTablePoolExhausted,
+            else => arch.MmuError.AddressSpaceRootAllocationFailed,
+        };
     };
     const page_table_root = getDirectMapPageTableRoot(page_table_root_physical_address);
-
+    clearPageTable(page_table_root);
     cloneKernelMappings(page_table_root);
 
     return .{
@@ -16,27 +19,12 @@ pub fn createAddressSpaceRoot() arch.MmuError!arch.AddressSpaceRoot {
     };
 }
 
-/// Page-table storage is early-allocator owned until delegated reclamation exists.
 pub fn destroyAddressSpaceRoot(root: arch.AddressSpaceRoot) void {
-    _ = root;
+    arch.page_table_pool.freeAddressSpace(root);
 }
 
 pub fn switchAddressSpaceRoot(root: arch.AddressSpaceRoot) void {
     switchPageDirectoryPhysical(root.value);
-}
-
-fn allocatePageTableRoot() arch.EarlyAllocError!usize {
-    const allocation_size = @sizeOf(common.PageEntry) * common.ENTRIES_PER_TABLE;
-    const page_table_root_physical_address = @intFromPtr(try arch.early_allocator.allocate(
-        allocation_size,
-        common.PAGE_SIZE,
-        arch.ReservedMapRegionType.PERSISTENT,
-    ));
-    const page_table_root = getDirectMapPageTableRoot(page_table_root_physical_address);
-
-    clearPageTable(page_table_root);
-
-    return page_table_root_physical_address;
 }
 
 fn getDirectMapPageTableRoot(page_table_root_physical_address: usize) common.PageTableRoot {

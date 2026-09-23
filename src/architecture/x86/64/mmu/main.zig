@@ -9,6 +9,10 @@ pub const switchAddressSpaceRoot = address_space.switchAddressSpaceRoot;
 pub const getMemoryMap = @import("memory_map.zig").getMemoryMap;
 pub const getMaxAvailableAddress = @import("memory_map.zig").getMaxAvailableAddress;
 
+pub fn getMaximumPhysicalAddress() u64 {
+    return (@as(u64, 1) << 52) - 1;
+}
+
 const PageWalk = struct {
     pml4: common.PageTable,
     pdpt: common.PageTable,
@@ -86,6 +90,27 @@ pub fn isTablePresentInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress:
     return walkToPageTable(root, virtualAddress) != null;
 }
 
+pub fn ensurePageTable(virtualAddress: usize, flags: arch.PageProtection) arch.MmuError!void {
+    try ensurePageTableInAddressSpace(getCurrentAddressSpaceRoot(), virtualAddress, flags);
+}
+
+pub fn ensurePageTableInAddressSpace(
+    root: arch.AddressSpaceRoot,
+    virtualAddress: usize,
+    flags: arch.PageProtection,
+) arch.MmuError!void {
+    if (isTablePresentInAddressSpace(root, virtualAddress)) {
+        try mapTableInAddressSpace(root, virtualAddress, 0, flags);
+        return;
+    }
+
+    const physical_address = arch.page_table_pool.allocateFrame(root) catch |err| {
+        return pageTablePoolError(err);
+    };
+    errdefer arch.page_table_pool.freeFrame(root, physical_address) catch {};
+    try mapTableInAddressSpace(root, virtualAddress, physical_address, flags);
+}
+
 pub fn mapPage(virtualAddress: usize, physicalAddress: usize, flags: arch.PageProtection) arch.MmuError!void {
     try mapPageInAddressSpace(getCurrentAddressSpaceRoot(), virtualAddress, physicalAddress, flags);
 }
@@ -108,9 +133,22 @@ pub fn mapTableInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize
     const pml4_index = pml4Index(virtualAddress);
     const pdpt_index = pdptIndex(virtualAddress);
     const page_directory_index = pageDirectoryIndex(virtualAddress);
+    var new_pdpt_physical_address: ?usize = null;
+    var new_page_directory_physical_address: ?usize = null;
+    errdefer rollbackIntermediateTables(
+        root,
+        pml4,
+        pml4_index,
+        pdpt_index,
+        new_pdpt_physical_address,
+        new_page_directory_physical_address,
+    );
 
     if (!pml4[pml4_index].present) {
-        const pdpt_physical_address = allocatePageTablePhysicalAddress() catch return arch.MmuError.MappingError;
+        const pdpt_physical_address = arch.page_table_pool.allocateFrame(root) catch |err| {
+            return pageTablePoolError(err);
+        };
+        new_pdpt_physical_address = pdpt_physical_address;
         clearPageTable(pdpt_physical_address);
         pml4[pml4_index] = makeTableEntry(pdpt_physical_address, flags);
     }
@@ -118,7 +156,10 @@ pub fn mapTableInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize
     widenEntryPermissions(&pml4[pml4_index], flags);
     const pdpt = getNextLevelTable(pml4[pml4_index]);
     if (!pdpt[pdpt_index].present) {
-        const page_directory_physical_address = allocatePageTablePhysicalAddress() catch return arch.MmuError.MappingError;
+        const page_directory_physical_address = arch.page_table_pool.allocateFrame(root) catch |err| {
+            return pageTablePoolError(err);
+        };
+        new_page_directory_physical_address = page_directory_physical_address;
         clearPageTable(page_directory_physical_address);
         pdpt[pdpt_index] = makeTableEntry(page_directory_physical_address, flags);
     }
@@ -180,6 +221,10 @@ pub fn getPageSize() usize {
 
 pub fn getPageTableRegionSize() usize {
     return common.PAGE_TABLE_REGION_SIZE;
+}
+
+pub fn getPageTablePoolAvailableFrameCount() usize {
+    return arch.page_table_pool.availableFrameCount();
 }
 
 pub fn removeIdentityMapping() void {}
@@ -254,14 +299,6 @@ fn clearPageTable(physicalAddress: usize) void {
     }
 }
 
-fn allocatePageTablePhysicalAddress() !usize {
-    return @intFromPtr(try arch.early_allocator.allocate(
-        common.PAGE_SIZE,
-        common.PAGE_SIZE,
-        arch.ReservedMapRegionType.PERSISTENT,
-    ));
-}
-
 inline fn getPageTableFromPhysical(physicalAddress: usize) common.PageTable {
     return @ptrFromInt((physicalAddress & ~@as(usize, 0xFFF)) + directMapVirtualAddress());
 }
@@ -299,4 +336,31 @@ inline fn pageTableIndex(virtualAddress: usize) usize {
 
 inline fn pageOffset(virtualAddress: usize) usize {
     return virtualAddress & 0xFFF;
+}
+
+fn pageTablePoolError(err: arch.page_table_pool.Error) arch.MmuError {
+    return switch (err) {
+        error.AddressSpaceLimitReached => arch.MmuError.AddressSpacePageTableLimitReached,
+        error.PoolExhausted => arch.MmuError.PageTablePoolExhausted,
+        else => arch.MmuError.MappingError,
+    };
+}
+
+fn rollbackIntermediateTables(
+    root: arch.AddressSpaceRoot,
+    pml4: common.PageTable,
+    pml4_index: usize,
+    pdpt_index: usize,
+    new_pdpt_physical_address: ?usize,
+    new_page_directory_physical_address: ?usize,
+) void {
+    if (new_page_directory_physical_address) |physical_address| {
+        const pdpt = getNextLevelTable(pml4[pml4_index]);
+        pdpt[pdpt_index] = .{};
+        arch.page_table_pool.freeFrame(root, physical_address) catch {};
+    }
+    if (new_pdpt_physical_address) |physical_address| {
+        pml4[pml4_index] = .{};
+        arch.page_table_pool.freeFrame(root, physical_address) catch {};
+    }
 }

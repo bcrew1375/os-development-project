@@ -33,6 +33,8 @@ pub const cpu = impl.cpu;
 pub const interrupts = impl.interrupts;
 /// Memory-management unit services.
 pub const mmu = impl.mmu;
+/// Bounded kernel-reserved page-table frame pool.
+pub const page_table_pool = @import("page_table_pool.zig");
 /// Platform device services such as console and timers.
 pub const platform = impl.platform;
 
@@ -69,6 +71,8 @@ pub const MmuError = error{
     MappingError,
     PageTableNotPresent,
     AddressSpaceRootAllocationFailed,
+    PageTablePoolExhausted,
+    AddressSpacePageTableLimitReached,
 };
 
 /// Opaque architecture address-space root identifier.
@@ -105,6 +109,7 @@ pub const ReservedMapRegionType = enum {
     KERNEL_WRITABLE,
     BOOTLOADER_DATA,
     DEVICE_MEMORY,
+    PAGE_TABLE_POOL,
 };
 
 /// Single early reserved memory range.
@@ -184,7 +189,10 @@ pub fn validateImpl(comptime T: type) void {
             getPhysicalAddress: fn (virtualAddress: usize) ?usize,
             isTablePresentInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize) bool,
             isTablePresent: fn (virtualAddress: usize) bool,
+            ensurePageTableInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize, flags: PageProtection) MmuError!void,
+            ensurePageTable: fn (virtualAddress: usize, flags: PageProtection) MmuError!void,
             getMemoryMap: fn () *MemoryMap,
+            getMaximumPhysicalAddress: fn () u64,
             mapPageInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize, physicalAddress: usize, flags: PageProtection) MmuError!void,
             mapPage: fn (virtualAddress: usize, physicalAddress: usize, flags: PageProtection) MmuError!void,
             mapTableInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize, physicalAddress: usize, flags: PageProtection) MmuError!void,
@@ -201,6 +209,7 @@ pub fn validateImpl(comptime T: type) void {
             getKernelHeapSize: fn () u64,
             getPageSize: fn () usize,
             getPageTableRegionSize: fn () usize,
+            getPageTablePoolAvailableFrameCount: fn () usize,
         });
 
         validateInterface(T.interrupts, struct {

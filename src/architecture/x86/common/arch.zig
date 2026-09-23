@@ -40,7 +40,10 @@ pub fn makeArchitecture(comptime implementation: anytype) type {
             pub const getPhysicalAddress = implementation.mmu.getPhysicalAddress;
             pub const isTablePresentInAddressSpace = implementation.mmu.isTablePresentInAddressSpace;
             pub const isTablePresent = implementation.mmu.isTablePresent;
+            pub const ensurePageTableInAddressSpace = implementation.mmu.ensurePageTableInAddressSpace;
+            pub const ensurePageTable = implementation.mmu.ensurePageTable;
             pub const getMemoryMap = implementation.mmu.getMemoryMap;
+            pub const getMaximumPhysicalAddress = implementation.mmu.getMaximumPhysicalAddress;
             pub const mapPageInAddressSpace = implementation.mmu.mapPageInAddressSpace;
             pub const mapPage = implementation.mmu.mapPage;
             pub const mapTableInAddressSpace = implementation.mmu.mapTableInAddressSpace;
@@ -57,6 +60,7 @@ pub fn makeArchitecture(comptime implementation: anytype) type {
             pub const getKernelHeapSize = implementation.mmu.getKernelHeapSize;
             pub const getPageSize = implementation.mmu.getPageSize;
             pub const getPageTableRegionSize = implementation.mmu.getPageTableRegionSize;
+            pub const getPageTablePoolAvailableFrameCount = implementation.mmu.getPageTablePoolAvailableFrameCount;
         };
 
         pub const platform = struct {

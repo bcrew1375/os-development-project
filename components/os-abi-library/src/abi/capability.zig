@@ -58,6 +58,10 @@ pub const ObjectType = enum(u32) {
     address_space = 1,
     /// Memory-object object.
     memory_object = 2,
+    /// Authority over an immutable physical-memory range.
+    untyped_memory = 3,
+    /// Typed authority over immutable physical frames.
+    physical_frame = 4,
     _,
 };
 
@@ -81,6 +85,20 @@ pub const Rights = packed struct(u32) {
             (!required.manage or self.manage);
     }
 };
+
+/// Rights bits accepted by capability-management ABI requests.
+pub const KNOWN_RIGHTS_MASK: u32 = 0x0f;
+
+/// Encodes capability rights into their stable ABI representation.
+pub fn rightsBits(rights: Rights) u32 {
+    return @bitCast(rights);
+}
+
+/// Decodes rights after rejecting reserved bits.
+pub fn rightsFromBits(bits: u32) ?Rights {
+    if ((bits & ~KNOWN_RIGHTS_MASK) != 0) return null;
+    return @bitCast(bits);
+}
 
 comptime {
     std.debug.assert(@bitSizeOf(CapabilityHandle) == 32);

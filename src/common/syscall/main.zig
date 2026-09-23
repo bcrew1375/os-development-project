@@ -24,6 +24,9 @@ pub const Operation = enum {
     query_address_space,
     unmap_address_space,
     destroy_address_space,
+    retype_untyped_memory,
+    delete_physical_memory,
+    revoke_physical_memory,
     convert_argument,
 };
 
@@ -84,6 +87,21 @@ pub fn dispatchWithServices(
         .query_address_space => queryAddressSpace(Services, caller_process_handle, request.arguments),
         .unmap_address_space => unmapAddressSpace(Services, caller_process_handle, request.arguments),
         .destroy_address_space => destroyAddressSpace(
+            Services,
+            caller_process_handle,
+            request.arguments[0],
+        ),
+        .retype_untyped_memory => retypeUntypedMemory(
+            Services,
+            caller_process_handle,
+            request.arguments,
+        ),
+        .delete_physical_memory => deletePhysicalMemory(
+            Services,
+            caller_process_handle,
+            request.arguments[0],
+        ),
+        .revoke_physical_memory => revokePhysicalMemory(
             Services,
             caller_process_handle,
             request.arguments[0],
@@ -261,6 +279,71 @@ fn destroyAddressSpace(
     return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
 }
 
+fn retypeUntypedMemory(
+    comptime Services: type,
+    caller_process_handle: process.ProcessHandle,
+    arguments: [5]u64,
+) Result {
+    const source_capability = toU32(arguments[0]) catch |err| {
+        return failure(.convert_argument, err);
+    };
+    const offset_low = toU32(arguments[1]) catch |err| {
+        return failure(.convert_argument, err);
+    };
+    const offset_high = toU32(arguments[2]) catch |err| {
+        return failure(.convert_argument, err);
+    };
+    const page_count = toU32(arguments[3]) catch |err| {
+        return failure(.convert_argument, err);
+    };
+    const encoded_target = toU32(arguments[4]) catch |err| {
+        return failure(.convert_argument, err);
+    };
+    const rights = abi.capability.rightsFromBits(
+        abi.syscall.retypeTargetRightsBits(encoded_target),
+    ) orelse return failure(.retype_untyped_memory, error.InvalidCapabilityRights);
+
+    const handle = Services.retypeUntypedMemoryCapability(
+        caller_process_handle,
+        source_capability,
+        abi.syscall.joinU64(offset_low, offset_high),
+        page_count,
+        abi.syscall.retypeTargetObjectType(encoded_target),
+        rights,
+    ) catch |err| return failure(.retype_untyped_memory, err);
+    return .{ .returned = handle };
+}
+
+fn deletePhysicalMemory(
+    comptime Services: type,
+    caller_process_handle: process.ProcessHandle,
+    capability_value: u64,
+) Result {
+    const capability_handle = toU32(capability_value) catch |err| {
+        return failure(.convert_argument, err);
+    };
+    Services.deletePhysicalMemoryCapability(
+        caller_process_handle,
+        capability_handle,
+    ) catch |err| return failure(.delete_physical_memory, err);
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
+fn revokePhysicalMemory(
+    comptime Services: type,
+    caller_process_handle: process.ProcessHandle,
+    capability_value: u64,
+) Result {
+    const capability_handle = toU32(capability_value) catch |err| {
+        return failure(.convert_argument, err);
+    };
+    Services.revokePhysicalMemoryCapability(
+        caller_process_handle,
+        capability_handle,
+    ) catch |err| return failure(.revoke_physical_memory, err);
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
 fn resolveAddressSpace(
     comptime Services: type,
     caller_process_handle: process.ProcessHandle,
@@ -296,7 +379,9 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.InvalidMemoryObjectHandle,
         => .invalid_capability,
         error.InsufficientCapabilityRights => .insufficient_rights,
+        error.InvalidCapabilityRights => .insufficient_rights,
         error.OutOfCapabilities,
+        error.OutOfAuthorities,
         error.OutOfAddressSpaces,
         error.OutOfMemoryObjects,
         error.OutOfVirtualMemoryAreas,
@@ -304,6 +389,14 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.PhysicalMemoryAllocationFailed,
         => .out_of_resources,
         error.ArgumentOutOfRange,
+        error.EmptyRange,
+        error.RangeOverflow,
+        error.RangeOutOfBounds,
+        error.UnalignedRange,
+        error.OverlappingAuthority,
+        error.AuthorityHasDescendants,
+        error.CapabilityHasDescendants,
+        error.BootstrapRootDeletion,
         error.EmptyMemoryRange,
         error.MemoryRangeOverflow,
         error.KernelAddressRange,
@@ -346,6 +439,9 @@ const ProductionServices = struct {
     pub const createAddressSpaceCapability = capability.createAddressSpaceCapability;
     pub const resolveAddressSpace = capability.resolveAddressSpace;
     pub const destroyAddressSpaceCapability = capability.destroyAddressSpaceCapability;
+    pub const retypeUntypedMemoryCapability = capability.retypeUntypedMemoryCapability;
+    pub const deletePhysicalMemoryCapability = capability.deletePhysicalMemoryCapability;
+    pub const revokePhysicalMemoryCapability = capability.revokePhysicalMemoryCapability;
     pub const createMemoryObjectCapability = capability.createMemoryObjectCapability;
     pub const resolveMemoryObject = capability.resolveMemoryObject;
     pub const mapMemory = process.mapMemory;

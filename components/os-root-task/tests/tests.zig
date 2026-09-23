@@ -1,4 +1,5 @@
 const abi = @import("abi");
+const bootstrap_memory = @import("bootstrap_memory");
 const memory_manager = @import("memory_manager");
 const startup = @import("startup");
 const std = @import("std");
@@ -70,6 +71,8 @@ fn validBootInfo() abi.boot_info.BootInfo {
         .version = abi.boot_info.BOOT_INFO_VERSION,
         .module_count = 0,
         .modules_address = 0,
+        .physical_memory_count = 0,
+        .physical_memory_address = 0,
     };
 }
 
@@ -140,6 +143,59 @@ test "memory manager forwards every permission flag combination" {
             RecordingEnvironment.syscalls[0].five.arguments[4],
         );
     }
+}
+
+test "memory manager emits typed physical-memory lifecycle syscalls" {
+    RecordingEnvironment.reset(&.{ 81, 82, abi.syscall.SYSCALL_SUCCESS, abi.syscall.SYSCALL_SUCCESS });
+    const source = memory_manager.UntypedMemory{ .capability = 17 };
+    const offset: u64 = 0x1234_5678_9abc_d000;
+    const child_rights = abi.capability.Rights{ .read = true, .manage = true };
+    const frame_rights = abi.capability.Rights{ .read = true, .write = true };
+
+    const child = try manager.retypeUntypedMemory(source, offset, 3, child_rights);
+    try std.testing.expectEqual(@as(u32, 81), child.capability);
+    const frame = try manager.retypePhysicalFrames(child, 0x2000, 2, frame_rights);
+    try std.testing.expectEqual(@as(u32, 82), frame.capability);
+    try manager.deletePhysicalMemory(frame);
+    try manager.revokePhysicalMemory(child);
+
+    const child_call = RecordingEnvironment.syscalls[0].five;
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.retype_untyped_memory),
+        child_call.number,
+    );
+    try std.testing.expectEqual([_]usize{
+        17,
+        abi.syscall.lowU32(offset),
+        abi.syscall.highU32(offset),
+        3,
+        abi.syscall.packRetypeTarget(.untyped_memory, child_rights),
+    }, child_call.arguments);
+
+    const frame_call = RecordingEnvironment.syscalls[1].five;
+    try std.testing.expectEqual([_]usize{
+        81,
+        0x2000,
+        0,
+        2,
+        abi.syscall.packRetypeTarget(.physical_frame, frame_rights),
+    }, frame_call.arguments);
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.delete_physical_memory),
+        RecordingEnvironment.syscalls[2].three.number,
+    );
+    try std.testing.expectEqual(
+        [_]usize{ 82, 0, 0 },
+        RecordingEnvironment.syscalls[2].three.arguments,
+    );
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.revoke_physical_memory),
+        RecordingEnvironment.syscalls[3].three.number,
+    );
+    try std.testing.expectEqual(
+        [_]usize{ 81, 0, 0 },
+        RecordingEnvironment.syscalls[3].three.arguments,
+    );
 }
 
 test "memory manager emits complete address-space lifecycle syscalls" {
@@ -240,6 +296,48 @@ test "startup rejects invalid boot information before capability syscalls" {
     RecordingEnvironment.reset(&.{});
     try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 0), RecordingEnvironment.syscall_count);
+
+    boot_info = validBootInfo();
+    boot_info.physical_memory_count = abi.boot_info.MAX_PHYSICAL_MEMORY_DESCRIPTORS + 1;
+    RecordingEnvironment.reset(&.{});
+    try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
+    try std.testing.expectEqual(@as(usize, 0), RecordingEnvironment.syscall_count);
+    try expectDiagnostic(2, "root: invalid physical memory descriptors\n");
+}
+
+test "bootstrap memory validates capabilities ordering overlap and bounds" {
+    const valid_capability = abi.capability.makeCapabilityHandle(1, 1);
+    const valid = [_]abi.boot_info.PhysicalMemoryInfo{
+        .{
+            .physical_start = 0x1000,
+            .size = 0x2000,
+            .attributes = abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM,
+            .capability = valid_capability,
+        },
+        .{
+            .physical_start = 0x4000,
+            .size = 0x1000,
+            .attributes = abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM,
+            .capability = abi.capability.makeCapabilityHandle(2, 1),
+        },
+    };
+    try bootstrap_memory.validate(&valid);
+
+    var invalid = valid;
+    invalid[0].capability = abi.capability.INVALID_CAPABILITY;
+    try std.testing.expectError(error.InvalidCapability, bootstrap_memory.validate(&invalid));
+    invalid = valid;
+    invalid[0].attributes = abi.boot_info.PHYSICAL_MEMORY_DEVICE;
+    try std.testing.expectError(error.UnsupportedAttributes, bootstrap_memory.validate(&invalid));
+    invalid = valid;
+    invalid[1].physical_start = 0x2000;
+    try std.testing.expectError(error.OverlappingRange, bootstrap_memory.validate(&invalid));
+    invalid = valid;
+    invalid[1].physical_start = 0;
+    try std.testing.expectError(error.OutOfOrderRange, bootstrap_memory.validate(&invalid));
+    invalid = valid;
+    invalid[0].size = 1;
+    try std.testing.expectError(error.UnalignedRange, bootstrap_memory.validate(&invalid));
 }
 
 test "startup stops after each capability or mapping failure" {

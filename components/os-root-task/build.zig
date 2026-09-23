@@ -30,6 +30,7 @@ pub fn build(b: *std.Build) void {
 }
 
 fn resolveConfig(b: *std.Build, architecture: Architecture) BuildConfig {
+    const Target = std.Target.x86;
     return switch (architecture) {
         .x86_32 => .{
             .architecture = architecture,
@@ -37,6 +38,8 @@ fn resolveConfig(b: *std.Build, architecture: Architecture) BuildConfig {
                 .cpu_arch = .x86,
                 .os_tag = .freestanding,
                 .abi = .none,
+                .cpu_features_add = Target.featureSet(&.{.soft_float}),
+                .cpu_features_sub = Target.featureSet(&.{ .avx, .avx2, .sse, .sse2, .mmx }),
             }),
             .linker_script = "src/linker_x86_32.ld",
         },
@@ -46,6 +49,8 @@ fn resolveConfig(b: *std.Build, architecture: Architecture) BuildConfig {
                 .cpu_arch = .x86_64,
                 .os_tag = .freestanding,
                 .abi = .none,
+                .cpu_features_add = Target.featureSet(&.{.soft_float}),
+                .cpu_features_sub = Target.featureSet(&.{ .avx, .avx2, .sse, .sse2, .mmx }),
             }),
             .linker_script = "src/linker_x86_64.ld",
         },
@@ -65,6 +70,12 @@ fn addRootTask(
         .optimize = optimize,
     });
     memory_manager.addImport("abi", abi);
+    const bootstrap_memory = b.createModule(.{
+        .root_source_file = b.path("src/bootstrap_memory.zig"),
+        .target = config.target,
+        .optimize = optimize,
+    });
+    bootstrap_memory.addImport("abi", abi);
 
     const root_task = b.addExecutable(.{
         .name = "root_process.elf",
@@ -79,6 +90,7 @@ fn addRootTask(
     });
 
     root_task.root_module.addImport("abi", abi);
+    root_task.root_module.addImport("bootstrap_memory", bootstrap_memory);
     root_task.root_module.addImport("memory_manager", memory_manager);
     root_task.setLinkerScript(b.path(config.linker_script));
 
@@ -110,12 +122,20 @@ fn addTests(
     });
     memory_manager.addImport("abi", abi);
     tests.root_module.addImport("memory_manager", memory_manager);
+    const bootstrap_memory = b.createModule(.{
+        .root_source_file = b.path("src/bootstrap_memory.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    });
+    bootstrap_memory.addImport("abi", abi);
+    tests.root_module.addImport("bootstrap_memory", bootstrap_memory);
     const startup = b.createModule(.{
         .root_source_file = b.path("src/startup.zig"),
         .target = b.graph.host,
         .optimize = optimize,
     });
     startup.addImport("abi", abi);
+    startup.addImport("bootstrap_memory", bootstrap_memory);
     startup.addImport("memory_manager", memory_manager);
     tests.root_module.addImport("startup", startup);
 

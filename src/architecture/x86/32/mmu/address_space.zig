@@ -3,11 +3,14 @@ const arch = @import("arch");
 const common = @import("common.zig");
 
 pub fn createAddressSpaceRoot() arch.MmuError!arch.AddressSpaceRoot {
-    const page_directory_physical_address = allocatePageDirectory() catch {
-        return arch.MmuError.AddressSpaceRootAllocationFailed;
+    const page_directory_physical_address = arch.page_table_pool.allocateRootFrame() catch |err| {
+        return switch (err) {
+            error.PoolExhausted => arch.MmuError.PageTablePoolExhausted,
+            else => arch.MmuError.AddressSpaceRootAllocationFailed,
+        };
     };
     const page_directory = getDirectMapPageDirectory(page_directory_physical_address);
-
+    clearPageDirectory(page_directory);
     cloneKernelMappings(page_directory);
 
     return .{
@@ -15,27 +18,12 @@ pub fn createAddressSpaceRoot() arch.MmuError!arch.AddressSpaceRoot {
     };
 }
 
-/// Page-table storage is early-allocator owned until delegated reclamation exists.
 pub fn destroyAddressSpaceRoot(root: arch.AddressSpaceRoot) void {
-    _ = root;
+    arch.page_table_pool.freeAddressSpace(root);
 }
 
 pub fn switchAddressSpaceRoot(root: arch.AddressSpaceRoot) void {
     switchPageDirectoryPhysical(root.value);
-}
-
-fn allocatePageDirectory() arch.EarlyAllocError!usize {
-    const allocation_size = @sizeOf(common.PageEntry) * common.ENTRIES_PER_DIRECTORY;
-    const page_directory_physical_address = @intFromPtr(try arch.early_allocator.allocate(
-        allocation_size,
-        common.PAGE_SIZE,
-        arch.ReservedMapRegionType.PERSISTENT,
-    ));
-    const page_directory = getDirectMapPageDirectory(page_directory_physical_address);
-
-    clearPageDirectory(page_directory);
-
-    return page_directory_physical_address;
 }
 
 fn getDirectMapPageDirectory(page_directory_physical_address: usize) common.PageDirectory {

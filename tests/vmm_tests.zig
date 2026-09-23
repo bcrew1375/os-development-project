@@ -487,8 +487,8 @@ test "VMM resolveFault: maps page within VMA" {
     };
     try kernel.vmm.resolveFault(faultInfo);
 
-    // Should have consumed 2 frames: one for the page table, one for the data page.
-    const expectedConsumed: usize = 2;
+    // Page tables come from the kernel-reserved pool; PMM supplies only the data page.
+    const expectedConsumed: usize = 1;
     try std.testing.expectEqual(initialAvailable - expectedConsumed, kernel.pmm.getCurrentAvailableFrames());
 
     // The table should now be present.
@@ -583,7 +583,7 @@ test "VMM resolveFault: second fault in same table region skips table allocation
 
     const initialAvailable = kernel.pmm.getCurrentAvailableFrames();
 
-    // First fault: should consume 2 frames (table + data page).
+    // First fault consumes one PMM frame; its table comes from the page-table pool.
     const faultInfo1 = arch.FaultInfo{
         .address = @as(usize, @intCast(vmaStart)),
         .present = false,
@@ -592,7 +592,7 @@ test "VMM resolveFault: second fault in same table region skips table allocation
         .instruction_fetch = false,
     };
     try kernel.vmm.resolveFault(faultInfo1);
-    try std.testing.expectEqual(initialAvailable - 2, kernel.pmm.getCurrentAvailableFrames());
+    try std.testing.expectEqual(initialAvailable - 1, kernel.pmm.getCurrentAvailableFrames());
 
     // Second fault at a different page within the same 4 MB table region:
     // should consume only 1 frame (data page), reusing the existing table.
@@ -604,7 +604,7 @@ test "VMM resolveFault: second fault in same table region skips table allocation
         .instruction_fetch = false,
     };
     try kernel.vmm.resolveFault(faultInfo2);
-    try std.testing.expectEqual(initialAvailable - 3, kernel.pmm.getCurrentAvailableFrames());
+    try std.testing.expectEqual(initialAvailable - 2, kernel.pmm.getCurrentAvailableFrames());
 }
 
 test "VMM resolveFault: permissions propagate to page protection" {
@@ -648,8 +648,8 @@ test "VMM resolveFault: permissions propagate to page protection" {
     };
     try kernel.vmm.resolveFault(faultInfo);
 
-    // The fault handler should have consumed 2 frames (table + page).
-    try std.testing.expectEqual(initialAvailable - 2, kernel.pmm.getCurrentAvailableFrames());
+    // The fault handler consumes one PMM frame; table storage is separately reserved.
+    try std.testing.expectEqual(initialAvailable - 1, kernel.pmm.getCurrentAvailableFrames());
 
     // The table should be present (proving the handler reached mapTable).
     try std.testing.expect(arch.mmu.isTablePresent(@as(usize, @intCast(vmaStart))));

@@ -14,6 +14,7 @@ fn initializeLoaderTest() !void {
     kernel_common.capability.resetForTest();
     kernel_common.process.resetForTest();
     kernel_common.process.execution_context.resetForTest();
+    kernel_common.memory_management.physical_memory_authority.resetForTest();
 }
 
 fn makeTestElf() [0x240]u8 {
@@ -66,6 +67,7 @@ test "Root process preparation rejects missing and invalid boot modules" {
         arch.boot.configureModulesForTest(&.{module});
         kernel_common.capability.resetForTest();
         kernel_common.process.resetForTest();
+        kernel_common.memory_management.physical_memory_authority.resetForTest();
         try std.testing.expectError(
             error.InvalidBootModuleRange,
             launch_root_process.prepareRootProcess(),
@@ -136,6 +138,13 @@ test "Root process preparation loads segments boot info and cdecl stack" {
     const boot_info = std.mem.bytesToValue(abi.boot_info.BootInfo, &boot_info_bytes);
     try std.testing.expectEqual(abi.boot_info.BOOT_INFO_MAGIC, boot_info.magic);
     try std.testing.expectEqual(abi.boot_info.BOOT_INFO_VERSION, boot_info.version);
+    try std.testing.expectEqual(@as(u32, 2), boot_info.physical_memory_count);
+    try std.testing.expectEqual(
+        launch_root_process.RootProcessLayout.boot_info_start +
+            @sizeOf(abi.boot_info.BootInfo) +
+            launch_root_process.MAX_BOOT_INFO_MODULES * @sizeOf(abi.boot_info.BootModuleInfo),
+        @as(u64, boot_info.physical_memory_address),
+    );
     try std.testing.expectEqual(@as(u32, 1), boot_info.module_count);
     try std.testing.expectEqual(
         @as(u32, @intCast(launch_root_process.RootProcessLayout.boot_info_start + @sizeOf(abi.boot_info.BootInfo))),
@@ -160,6 +169,54 @@ test "Root process preparation loads segments boot info and cdecl stack" {
     );
     try std.testing.expectEqual(@as(u64, 0), unused_module.physical_start);
     try std.testing.expectEqual(@as(u64, 0), unused_module.physical_end);
+
+    var physical_memory_bytes: [3 * @sizeOf(abi.boot_info.PhysicalMemoryInfo)]u8 = undefined;
+    try arch.mmu.readVirtualMemoryInAddressSpaceForTest(
+        prepared.address_space_root,
+        boot_info.physical_memory_address,
+        &physical_memory_bytes,
+    );
+    const first_memory = std.mem.bytesToValue(
+        abi.boot_info.PhysicalMemoryInfo,
+        physical_memory_bytes[0..@sizeOf(abi.boot_info.PhysicalMemoryInfo)],
+    );
+    const second_memory = std.mem.bytesToValue(
+        abi.boot_info.PhysicalMemoryInfo,
+        physical_memory_bytes[@sizeOf(abi.boot_info.PhysicalMemoryInfo)..][0..@sizeOf(abi.boot_info.PhysicalMemoryInfo)],
+    );
+    const unused_memory = std.mem.bytesToValue(
+        abi.boot_info.PhysicalMemoryInfo,
+        physical_memory_bytes[2 * @sizeOf(abi.boot_info.PhysicalMemoryInfo) ..][0..@sizeOf(abi.boot_info.PhysicalMemoryInfo)],
+    );
+    try std.testing.expectEqual(@as(u64, 0x4000), first_memory.physical_start);
+    try std.testing.expectEqual(@as(u64, module_physical_start - 0x4000), first_memory.size);
+    try std.testing.expectEqual(@as(u64, 0x0300_1000), second_memory.physical_start);
+    try std.testing.expectEqual(@as(u64, 0x00ff_f000), second_memory.size);
+    for ([_]abi.boot_info.PhysicalMemoryInfo{ first_memory, second_memory }) |descriptor| {
+        try std.testing.expectEqual(
+            abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM,
+            descriptor.attributes,
+        );
+        const authority_handle = try kernel_common.capability.resolveUntypedMemory(
+            kernel_common.process.ROOT_PROCESS_HANDLE,
+            descriptor.capability,
+            .{ .manage = true },
+        );
+        const object = try kernel_common.memory_management.physical_memory_authority.get(
+            authority_handle,
+        );
+        try std.testing.expectEqual(descriptor.physical_start, object.physical_start);
+        try std.testing.expectEqual(descriptor.size, object.size());
+        try std.testing.expectEqual(descriptor.attributes, object.attributes);
+    }
+    try std.testing.expectEqual(@as(u64, 0), unused_memory.physical_start);
+    try std.testing.expectEqual(@as(u64, 0), unused_memory.size);
+    try std.testing.expectEqual(@as(u32, 0), unused_memory.attributes);
+    try std.testing.expectEqual(
+        abi.capability.INVALID_CAPABILITY,
+        unused_memory.capability,
+    );
+    try std.testing.expectEqual(@as(usize, 2), kernel_common.memory_management.physical_memory_authority.activeCount());
 
     var stack_frame_bytes: [8]u8 = undefined;
     try arch.mmu.readVirtualMemoryInAddressSpaceForTest(
@@ -224,5 +281,57 @@ test "Root process preparation reports missing explicit-root mapping" {
     try std.testing.expectError(
         error.RootAddressSpaceMappingMissing,
         launch_root_process.prepareRootProcess(),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        kernel_common.memory_management.physical_memory_authority.activeCount(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), kernel_common.capability.activeCount());
+}
+
+test "Root process preparation rolls back delegated memory after stack mapping failure" {
+    try initializeLoaderTest();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+
+    const image = makeTestElf();
+    _ = try arch.boot.configureModuleBytesForTest(module_physical_start, &image);
+    arch.mmu.failPageMappingCallForTest(8);
+
+    try std.testing.expectError(error.MappingFailed, launch_root_process.prepareRootProcess());
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        kernel_common.memory_management.physical_memory_authority.activeCount(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), kernel_common.capability.activeCount());
+}
+
+test "Root process preparation preflights capability capacity without partial delegation" {
+    try initializeLoaderTest();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+
+    const image = makeTestElf();
+    _ = try arch.boot.configureModuleBytesForTest(module_physical_start, &image);
+    for (0..kernel_common.capability.MAX_CAPABILITIES - 2) |index| {
+        _ = try kernel_common.capability.createUntypedMemoryCapability(
+            kernel_common.process.ROOT_PROCESS_HANDLE,
+            0x1000_0000 + index * 0x1000,
+            0x1000,
+            abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM,
+            0x1000,
+        );
+    }
+    const authorities_before = kernel_common.memory_management.physical_memory_authority.activeCount();
+
+    try std.testing.expectError(
+        error.OutOfCapabilities,
+        launch_root_process.prepareRootProcess(),
+    );
+    try std.testing.expectEqual(
+        authorities_before,
+        kernel_common.memory_management.physical_memory_authority.activeCount(),
+    );
+    try std.testing.expectEqual(
+        kernel_common.capability.MAX_CAPABILITIES - 2,
+        kernel_common.capability.activeCount(),
     );
 }

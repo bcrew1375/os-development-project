@@ -216,6 +216,54 @@ test "Syscall: address-space lifecycle handlers enforce rights and preserve argu
     try std.testing.expectEqual(@as(u32, 17), RecordingServices.state.address_space_capability);
 }
 
+test "Syscall: physical-memory lifecycle requests decode and forward all arguments" {
+    RecordingServices.reset();
+    const offset: u64 = 0x1234_5678_9abc_d000;
+    const rights = abi.capability.Rights{ .read = true, .manage = true };
+    try expectReturned(
+        99,
+        kernel.syscall.dispatchWithServices(
+            RecordingServices,
+            42,
+            request(.retype_untyped_memory, .{
+                17,
+                abi.syscall.lowU32(offset),
+                abi.syscall.highU32(offset),
+                3,
+                abi.syscall.packRetypeTarget(.physical_frame, rights),
+            }),
+        ),
+    );
+    try std.testing.expectEqual(@as(u32, 42), RecordingServices.state.caller_process_handle);
+    try std.testing.expectEqual(@as(u32, 17), RecordingServices.state.physical_memory_capability);
+    try std.testing.expectEqual(offset, RecordingServices.state.physical_offset);
+    try std.testing.expectEqual(@as(u32, 3), RecordingServices.state.page_count);
+    try std.testing.expectEqual(abi.capability.ObjectType.physical_frame, RecordingServices.state.target_type);
+    try std.testing.expectEqual(rights, RecordingServices.state.physical_memory_rights);
+
+    RecordingServices.reset();
+    try expectReturned(
+        abi.syscall.SYSCALL_SUCCESS,
+        kernel.syscall.dispatchWithServices(
+            RecordingServices,
+            42,
+            request(.delete_physical_memory, .{ 23, 0, 0, 0, 0 }),
+        ),
+    );
+    try std.testing.expectEqual(@as(u32, 23), RecordingServices.state.physical_memory_capability);
+
+    RecordingServices.reset();
+    try expectReturned(
+        abi.syscall.SYSCALL_SUCCESS,
+        kernel.syscall.dispatchWithServices(
+            RecordingServices,
+            42,
+            request(.revoke_physical_memory, .{ 29, 0, 0, 0, 0 }),
+        ),
+    );
+    try std.testing.expectEqual(@as(u32, 29), RecordingServices.state.physical_memory_capability);
+}
+
 test "Syscall: injected failures map deterministically to ABI values" {
     const cases = [_]struct {
         operation: kernel.syscall.Operation,
@@ -233,6 +281,9 @@ test "Syscall: injected failures map deterministically to ABI values" {
         .{ .operation = .query_address_space, .err = error.UndefinedVirtualMemoryArea, .expected_return_value = abi.syscall.errorResult(.mapping_not_found), .syscall_number = .query_address_space },
         .{ .operation = .unmap_address_space, .err = error.UndefinedVirtualMemoryArea, .expected_return_value = abi.syscall.errorResult(.mapping_not_found), .syscall_number = .unmap_address_space },
         .{ .operation = .destroy_address_space, .err = error.AddressSpaceInUse, .expected_return_value = abi.syscall.errorResult(.address_space_in_use), .syscall_number = .destroy_address_space },
+        .{ .operation = .retype_untyped_memory, .err = error.OverlappingAuthority, .expected_return_value = abi.syscall.errorResult(.invalid_range), .syscall_number = .retype_untyped_memory },
+        .{ .operation = .delete_physical_memory, .err = error.CapabilityHasDescendants, .expected_return_value = abi.syscall.errorResult(.invalid_range), .syscall_number = .delete_physical_memory },
+        .{ .operation = .revoke_physical_memory, .err = error.InvalidCapability, .expected_return_value = abi.syscall.errorResult(.invalid_capability), .syscall_number = .revoke_physical_memory },
     };
 
     for (cases) |case| {
@@ -244,6 +295,14 @@ test "Syscall: injected failures map deterministically to ABI values" {
             .protect_address_space => .{ 1, 0x2000, 0x1000, abi.syscall.MAP_READ, 0 },
             .query_address_space, .unmap_address_space => .{ 1, 0x2000, 0x1000, 0, 0 },
             .destroy_address_space => .{ 1, 0, 0, 0, 0 },
+            .retype_untyped_memory => .{
+                1,
+                0,
+                0,
+                1,
+                abi.syscall.packRetypeTarget(.physical_frame, .{ .manage = true }),
+            },
+            .delete_physical_memory, .revoke_physical_memory => .{ 1, 0, 0, 0, 0 },
             else => .{ 0, 0, 0, 0, 0 },
         };
         try expectFailure(
@@ -281,6 +340,18 @@ test "Syscall: oversized handles and flags fail before service invocation" {
             RecordingServices,
             42,
             request(.map_memory_object, .{ 1, 2, 0, 0, @as(u64, std.math.maxInt(u32)) + 1 }),
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 0), RecordingServices.state.call_count);
+
+    try expectFailure(
+        .retype_untyped_memory,
+        error.InvalidCapabilityRights,
+        abi.syscall.errorResult(.insufficient_rights),
+        kernel.syscall.dispatchWithServices(
+            RecordingServices,
+            42,
+            request(.retype_untyped_memory, .{ 1, 0, 0, 1, 0xffff_ff00 }),
         ),
     );
     try std.testing.expectEqual(@as(usize, 0), RecordingServices.state.call_count);
@@ -509,6 +580,11 @@ const RecordingServices = struct {
         object_offset: u64 = 0,
         size_in_bytes: u64 = 0,
         permission_flags: u32 = 0,
+        physical_memory_capability: u32 = 0,
+        physical_offset: u64 = 0,
+        page_count: u32 = 0,
+        target_type: abi.capability.ObjectType = .null,
+        physical_memory_rights: abi.capability.Rights = .{},
     };
 
     var state: State = .{};
@@ -604,6 +680,36 @@ const RecordingServices = struct {
         state.caller_process_handle = caller_process_handle;
         state.address_space_capability = handle;
     }
+
+    pub fn retypeUntypedMemoryCapability(
+        caller_process_handle: u32,
+        source_capability: u32,
+        offset: u64,
+        page_count: u32,
+        target_type: abi.capability.ObjectType,
+        rights: abi.capability.Rights,
+    ) !u32 {
+        state.call_count += 1;
+        state.caller_process_handle = caller_process_handle;
+        state.physical_memory_capability = source_capability;
+        state.physical_offset = offset;
+        state.page_count = page_count;
+        state.target_type = target_type;
+        state.physical_memory_rights = rights;
+        return 99;
+    }
+
+    pub fn deletePhysicalMemoryCapability(caller_process_handle: u32, handle: u32) !void {
+        state.call_count += 1;
+        state.caller_process_handle = caller_process_handle;
+        state.physical_memory_capability = handle;
+    }
+
+    pub fn revokePhysicalMemoryCapability(caller_process_handle: u32, handle: u32) !void {
+        state.call_count += 1;
+        state.caller_process_handle = caller_process_handle;
+        state.physical_memory_capability = handle;
+    }
 };
 
 const FailingServices = struct {
@@ -662,5 +768,25 @@ const FailingServices = struct {
 
     pub fn destroyAddressSpaceCapability(_: u32, _: u32) !void {
         if (failure_operation == .destroy_address_space) return error.AddressSpaceInUse;
+    }
+
+    pub fn retypeUntypedMemoryCapability(
+        _: u32,
+        _: u32,
+        _: u64,
+        _: u32,
+        _: abi.capability.ObjectType,
+        _: abi.capability.Rights,
+    ) !u32 {
+        if (failure_operation == .retype_untyped_memory) return error.OverlappingAuthority;
+        return 3;
+    }
+
+    pub fn deletePhysicalMemoryCapability(_: u32, _: u32) !void {
+        if (failure_operation == .delete_physical_memory) return error.CapabilityHasDescendants;
+    }
+
+    pub fn revokePhysicalMemoryCapability(_: u32, _: u32) !void {
+        if (failure_operation == .revoke_physical_memory) return error.InvalidCapability;
     }
 };

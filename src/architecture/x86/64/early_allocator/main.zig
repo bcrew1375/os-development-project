@@ -1,5 +1,6 @@
 const arch = @import("arch");
 const common_early_allocator = @import("../../../early_allocator.zig");
+const mmu_common = @import("../mmu/common.zig");
 
 var reservedMap: arch.ReservedMap = arch.ReservedMap{};
 
@@ -25,18 +26,23 @@ fn reserveLinkerRange(
     comptime end_name: [:0]const u8,
     region_type: arch.ReservedMapRegionType,
 ) arch.EarlyAllocError!void {
-    const start_address = linkerAddr(start_name);
-    const end_address = linkerAddr(end_name);
+    const virtual_start = linkerAddr(start_name);
+    const virtual_end = linkerAddr(end_name);
 
-    if (end_address < start_address) {
+    if (virtual_end < virtual_start or
+        virtual_start < mmu_common.KERNEL_VIRTUAL_ADDRESS or
+        virtual_end < mmu_common.KERNEL_VIRTUAL_ADDRESS)
+    {
         return arch.EarlyAllocError.InvalidMemoryMap;
     }
 
-    if (end_address == start_address) {
+    if (virtual_end == virtual_start) {
         return;
     }
 
-    try arch.early_allocator.reserve(start_address, end_address - start_address, region_type);
+    const physical_start = virtual_start - mmu_common.KERNEL_VIRTUAL_ADDRESS;
+    const physical_end = virtual_end - mmu_common.KERNEL_VIRTUAL_ADDRESS;
+    try arch.early_allocator.reserve(physical_start, physical_end - physical_start, region_type);
 }
 
 pub fn allocate(neededSize: usize, alignment: usize, entryType: arch.ReservedMapRegionType) arch.EarlyAllocError!*allowzero anyopaque {
