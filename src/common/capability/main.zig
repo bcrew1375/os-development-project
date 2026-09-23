@@ -43,6 +43,57 @@ pub fn createAddressSpaceCapability(owner_process_handle: process.ProcessHandle)
     }, .{ .address_space = address_space_handle });
 }
 
+/// Installs a capability for a bootstrap-created address-space root.
+pub fn registerAddressSpaceRootCapability(
+    owner_process_handle: process.ProcessHandle,
+    hardware_root: @import("arch").AddressSpaceRoot,
+) CapabilityError!abi.capability.CapabilityHandle {
+    const slot_index = findFreeCapabilitySlot() orelse return CapabilityError.OutOfCapabilities;
+    const address_space_handle = try process.registerAddressSpaceRootForOwner(
+        owner_process_handle,
+        hardware_root,
+    );
+    return initializeCapabilitySlot(
+        slot_index,
+        &capabilitySlots[slot_index],
+        owner_process_handle,
+        .{ .manage = true, .read = true, .write = true },
+        .{ .address_space = address_space_handle },
+    );
+}
+
+/// Finds the owner's capability naming a specific address-space object.
+pub fn findAddressSpaceCapability(
+    owner_process_handle: process.ProcessHandle,
+    address_space_handle: process.AddressSpaceHandle,
+) CapabilityError!abi.capability.CapabilityHandle {
+    for (capabilitySlots, 0..) |slot, slot_index| {
+        if (!slot.used or slot.owner_process_handle != owner_process_handle) continue;
+        const object = slot.object orelse continue;
+        switch (object) {
+            .address_space => |handle| if (handle == address_space_handle) {
+                return abi.capability.makeCapabilityHandle(@intCast(slot_index), slot.generation);
+            },
+            else => {},
+        }
+    }
+    return CapabilityError.InvalidCapability;
+}
+
+/// Destroys an address-space object and invalidates its naming capability.
+pub fn destroyAddressSpaceCapability(
+    owner_process_handle: process.ProcessHandle,
+    capability_handle: abi.capability.CapabilityHandle,
+) CapabilityError!void {
+    const address_space_handle = try resolveAddressSpace(
+        owner_process_handle,
+        capability_handle,
+        .{ .manage = true },
+    );
+    try process.destroyAddressSpace(address_space_handle);
+    try deleteCapability(owner_process_handle, capability_handle);
+}
+
 /// Creates a managed memory-object capability owned by `owner_process_handle`.
 pub fn createMemoryObjectCapability(owner_process_handle: process.ProcessHandle, size_in_bytes: u64) CapabilityError!abi.capability.CapabilityHandle {
     const slot_index = findFreeCapabilitySlot() orelse return CapabilityError.OutOfCapabilities;

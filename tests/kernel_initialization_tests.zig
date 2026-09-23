@@ -13,7 +13,7 @@ const Operation = union(enum) {
     initialize_terminal,
     system_smoke_header,
     message: []const u8,
-    prepare_root_process: usize,
+    prepare_root_process,
     root_process_prepared,
     set_error_color,
     preparation_failure: []const u8,
@@ -60,8 +60,8 @@ const RecordingServices = struct {
         record(.kernel_initialized);
     }
 
-    pub fn prepareRootProcess(address_space: *usize) TestError!PreparedRootProcess {
-        record(.{ .prepare_root_process = address_space.* });
+    pub fn prepareRootProcess() TestError!PreparedRootProcess {
+        record(.prepare_root_process);
         if (prepare_error) |err| return err;
         return prepared;
     }
@@ -94,12 +94,7 @@ const RecordingServices = struct {
 
 test "Kernel initialization returns prepared process after ordered startup" {
     RecordingServices.reset(null);
-    var root_address_space: usize = 99;
-
-    const prepared = try kernel_initialization.initialize(
-        RecordingServices,
-        &root_address_space,
-    );
+    const prepared = try kernel_initialization.initialize(RecordingServices);
 
     try std.testing.expectEqual(RecordingServices.prepared, prepared);
     try std.testing.expectEqual(@as(usize, 10), RecordingServices.operation_count);
@@ -109,7 +104,7 @@ test "Kernel initialization returns prepared process after ordered startup" {
         "Preparing first user process...\n",
         RecordingServices.operations[2].message,
     );
-    try std.testing.expectEqual(@as(usize, 99), RecordingServices.operations[3].prepare_root_process);
+    try std.testing.expectEqual(Operation.prepare_root_process, RecordingServices.operations[3]);
     try std.testing.expectEqual(Operation.root_process_prepared, RecordingServices.operations[4]);
     try std.testing.expectEqual(Operation.finish_boot, RecordingServices.operations[5]);
     try std.testing.expectEqual(Operation.initialize_interrupts, RecordingServices.operations[6]);
@@ -123,11 +118,9 @@ test "Kernel initialization returns prepared process after ordered startup" {
 
 test "Kernel initialization reports preparation failure and stops" {
     RecordingServices.reset(TestError.RootPreparationFailed);
-    var root_address_space: usize = 44;
-
     try std.testing.expectError(
         TestError.RootPreparationFailed,
-        kernel_initialization.initialize(RecordingServices, &root_address_space),
+        kernel_initialization.initialize(RecordingServices),
     );
 
     try std.testing.expectEqual(@as(usize, 6), RecordingServices.operation_count);
@@ -137,7 +130,7 @@ test "Kernel initialization reports preparation failure and stops" {
         "Preparing first user process...\n",
         RecordingServices.operations[2].message,
     );
-    try std.testing.expectEqual(@as(usize, 44), RecordingServices.operations[3].prepare_root_process);
+    try std.testing.expectEqual(Operation.prepare_root_process, RecordingServices.operations[3]);
     try std.testing.expectEqual(Operation.set_error_color, RecordingServices.operations[4]);
     try std.testing.expectEqualStrings(
         "RootPreparationFailed",

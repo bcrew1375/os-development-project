@@ -34,6 +34,7 @@ pub fn makeArchitecture(comptime implementation: anytype) type {
 
         pub const mmu = struct {
             pub const createAddressSpaceRoot = implementation.mmu.createAddressSpaceRoot;
+            pub const destroyAddressSpaceRoot = implementation.mmu.destroyAddressSpaceRoot;
             pub const switchAddressSpaceRoot = implementation.mmu.switchAddressSpaceRoot;
             pub const getPhysicalAddressInAddressSpace = implementation.mmu.getPhysicalAddressInAddressSpace;
             pub const getPhysicalAddress = implementation.mmu.getPhysicalAddress;

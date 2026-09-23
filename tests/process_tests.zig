@@ -17,11 +17,11 @@ test "Execution context: root context is explicit and replaceable" {
         kernel.process.execution_context.current(),
     );
 
-    try kernel.process.execution_context.initializeRoot();
+    try kernel.process.execution_context.initializeRoot(7);
     const root = try kernel.process.execution_context.current();
     try std.testing.expectEqual(kernel.process.execution_context.ROOT_THREAD_HANDLE, root.thread_handle);
     try std.testing.expectEqual(kernel.process.execution_context.ROOT_CAPABILITY_SPACE_HANDLE, root.capability_space_handle);
-    try std.testing.expectEqual(kernel.process.execution_context.ROOT_ADDRESS_SPACE_HANDLE, root.address_space_handle);
+    try std.testing.expectEqual(@as(u32, 7), root.address_space_handle);
     try std.testing.expectEqual(kernel.process.ROOT_PROCESS_HANDLE, root.process_handle);
 
     try kernel.process.execution_context.replace(.{
@@ -166,6 +166,63 @@ test "Process: mapMemory rejects invalid ranges" {
     try std.testing.expectError(error.MemoryRangeOverflow, kernel.process.mapMemory(handle, std.math.maxInt(u64), 0x1000));
     try std.testing.expectError(error.KernelAddressRange, kernel.process.mapMemory(handle, 0xC000_0000, 0x1000));
     try std.testing.expectError(error.KernelAddressRange, kernel.process.mapMemory(handle, 0xBFFF_F000, 0x2000));
+}
+
+test "Process: protect query and unmap require the same exact range" {
+    testSetup();
+    const handle = try kernel.process.createAddressSpace();
+    try kernel.process.mapMemory(handle, 0x0180_0000, 0x2000);
+
+    try kernel.process.protectAddressSpace(
+        handle,
+        0x0180_0000,
+        0x2000,
+        abi.syscall.MAP_READ | abi.syscall.MAP_EXECUTE,
+    );
+    try std.testing.expectEqual(
+        abi.syscall.MAP_READ | abi.syscall.MAP_EXECUTE,
+        try kernel.process.queryAddressSpace(handle, 0x0180_0000, 0x2000),
+    );
+    try std.testing.expectError(
+        error.UndefinedVirtualMemoryArea,
+        kernel.process.queryAddressSpace(handle, 0x0180_0000, 0x1000),
+    );
+    try std.testing.expectError(
+        error.UndefinedVirtualMemoryArea,
+        kernel.process.protectAddressSpace(handle, 0x0180_0000, 0x1000, abi.syscall.MAP_READ),
+    );
+
+    try kernel.process.unmapAddressSpace(handle, 0x0180_0000, 0x2000);
+    try std.testing.expectError(
+        error.UndefinedVirtualMemoryArea,
+        kernel.process.unmapAddressSpace(handle, 0x0180_0000, 0x2000),
+    );
+}
+
+test "Process: destroy rejects the active space and reuses bounded storage" {
+    testSetup();
+    const active_handle = try kernel.process.createAddressSpace();
+    const inactive_handle = try kernel.process.createAddressSpace();
+    try kernel.process.execution_context.initializeRoot(active_handle);
+
+    try std.testing.expectError(
+        error.AddressSpaceInUse,
+        kernel.process.destroyAddressSpace(active_handle),
+    );
+    _ = try kernel.process.getAddressSpace(active_handle);
+
+    try kernel.process.mapMemory(inactive_handle, 0x0190_0000, 0x1000);
+    try kernel.process.destroyAddressSpace(inactive_handle);
+    try std.testing.expectError(
+        error.InvalidAddressSpaceHandle,
+        kernel.process.getAddressSpace(inactive_handle),
+    );
+
+    var created: usize = 0;
+    while (created < 15) : (created += 1) {
+        _ = try kernel.process.createAddressSpace();
+    }
+    try std.testing.expectError(error.OutOfAddressSpaces, kernel.process.createAddressSpace());
 }
 
 test "Process: createMemoryObject returns tracked memory object handle" {

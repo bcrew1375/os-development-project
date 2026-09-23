@@ -138,6 +138,84 @@ test "Syscall: injected services receive caller and all mapping arguments" {
     try std.testing.expectEqual(permission_flags, RecordingServices.state.permission_flags);
 }
 
+test "Syscall: address-space lifecycle handlers enforce rights and preserve arguments" {
+    RecordingServices.reset();
+    try expectReturned(
+        77,
+        kernel.syscall.dispatchWithServices(
+            RecordingServices,
+            42,
+            request(.current_address_space, .{ 0, 0, 0, 0, 0 }),
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 2), RecordingServices.state.call_count);
+    try std.testing.expectEqual(@as(u32, 42), RecordingServices.state.caller_process_handle);
+    try std.testing.expectEqual(@as(u32, 107), RecordingServices.state.address_space_capability);
+
+    RecordingServices.reset();
+    try expectReturned(
+        abi.syscall.SYSCALL_SUCCESS,
+        kernel.syscall.dispatchWithServices(
+            RecordingServices,
+            42,
+            request(.protect_address_space, .{
+                17,
+                0x2000,
+                0x3000,
+                abi.syscall.MAP_READ | abi.syscall.MAP_EXECUTE,
+                0,
+            }),
+        ),
+    );
+    try std.testing.expect(RecordingServices.state.address_space_rights.manage);
+    try std.testing.expect(!RecordingServices.state.address_space_rights.read);
+    try std.testing.expectEqual(@as(u64, 0x2000), RecordingServices.state.virtual_start);
+    try std.testing.expectEqual(@as(u64, 0x3000), RecordingServices.state.size_in_bytes);
+    try std.testing.expectEqual(
+        abi.syscall.MAP_READ | abi.syscall.MAP_EXECUTE,
+        RecordingServices.state.permission_flags,
+    );
+
+    RecordingServices.reset();
+    try expectReturned(
+        abi.syscall.MAP_READ | abi.syscall.MAP_WRITE,
+        kernel.syscall.dispatchWithServices(
+            RecordingServices,
+            42,
+            request(.query_address_space, .{ 17, 0x5000, 0x1000, 0, 0 }),
+        ),
+    );
+    try std.testing.expect(RecordingServices.state.address_space_rights.read);
+    try std.testing.expect(!RecordingServices.state.address_space_rights.manage);
+    try std.testing.expectEqual(@as(u64, 0x5000), RecordingServices.state.virtual_start);
+    try std.testing.expectEqual(@as(u64, 0x1000), RecordingServices.state.size_in_bytes);
+
+    RecordingServices.reset();
+    try expectReturned(
+        abi.syscall.SYSCALL_SUCCESS,
+        kernel.syscall.dispatchWithServices(
+            RecordingServices,
+            42,
+            request(.unmap_address_space, .{ 17, 0x6000, 0x2000, 0, 0 }),
+        ),
+    );
+    try std.testing.expect(RecordingServices.state.address_space_rights.manage);
+    try std.testing.expectEqual(@as(u64, 0x6000), RecordingServices.state.virtual_start);
+    try std.testing.expectEqual(@as(u64, 0x2000), RecordingServices.state.size_in_bytes);
+
+    RecordingServices.reset();
+    try expectReturned(
+        abi.syscall.SYSCALL_SUCCESS,
+        kernel.syscall.dispatchWithServices(
+            RecordingServices,
+            42,
+            request(.destroy_address_space, .{ 17, 0, 0, 0, 0 }),
+        ),
+    );
+    try std.testing.expectEqual(@as(u32, 42), RecordingServices.state.caller_process_handle);
+    try std.testing.expectEqual(@as(u32, 17), RecordingServices.state.address_space_capability);
+}
+
 test "Syscall: injected failures map deterministically to ABI values" {
     const cases = [_]struct {
         operation: kernel.syscall.Operation,
@@ -145,12 +223,16 @@ test "Syscall: injected failures map deterministically to ABI values" {
         expected_return_value: u32,
         syscall_number: abi.syscall.SyscallNumber,
     }{
-        .{ .operation = .create_address_space, .err = error.OutOfAddressSpaces, .expected_return_value = abi.capability.INVALID_CAPABILITY, .syscall_number = .create_address_space },
-        .{ .operation = .resolve_address_space, .err = error.InvalidCapability, .expected_return_value = abi.syscall.SYSCALL_FAILURE, .syscall_number = .map_memory },
-        .{ .operation = .map_memory, .err = error.MemoryRangeOverflow, .expected_return_value = abi.syscall.SYSCALL_FAILURE, .syscall_number = .map_memory },
-        .{ .operation = .create_memory_object, .err = error.OutOfMemoryObjects, .expected_return_value = abi.capability.INVALID_CAPABILITY, .syscall_number = .create_memory_object },
-        .{ .operation = .resolve_memory_object, .err = error.InsufficientCapabilityRights, .expected_return_value = abi.syscall.SYSCALL_FAILURE, .syscall_number = .map_memory_object },
-        .{ .operation = .map_memory_object, .err = error.ObjectRangeOutOfBounds, .expected_return_value = abi.syscall.SYSCALL_FAILURE, .syscall_number = .map_memory_object },
+        .{ .operation = .create_address_space, .err = error.OutOfAddressSpaces, .expected_return_value = abi.syscall.errorResult(.out_of_resources), .syscall_number = .create_address_space },
+        .{ .operation = .resolve_address_space, .err = error.InvalidCapability, .expected_return_value = abi.syscall.errorResult(.invalid_capability), .syscall_number = .map_memory },
+        .{ .operation = .map_memory, .err = error.MemoryRangeOverflow, .expected_return_value = abi.syscall.errorResult(.invalid_range), .syscall_number = .map_memory },
+        .{ .operation = .create_memory_object, .err = error.OutOfMemoryObjects, .expected_return_value = abi.syscall.errorResult(.out_of_resources), .syscall_number = .create_memory_object },
+        .{ .operation = .resolve_memory_object, .err = error.InsufficientCapabilityRights, .expected_return_value = abi.syscall.errorResult(.insufficient_rights), .syscall_number = .map_memory_object },
+        .{ .operation = .map_memory_object, .err = error.ObjectRangeOutOfBounds, .expected_return_value = abi.syscall.errorResult(.invalid_range), .syscall_number = .map_memory_object },
+        .{ .operation = .protect_address_space, .err = error.InvalidMemoryPermissions, .expected_return_value = abi.syscall.errorResult(.invalid_permissions), .syscall_number = .protect_address_space },
+        .{ .operation = .query_address_space, .err = error.UndefinedVirtualMemoryArea, .expected_return_value = abi.syscall.errorResult(.mapping_not_found), .syscall_number = .query_address_space },
+        .{ .operation = .unmap_address_space, .err = error.UndefinedVirtualMemoryArea, .expected_return_value = abi.syscall.errorResult(.mapping_not_found), .syscall_number = .unmap_address_space },
+        .{ .operation = .destroy_address_space, .err = error.AddressSpaceInUse, .expected_return_value = abi.syscall.errorResult(.address_space_in_use), .syscall_number = .destroy_address_space },
     };
 
     for (cases) |case| {
@@ -159,6 +241,9 @@ test "Syscall: injected failures map deterministically to ABI values" {
             .map_memory => .{ 1, 0x1000, 0x1000, 0, 0 },
             .create_memory_object => .{ 0x1000, 0, 0, 0, 0 },
             .map_memory_object => .{ 1, 2, 0x2000, 0x1000, abi.syscall.MAP_READ },
+            .protect_address_space => .{ 1, 0x2000, 0x1000, abi.syscall.MAP_READ, 0 },
+            .query_address_space, .unmap_address_space => .{ 1, 0x2000, 0x1000, 0, 0 },
+            .destroy_address_space => .{ 1, 0, 0, 0, 0 },
             else => .{ 0, 0, 0, 0, 0 },
         };
         try expectFailure(
@@ -179,7 +264,7 @@ test "Syscall: oversized handles and flags fail before service invocation" {
     try expectFailure(
         .convert_argument,
         error.ArgumentOutOfRange,
-        abi.syscall.SYSCALL_FAILURE,
+        abi.syscall.errorResult(.invalid_range),
         kernel.syscall.dispatchWithServices(
             RecordingServices,
             42,
@@ -191,7 +276,7 @@ test "Syscall: oversized handles and flags fail before service invocation" {
     try expectFailure(
         .convert_argument,
         error.ArgumentOutOfRange,
-        abi.syscall.SYSCALL_FAILURE,
+        abi.syscall.errorResult(.invalid_range),
         kernel.syscall.dispatchWithServices(
             RecordingServices,
             42,
@@ -258,7 +343,7 @@ test "Syscall: production capability and invocation failures return stable statu
     try expectFailure(
         .resolve_address_space,
         error.InvalidCapability,
-        abi.syscall.SYSCALL_FAILURE,
+        abi.syscall.errorResult(.invalid_capability),
         kernel.syscall.dispatchFromCurrentContext(
             request(.map_memory, .{ abi.capability.INVALID_CAPABILITY, 0x1000, 0x1000, 0, 0 }),
         ),
@@ -287,7 +372,7 @@ test "Syscall: production capability and invocation failures return stable statu
     try expectFailure(
         .resolve_address_space,
         error.CapabilityOwnerMismatch,
-        abi.syscall.SYSCALL_FAILURE,
+        abi.syscall.errorResult(.invalid_capability),
         kernel.syscall.dispatchFromCurrentContext(
             request(.map_memory, .{ address_space_capability, 0x1000, 0x1000, 0, 0 }),
         ),
@@ -296,14 +381,14 @@ test "Syscall: production capability and invocation failures return stable statu
     try kernel.process.execution_context.replace(.{
         .thread_handle = kernel.process.execution_context.ROOT_THREAD_HANDLE,
         .capability_space_handle = kernel.process.execution_context.ROOT_CAPABILITY_SPACE_HANDLE,
-        .address_space_handle = kernel.process.execution_context.ROOT_ADDRESS_SPACE_HANDLE,
+        .address_space_handle = 1,
         .process_handle = kernel.process.ROOT_PROCESS_HANDLE,
     });
 
     try expectFailure(
         .resolve_address_space,
         error.InvalidCapabilityType,
-        abi.syscall.SYSCALL_FAILURE,
+        abi.syscall.errorResult(.invalid_capability),
         kernel.syscall.dispatchFromCurrentContext(
             request(.map_memory, .{ memory_object_capability, 0x1000, 0x1000, 0, 0 }),
         ),
@@ -311,7 +396,7 @@ test "Syscall: production capability and invocation failures return stable statu
     try expectFailure(
         .map_memory_object,
         error.InvalidMemoryPermissions,
-        abi.syscall.SYSCALL_FAILURE,
+        abi.syscall.errorResult(.invalid_permissions),
         kernel.syscall.dispatchFromCurrentContext(
             request(.map_memory_object, .{
                 address_space_capability,
@@ -320,6 +405,93 @@ test "Syscall: production capability and invocation failures return stable statu
                 0x1000,
                 0,
             }),
+        ),
+    );
+}
+
+test "Syscall: production lifecycle supports current query protect unmap and destroy" {
+    resetProductionState();
+    const root_capability = try kernel.capability.createAddressSpaceCapability(
+        kernel.process.ROOT_PROCESS_HANDLE,
+    );
+    const root_address_space = try kernel.capability.resolveAddressSpace(
+        kernel.process.ROOT_PROCESS_HANDLE,
+        root_capability,
+        .{ .manage = true },
+    );
+    try kernel.process.execution_context.initializeRoot(root_address_space);
+
+    try expectReturned(
+        root_capability,
+        kernel.syscall.dispatchFromCurrentContext(
+            request(.current_address_space, .{ 0, 0, 0, 0, 0 }),
+        ),
+    );
+    try expectFailure(
+        .destroy_address_space,
+        error.AddressSpaceInUse,
+        abi.syscall.errorResult(.address_space_in_use),
+        kernel.syscall.dispatchFromCurrentContext(
+            request(.destroy_address_space, .{ root_capability, 0, 0, 0, 0 }),
+        ),
+    );
+
+    const child_capability = switch (kernel.syscall.dispatchFromCurrentContext(
+        request(.create_address_space, .{ 0, 0, 0, 0, 0 }),
+    )) {
+        .returned => |handle| handle,
+        else => return error.UnexpectedSyscallResult,
+    };
+    try expectReturned(
+        abi.syscall.SYSCALL_SUCCESS,
+        kernel.syscall.dispatchFromCurrentContext(
+            request(.map_memory, .{ child_capability, 0x0800_0000, 0x1000, 0, 0 }),
+        ),
+    );
+    try expectReturned(
+        abi.syscall.SYSCALL_SUCCESS,
+        kernel.syscall.dispatchFromCurrentContext(
+            request(.protect_address_space, .{
+                child_capability,
+                0x0800_0000,
+                0x1000,
+                abi.syscall.MAP_READ | abi.syscall.MAP_EXECUTE,
+                0,
+            }),
+        ),
+    );
+    try expectReturned(
+        abi.syscall.MAP_READ | abi.syscall.MAP_EXECUTE,
+        kernel.syscall.dispatchFromCurrentContext(
+            request(.query_address_space, .{ child_capability, 0x0800_0000, 0x1000, 0, 0 }),
+        ),
+    );
+    try expectReturned(
+        abi.syscall.SYSCALL_SUCCESS,
+        kernel.syscall.dispatchFromCurrentContext(
+            request(.unmap_address_space, .{ child_capability, 0x0800_0000, 0x1000, 0, 0 }),
+        ),
+    );
+    try expectFailure(
+        .unmap_address_space,
+        error.UndefinedVirtualMemoryArea,
+        abi.syscall.errorResult(.mapping_not_found),
+        kernel.syscall.dispatchFromCurrentContext(
+            request(.unmap_address_space, .{ child_capability, 0x0800_0000, 0x1000, 0, 0 }),
+        ),
+    );
+    try expectReturned(
+        abi.syscall.SYSCALL_SUCCESS,
+        kernel.syscall.dispatchFromCurrentContext(
+            request(.destroy_address_space, .{ child_capability, 0, 0, 0, 0 }),
+        ),
+    );
+    try expectFailure(
+        .resolve_address_space,
+        error.InvalidCapability,
+        abi.syscall.errorResult(.invalid_capability),
+        kernel.syscall.dispatchFromCurrentContext(
+            request(.query_address_space, .{ child_capability, 0x0800_0000, 0x1000, 0, 0 }),
         ),
     );
 }
@@ -343,6 +515,18 @@ const RecordingServices = struct {
 
     fn reset() void {
         state = .{};
+    }
+
+    pub fn currentAddressSpaceHandle() !u32 {
+        state.call_count += 1;
+        return 107;
+    }
+
+    pub fn findAddressSpaceCapability(caller_process_handle: u32, address_space_handle: u32) !u32 {
+        state.call_count += 1;
+        state.caller_process_handle = caller_process_handle;
+        state.address_space_capability = address_space_handle;
+        return 77;
     }
 
     pub fn createAddressSpaceCapability(caller_process_handle: u32) !u32 {
@@ -394,10 +578,46 @@ const RecordingServices = struct {
         state.size_in_bytes = size_in_bytes;
         state.permission_flags = permission_flags;
     }
+
+    pub fn protectAddressSpace(_: u32, virtual_start: u64, size_in_bytes: u64, permission_flags: u32) !void {
+        state.call_count += 1;
+        state.virtual_start = virtual_start;
+        state.size_in_bytes = size_in_bytes;
+        state.permission_flags = permission_flags;
+    }
+
+    pub fn queryAddressSpace(_: u32, virtual_start: u64, size_in_bytes: u64) !u32 {
+        state.call_count += 1;
+        state.virtual_start = virtual_start;
+        state.size_in_bytes = size_in_bytes;
+        return abi.syscall.MAP_READ | abi.syscall.MAP_WRITE;
+    }
+
+    pub fn unmapAddressSpace(_: u32, virtual_start: u64, size_in_bytes: u64) !void {
+        state.call_count += 1;
+        state.virtual_start = virtual_start;
+        state.size_in_bytes = size_in_bytes;
+    }
+
+    pub fn destroyAddressSpaceCapability(caller_process_handle: u32, handle: u32) !void {
+        state.call_count += 1;
+        state.caller_process_handle = caller_process_handle;
+        state.address_space_capability = handle;
+    }
 };
 
 const FailingServices = struct {
     var failure_operation: kernel.syscall.Operation = .create_address_space;
+
+    pub fn currentAddressSpaceHandle() !u32 {
+        if (failure_operation == .current_address_space) return error.ExecutionContextUninitialized;
+        return 1;
+    }
+
+    pub fn findAddressSpaceCapability(_: u32, _: u32) !u32 {
+        if (failure_operation == .current_address_space) return error.InvalidCapability;
+        return 1;
+    }
 
     pub fn createAddressSpaceCapability(_: u32) !u32 {
         if (failure_operation == .create_address_space) return error.OutOfAddressSpaces;
@@ -425,5 +645,22 @@ const FailingServices = struct {
 
     pub fn mapMemoryObject(_: u32, _: u32, _: u64, _: u64, _: u64, _: u32) !void {
         if (failure_operation == .map_memory_object) return error.ObjectRangeOutOfBounds;
+    }
+
+    pub fn protectAddressSpace(_: u32, _: u64, _: u64, _: u32) !void {
+        if (failure_operation == .protect_address_space) return error.InvalidMemoryPermissions;
+    }
+
+    pub fn queryAddressSpace(_: u32, _: u64, _: u64) !u32 {
+        if (failure_operation == .query_address_space) return error.UndefinedVirtualMemoryArea;
+        return abi.syscall.MAP_READ;
+    }
+
+    pub fn unmapAddressSpace(_: u32, _: u64, _: u64) !void {
+        if (failure_operation == .unmap_address_space) return error.UndefinedVirtualMemoryArea;
+    }
+
+    pub fn destroyAddressSpaceCapability(_: u32, _: u32) !void {
+        if (failure_operation == .destroy_address_space) return error.AddressSpaceInUse;
     }
 };

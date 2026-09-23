@@ -4,10 +4,15 @@
 pub const SyscallNumber = enum(u32) {
     debug_write = 0,
     exit = 1,
+    current_address_space = 9,
     create_address_space = 10,
     map_memory = 11,
     create_memory_object = 12,
     map_memory_object = 13,
+    protect_address_space = 14,
+    unmap_address_space = 15,
+    destroy_address_space = 16,
+    query_address_space = 17,
     _,
 };
 
@@ -21,6 +26,43 @@ pub const INVALID_HANDLE: u32 = 0;
 pub const SYSCALL_SUCCESS: u32 = 0;
 /// Generic failed syscall return code.
 pub const SYSCALL_FAILURE: u32 = 1;
+/// High bit distinguishing structured syscall errors from successful values.
+pub const ERROR_BIT: u32 = 1 << 31;
+
+/// Recoverable errors returned across the syscall ABI.
+pub const ErrorCode = enum(u32) {
+    invalid_capability = 1,
+    insufficient_rights = 2,
+    out_of_resources = 3,
+    invalid_range = 4,
+    invalid_permissions = 5,
+    mapping_not_found = 6,
+    address_space_in_use = 7,
+    unsupported = 8,
+    internal_failure = 9,
+};
+
+/// Encodes a recoverable ABI error in a syscall return value.
+pub fn errorResult(code: ErrorCode) u32 {
+    return ERROR_BIT | @intFromEnum(code);
+}
+
+/// Decodes a structured syscall error, or returns null for a successful value.
+pub fn decodeError(value: u32) ?ErrorCode {
+    if ((value & ERROR_BIT) == 0) return null;
+    return switch (value & ~ERROR_BIT) {
+        @intFromEnum(ErrorCode.invalid_capability) => .invalid_capability,
+        @intFromEnum(ErrorCode.insufficient_rights) => .insufficient_rights,
+        @intFromEnum(ErrorCode.out_of_resources) => .out_of_resources,
+        @intFromEnum(ErrorCode.invalid_range) => .invalid_range,
+        @intFromEnum(ErrorCode.invalid_permissions) => .invalid_permissions,
+        @intFromEnum(ErrorCode.mapping_not_found) => .mapping_not_found,
+        @intFromEnum(ErrorCode.address_space_in_use) => .address_space_in_use,
+        @intFromEnum(ErrorCode.unsupported) => .unsupported,
+        @intFromEnum(ErrorCode.internal_failure) => .internal_failure,
+        else => .internal_failure,
+    };
+}
 /// Request a readable memory mapping.
 pub const MAP_READ: u32 = 1 << 0;
 /// Request a writable memory mapping.

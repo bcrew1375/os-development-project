@@ -63,15 +63,37 @@ pub fn addressSpacesAreIsolatedAndSwitchable() !void {
         @as(?usize, second_physical_address),
         arch.mmu.getPhysicalAddress(test_virtual_address),
     );
+    arch.mmu.switchAddressSpaceRoot(first_root);
+    try framework.expectEqual(
+        @as(?usize, second_physical_address),
+        arch.mmu.unmapPageInAddressSpace(second_root, test_virtual_address),
+    );
+    arch.mmu.destroyAddressSpaceRoot(second_root);
+    try framework.expectEqual(
+        @as(?usize, first_physical_address),
+        arch.mmu.getPhysicalAddress(test_virtual_address),
+    );
 }
 
 pub fn unmappingIsIdempotent() !void {
     const root = try arch.mmu.createAddressSpaceRoot();
     try mapTestPage(root, test_virtual_address, first_physical_address, .{});
 
-    arch.mmu.unmapPageInAddressSpace(root, test_virtual_address);
-    arch.mmu.unmapPageInAddressSpace(root, test_virtual_address);
-    arch.mmu.unmapPageInAddressSpace(root, test_virtual_address + arch.mmu.getPageTableRegionSize());
+    try framework.expectEqual(
+        @as(?usize, first_physical_address),
+        arch.mmu.unmapPageInAddressSpace(root, test_virtual_address),
+    );
+    try framework.expectEqual(
+        @as(?usize, null),
+        arch.mmu.unmapPageInAddressSpace(root, test_virtual_address),
+    );
+    try framework.expectEqual(
+        @as(?usize, null),
+        arch.mmu.unmapPageInAddressSpace(
+            root,
+            test_virtual_address + arch.mmu.getPageTableRegionSize(),
+        ),
+    );
 
     try framework.expectEqual(
         @as(?usize, null),

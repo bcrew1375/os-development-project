@@ -40,6 +40,45 @@ test "Capability handles encode stable slots and generations" {
     try std.testing.expectEqual(@as(u32, 17), parts.slot_index);
     try std.testing.expectEqual(@as(u32, 23), parts.generation);
     try std.testing.expect(abi.capability.decodeCapabilityHandle(abi.capability.INVALID_CAPABILITY) == null);
+    try std.testing.expectEqual(
+        @as(u32, 0),
+        abi.capability.makeCapabilityHandle(
+            abi.capability.MAX_CAPABILITY_SLOT_INDEX,
+            abi.capability.MAX_CAPABILITY_GENERATION,
+        ) & abi.syscall.ERROR_BIT,
+    );
+}
+
+test "Syscall numbers and structured errors are stable" {
+    try std.testing.expectEqual(@as(u32, 9), @intFromEnum(abi.syscall.SyscallNumber.current_address_space));
+    try std.testing.expectEqual(@as(u32, 10), @intFromEnum(abi.syscall.SyscallNumber.create_address_space));
+    try std.testing.expectEqual(@as(u32, 14), @intFromEnum(abi.syscall.SyscallNumber.protect_address_space));
+    try std.testing.expectEqual(@as(u32, 15), @intFromEnum(abi.syscall.SyscallNumber.unmap_address_space));
+    try std.testing.expectEqual(@as(u32, 16), @intFromEnum(abi.syscall.SyscallNumber.destroy_address_space));
+    try std.testing.expectEqual(@as(u32, 17), @intFromEnum(abi.syscall.SyscallNumber.query_address_space));
+
+    const codes = [_]abi.syscall.ErrorCode{
+        .invalid_capability,
+        .insufficient_rights,
+        .out_of_resources,
+        .invalid_range,
+        .invalid_permissions,
+        .mapping_not_found,
+        .address_space_in_use,
+        .unsupported,
+        .internal_failure,
+    };
+    for (codes) |code| {
+        const encoded = abi.syscall.errorResult(code);
+        try std.testing.expect((encoded & abi.syscall.ERROR_BIT) != 0);
+        try std.testing.expectEqual(code, abi.syscall.decodeError(encoded).?);
+    }
+
+    try std.testing.expectEqual(@as(?abi.syscall.ErrorCode, null), abi.syscall.decodeError(0x1234));
+    try std.testing.expectEqual(
+        abi.syscall.ErrorCode.internal_failure,
+        abi.syscall.decodeError(abi.syscall.ERROR_BIT | 0x7fff).?,
+    );
 }
 
 test "system smoke protocol records are complete ordered serial lines" {

@@ -79,9 +79,9 @@ fn expectDiagnostic(index: usize, expected: []const u8) !void {
 
 test "memory manager emits address-space and region syscalls" {
     RecordingEnvironment.reset(&.{ 42, abi.syscall.SYSCALL_SUCCESS });
-    const address_space = manager.createAddressSpace().?;
+    const address_space = try manager.createAddressSpace();
     try std.testing.expectEqual(@as(u32, 42), address_space.capability);
-    try std.testing.expect(manager.mapRegion(address_space, 0x2000, 0x3000));
+    try manager.mapRegion(address_space, 0x2000, 0x3000);
 
     const create_call = RecordingEnvironment.syscalls[0].three;
     try std.testing.expectEqual(@intFromEnum(abi.syscall.SyscallNumber.create_address_space), create_call.number);
@@ -91,18 +91,18 @@ test "memory manager emits address-space and region syscalls" {
     try std.testing.expectEqual([_]usize{ 42, 0x2000, 0x3000 }, map_call.arguments);
 
     RecordingEnvironment.reset(&.{abi.capability.INVALID_CAPABILITY});
-    try std.testing.expectEqual(@as(?memory_manager.AddressSpace, null), manager.createAddressSpace());
+    try std.testing.expectError(error.InternalFailure, manager.createAddressSpace());
 
-    RecordingEnvironment.reset(&.{abi.syscall.SYSCALL_FAILURE});
-    try std.testing.expect(!manager.mapRegion(address_space, 0x2000, 0x3000));
+    RecordingEnvironment.reset(&.{abi.syscall.errorResult(.invalid_range)});
+    try std.testing.expectError(error.InvalidRange, manager.mapRegion(address_space, 0x2000, 0x3000));
 }
 
 test "memory manager emits memory-object mapping syscall and flags" {
     RecordingEnvironment.reset(&.{ 71, abi.syscall.SYSCALL_SUCCESS });
-    const memory_object = manager.createMemoryObject(0x5000).?;
+    const memory_object = try manager.createMemoryObject(0x5000);
     const address_space = memory_manager.AddressSpace{ .capability = 19 };
     const permissions = memory_manager.MAP_READ | memory_manager.MAP_WRITE | memory_manager.MAP_EXECUTE;
-    try std.testing.expect(manager.mapMemoryObject(address_space, memory_object, 0x8000, 0x5000, permissions));
+    try manager.mapMemoryObject(address_space, memory_object, 0x8000, 0x5000, permissions);
 
     const create_call = RecordingEnvironment.syscalls[0].three;
     try std.testing.expectEqual(@intFromEnum(abi.syscall.SyscallNumber.create_memory_object), create_call.number);
@@ -111,12 +111,15 @@ test "memory manager emits memory-object mapping syscall and flags" {
     try std.testing.expectEqual(@intFromEnum(abi.syscall.SyscallNumber.map_memory_object), map_call.number);
     try std.testing.expectEqual([_]usize{ 19, 71, 0x8000, 0x5000, permissions }, map_call.arguments);
 
-    RecordingEnvironment.reset(&.{ 71, abi.syscall.SYSCALL_FAILURE });
-    const failed_object = manager.createMemoryObject(0x1000).?;
-    try std.testing.expect(!manager.mapMemoryObject(address_space, failed_object, 0, 0x1000, 0));
+    RecordingEnvironment.reset(&.{ 71, abi.syscall.errorResult(.invalid_permissions) });
+    const failed_object = try manager.createMemoryObject(0x1000);
+    try std.testing.expectError(
+        error.InvalidPermissions,
+        manager.mapMemoryObject(address_space, failed_object, 0, 0x1000, 0),
+    );
 
     RecordingEnvironment.reset(&.{abi.capability.INVALID_CAPABILITY});
-    try std.testing.expectEqual(@as(?memory_manager.MemoryObject, null), manager.createMemoryObject(0x1000));
+    try std.testing.expectError(error.InternalFailure, manager.createMemoryObject(0x1000));
 }
 
 test "memory manager forwards every permission flag combination" {
@@ -125,18 +128,100 @@ test "memory manager forwards every permission flag combination" {
 
     for (0..8) |permission_flags| {
         RecordingEnvironment.reset(&.{abi.syscall.SYSCALL_SUCCESS});
-        try std.testing.expect(manager.mapMemoryObject(
+        try manager.mapMemoryObject(
             address_space,
             memory_object,
             0x8000,
             0x1000,
             @intCast(permission_flags),
-        ));
+        );
         try std.testing.expectEqual(
             permission_flags,
             RecordingEnvironment.syscalls[0].five.arguments[4],
         );
     }
+}
+
+test "memory manager emits complete address-space lifecycle syscalls" {
+    const permissions = memory_manager.MAP_READ | memory_manager.MAP_EXECUTE;
+    RecordingEnvironment.reset(&.{ 31, abi.syscall.SYSCALL_SUCCESS, permissions, abi.syscall.SYSCALL_SUCCESS, abi.syscall.SYSCALL_SUCCESS });
+
+    const address_space = try manager.currentAddressSpace();
+    try std.testing.expectEqual(@as(u32, 31), address_space.capability);
+    try manager.protectAddressSpace(address_space, 0x4000, 0x2000, permissions);
+    try std.testing.expectEqual(
+        permissions,
+        try manager.queryAddressSpace(address_space, 0x4000, 0x2000),
+    );
+    try manager.unmapAddressSpace(address_space, 0x4000, 0x2000);
+    try manager.destroyAddressSpace(address_space);
+
+    const current_call = RecordingEnvironment.syscalls[0].three;
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.current_address_space),
+        current_call.number,
+    );
+    try std.testing.expectEqual([_]usize{ 0, 0, 0 }, current_call.arguments);
+
+    const protect_call = RecordingEnvironment.syscalls[1].five;
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.protect_address_space),
+        protect_call.number,
+    );
+    try std.testing.expectEqual([_]usize{ 31, 0x4000, 0x2000, permissions, 0 }, protect_call.arguments);
+
+    const query_call = RecordingEnvironment.syscalls[2].three;
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.query_address_space),
+        query_call.number,
+    );
+    try std.testing.expectEqual([_]usize{ 31, 0x4000, 0x2000 }, query_call.arguments);
+
+    const unmap_call = RecordingEnvironment.syscalls[3].three;
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.unmap_address_space),
+        unmap_call.number,
+    );
+    try std.testing.expectEqual([_]usize{ 31, 0x4000, 0x2000 }, unmap_call.arguments);
+
+    const destroy_call = RecordingEnvironment.syscalls[4].three;
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.destroy_address_space),
+        destroy_call.number,
+    );
+    try std.testing.expectEqual([_]usize{ 31, 0, 0 }, destroy_call.arguments);
+}
+
+test "memory manager translates every structured ABI error" {
+    const address_space = memory_manager.AddressSpace{ .capability = 19 };
+    const cases = [_]struct {
+        code: abi.syscall.ErrorCode,
+        expected: anyerror,
+    }{
+        .{ .code = .invalid_capability, .expected = error.InvalidCapability },
+        .{ .code = .insufficient_rights, .expected = error.InsufficientRights },
+        .{ .code = .out_of_resources, .expected = error.OutOfResources },
+        .{ .code = .invalid_range, .expected = error.InvalidRange },
+        .{ .code = .invalid_permissions, .expected = error.InvalidPermissions },
+        .{ .code = .mapping_not_found, .expected = error.MappingNotFound },
+        .{ .code = .address_space_in_use, .expected = error.AddressSpaceInUse },
+        .{ .code = .unsupported, .expected = error.Unsupported },
+        .{ .code = .internal_failure, .expected = error.InternalFailure },
+    };
+
+    for (cases) |case| {
+        RecordingEnvironment.reset(&.{abi.syscall.errorResult(case.code)});
+        try std.testing.expectError(
+            case.expected,
+            manager.mapRegion(address_space, 0x2000, 0x1000),
+        );
+    }
+
+    RecordingEnvironment.reset(&.{abi.syscall.SYSCALL_FAILURE});
+    try std.testing.expectError(
+        error.InternalFailure,
+        manager.mapRegion(address_space, 0x2000, 0x1000),
+    );
 }
 
 test "startup rejects invalid boot information before capability syscalls" {
@@ -160,17 +245,17 @@ test "startup rejects invalid boot information before capability syscalls" {
 test "startup stops after each capability or mapping failure" {
     const boot_info = validBootInfo();
 
-    RecordingEnvironment.reset(&.{abi.capability.INVALID_CAPABILITY});
+    RecordingEnvironment.reset(&.{abi.syscall.errorResult(.invalid_capability)});
     try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 1), RecordingEnvironment.syscall_count);
     try expectDiagnostic(4, "root: failed to acquire address-space capability\n");
 
-    RecordingEnvironment.reset(&.{ 11, abi.capability.INVALID_CAPABILITY });
+    RecordingEnvironment.reset(&.{ 11, abi.syscall.errorResult(.out_of_resources) });
     try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 2), RecordingEnvironment.syscall_count);
     try expectDiagnostic(6, "root: failed to acquire memory-object capability\n");
 
-    RecordingEnvironment.reset(&.{ 11, 22, abi.syscall.SYSCALL_FAILURE });
+    RecordingEnvironment.reset(&.{ 11, 22, abi.syscall.errorResult(.invalid_permissions) });
     try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 3), RecordingEnvironment.syscall_count);
     try expectDiagnostic(8, "root: failed to map managed memory object using capabilities\n");
@@ -193,6 +278,13 @@ test "startup completes capability-based memory setup in order" {
     try expectDiagnostic(7, "root: acquired memory-object capability\n");
     try expectDiagnostic(8, abi.system_smoke.MEMORY_OBJECT_MAPPED);
     try expectDiagnostic(9, "root: mapped managed memory object using capabilities\n");
+
+    const current_call = RecordingEnvironment.syscalls[0].three;
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.current_address_space),
+        current_call.number,
+    );
+    try std.testing.expectEqual([_]usize{ 0, 0, 0 }, current_call.arguments);
 
     const map_call = RecordingEnvironment.syscalls[2].five;
     try std.testing.expectEqual(

@@ -8,44 +8,119 @@ pub const MemoryObject = struct {
     capability: abi.capability.CapabilityHandle,
 };
 
+pub const Error = error{
+    InvalidCapability,
+    InsufficientRights,
+    OutOfResources,
+    InvalidRange,
+    InvalidPermissions,
+    MappingNotFound,
+    AddressSpaceInUse,
+    Unsupported,
+    InternalFailure,
+};
+
 pub const MAP_READ = abi.syscall.MAP_READ;
 pub const MAP_WRITE = abi.syscall.MAP_WRITE;
 pub const MAP_EXECUTE = abi.syscall.MAP_EXECUTE;
 
 pub fn MemoryManager(comptime Transport: type) type {
     return struct {
-        pub fn createAddressSpace() ?AddressSpace {
-            const capability = Transport.syscall3(
+        pub fn currentAddressSpace() Error!AddressSpace {
+            return addressSpaceResult(Transport.syscall3(
+                @intFromEnum(abi.syscall.SyscallNumber.current_address_space),
+                0,
+                0,
+                0,
+            ));
+        }
+
+        pub fn createAddressSpace() Error!AddressSpace {
+            return addressSpaceResult(Transport.syscall3(
                 @intFromEnum(abi.syscall.SyscallNumber.create_address_space),
                 0,
                 0,
                 0,
-            );
-
-            if (capability == abi.capability.INVALID_CAPABILITY) return null;
-            return .{ .capability = capability };
+            ));
         }
 
-        pub fn mapRegion(address_space: AddressSpace, virtual_start: usize, size_in_bytes: usize) bool {
-            const result = Transport.syscall3(
+        pub fn mapRegion(
+            address_space: AddressSpace,
+            virtual_start: usize,
+            size_in_bytes: usize,
+        ) Error!void {
+            try voidResult(Transport.syscall3(
                 @intFromEnum(abi.syscall.SyscallNumber.map_memory),
                 address_space.capability,
                 virtual_start,
                 size_in_bytes,
-            );
-            return result == abi.syscall.SYSCALL_SUCCESS;
+            ));
         }
 
-        pub fn createMemoryObject(size_in_bytes: usize) ?MemoryObject {
-            const capability = Transport.syscall3(
+        pub fn protectAddressSpace(
+            address_space: AddressSpace,
+            virtual_start: usize,
+            size_in_bytes: usize,
+            permission_flags: u32,
+        ) Error!void {
+            try voidResult(Transport.syscall5(
+                @intFromEnum(abi.syscall.SyscallNumber.protect_address_space),
+                address_space.capability,
+                virtual_start,
+                size_in_bytes,
+                permission_flags,
+                0,
+            ));
+        }
+
+        pub fn queryAddressSpace(
+            address_space: AddressSpace,
+            virtual_start: usize,
+            size_in_bytes: usize,
+        ) Error!u32 {
+            const result = Transport.syscall3(
+                @intFromEnum(abi.syscall.SyscallNumber.query_address_space),
+                address_space.capability,
+                virtual_start,
+                size_in_bytes,
+            );
+            try checkError(result);
+            if (result == 0) return Error.InternalFailure;
+            return result;
+        }
+
+        pub fn unmapAddressSpace(
+            address_space: AddressSpace,
+            virtual_start: usize,
+            size_in_bytes: usize,
+        ) Error!void {
+            try voidResult(Transport.syscall3(
+                @intFromEnum(abi.syscall.SyscallNumber.unmap_address_space),
+                address_space.capability,
+                virtual_start,
+                size_in_bytes,
+            ));
+        }
+
+        pub fn destroyAddressSpace(address_space: AddressSpace) Error!void {
+            try voidResult(Transport.syscall3(
+                @intFromEnum(abi.syscall.SyscallNumber.destroy_address_space),
+                address_space.capability,
+                0,
+                0,
+            ));
+        }
+
+        pub fn createMemoryObject(size_in_bytes: usize) Error!MemoryObject {
+            const result = Transport.syscall3(
                 @intFromEnum(abi.syscall.SyscallNumber.create_memory_object),
                 size_in_bytes,
                 0,
                 0,
             );
-
-            if (capability == abi.capability.INVALID_CAPABILITY) return null;
-            return .{ .capability = capability };
+            try checkError(result);
+            if (result == abi.capability.INVALID_CAPABILITY) return Error.InternalFailure;
+            return .{ .capability = result };
         }
 
         pub fn mapMemoryObject(
@@ -54,16 +129,41 @@ pub fn MemoryManager(comptime Transport: type) type {
             virtual_start: usize,
             size_in_bytes: usize,
             permission_flags: u32,
-        ) bool {
-            const result = Transport.syscall5(
+        ) Error!void {
+            try voidResult(Transport.syscall5(
                 @intFromEnum(abi.syscall.SyscallNumber.map_memory_object),
                 address_space.capability,
                 memory_object.capability,
                 virtual_start,
                 size_in_bytes,
                 permission_flags,
-            );
-            return result == abi.syscall.SYSCALL_SUCCESS;
+            ));
+        }
+
+        fn addressSpaceResult(result: u32) Error!AddressSpace {
+            try checkError(result);
+            if (result == abi.capability.INVALID_CAPABILITY) return Error.InternalFailure;
+            return .{ .capability = result };
+        }
+
+        fn voidResult(result: u32) Error!void {
+            try checkError(result);
+            if (result != abi.syscall.SYSCALL_SUCCESS) return Error.InternalFailure;
+        }
+
+        fn checkError(result: u32) Error!void {
+            const code = abi.syscall.decodeError(result) orelse return;
+            return switch (code) {
+                .invalid_capability => Error.InvalidCapability,
+                .insufficient_rights => Error.InsufficientRights,
+                .out_of_resources => Error.OutOfResources,
+                .invalid_range => Error.InvalidRange,
+                .invalid_permissions => Error.InvalidPermissions,
+                .mapping_not_found => Error.MappingNotFound,
+                .address_space_in_use => Error.AddressSpaceInUse,
+                .unsupported => Error.Unsupported,
+                .internal_failure => Error.InternalFailure,
+            };
         }
     };
 }
@@ -75,7 +175,12 @@ const NativeTransport = struct {
 
 const native = MemoryManager(NativeTransport);
 
+pub const currentAddressSpace = native.currentAddressSpace;
 pub const createAddressSpace = native.createAddressSpace;
 pub const mapRegion = native.mapRegion;
+pub const protectAddressSpace = native.protectAddressSpace;
+pub const queryAddressSpace = native.queryAddressSpace;
+pub const unmapAddressSpace = native.unmapAddressSpace;
+pub const destroyAddressSpace = native.destroyAddressSpace;
 pub const createMemoryObject = native.createMemoryObject;
 pub const mapMemoryObject = native.mapMemoryObject;

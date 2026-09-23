@@ -13,18 +13,10 @@ const std = @import("std");
 const abi = @import("abi");
 
 const KERNEL_VMA_TOTAL = 16;
-const ROOT_VMA_TOTAL = 32;
-
 var kernelVmaBacking: [KERNEL_VMA_TOTAL]vmm.VirtualMemoryArea = undefined;
-var rootVmaBacking: [ROOT_VMA_TOTAL]vmm.VirtualMemoryArea = undefined;
 
 var kernelAddressSpace: vmm.AddressSpace = vmm.AddressSpace{
     .virtual_memory_areas = &kernelVmaBacking,
-    .length = 0,
-};
-
-var rootAddressSpace: vmm.AddressSpace = vmm.AddressSpace{
-    .virtual_memory_areas = &rootVmaBacking,
     .length = 0,
 };
 
@@ -73,12 +65,13 @@ pub export fn kernelMain() void {
 
     const prepared_root_process = kernel_initialization.initialize(
         KernelInitializationServices,
-        &rootAddressSpace,
     ) catch {
         arch.cpu.unrecoverableHalt();
     };
 
-    kernel_common.process.execution_context.initializeRoot() catch {
+    kernel_common.process.execution_context.initializeRoot(
+        prepared_root_process.address_space_handle,
+    ) catch {
         arch.cpu.unrecoverableHalt();
     };
 
@@ -163,8 +156,8 @@ const KernelInitializationServices = struct {
         terminal.print.printString(abi.system_smoke.KERNEL_INITIALIZED);
     }
 
-    pub fn prepareRootProcess(address_space: *vmm.AddressSpace) !PreparedRootProcess {
-        return launch_root_process.prepareRootProcess(address_space);
+    pub fn prepareRootProcess() !PreparedRootProcess {
+        return launch_root_process.prepareRootProcess();
     }
 
     pub fn setErrorColor() void {

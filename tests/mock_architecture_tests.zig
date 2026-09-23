@@ -175,8 +175,8 @@ test "Mock MMU reports permissions and unmaps explicit address spaces idempotent
         arch.mmu.getPageProtectionInAddressSpace(second_root, virtual_address).?,
     );
 
-    arch.mmu.unmapPageInAddressSpace(first_root, virtual_address);
-    arch.mmu.unmapPageInAddressSpace(first_root, virtual_address);
+    try std.testing.expectEqual(@as(?usize, 0x1000), arch.mmu.unmapPageInAddressSpace(first_root, virtual_address));
+    try std.testing.expectEqual(@as(?usize, null), arch.mmu.unmapPageInAddressSpace(first_root, virtual_address));
     try std.testing.expectEqual(
         @as(?arch.PageProtection, null),
         arch.mmu.getPageProtectionInAddressSpace(first_root, virtual_address),
@@ -191,8 +191,8 @@ test "Mock MMU reports permissions and unmaps explicit address spaces idempotent
         arch.PageProtection{},
         arch.mmu.getPageProtection(virtual_address).?,
     );
-    arch.mmu.unmapPage(virtual_address);
-    arch.mmu.unmapPage(virtual_address);
+    try std.testing.expectEqual(@as(?usize, 0x2000), arch.mmu.unmapPage(virtual_address));
+    try std.testing.expectEqual(@as(?usize, null), arch.mmu.unmapPage(virtual_address));
     try std.testing.expectEqual(@as(?usize, null), arch.mmu.getPhysicalAddress(virtual_address));
 }
 

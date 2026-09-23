@@ -171,12 +171,12 @@ test "Virtual Memory Manager: Unmap Removes Virtual Memory Area" {
     try kernel.vmm.map(&addressSpace, 0x20000000, 0x20400000, permissions);
     try std.testing.expectEqual(@as(usize, 2), addressSpace.length);
 
-    kernel.vmm.unmap(&addressSpace, 0x10000000, 0x10400000);
+    try kernel.vmm.unmap(&addressSpace, 0x10000000, 0x10400000);
     try std.testing.expectEqual(@as(usize, 1), addressSpace.length);
     try std.testing.expectEqual(@as(u64, 0x20000000), addressSpace.virtual_memory_areas[0].start_address);
 }
 
-test "Virtual Memory Manager: Unmap Non-Existent Region Does Nothing" {
+test "Virtual Memory Manager: Unmap Non-Existent Region Returns Error" {
     try testSetup();
     try kernel.pmm.initialize();
 
@@ -195,7 +195,10 @@ test "Virtual Memory Manager: Unmap Non-Existent Region Does Nothing" {
     };
 
     try kernel.vmm.map(&addressSpace, 0x10000000, 0x10400000, permissions);
-    kernel.vmm.unmap(&addressSpace, 0xdead0000, 0xdead4000);
+    try std.testing.expectError(
+        error.UndefinedVirtualMemoryArea,
+        kernel.vmm.unmap(&addressSpace, 0xdead0000, 0xdead4000),
+    );
     try std.testing.expectEqual(@as(usize, 1), addressSpace.length);
 }
 

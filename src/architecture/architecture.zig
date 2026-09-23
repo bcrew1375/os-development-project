@@ -178,6 +178,7 @@ pub fn validateImpl(comptime T: type) void {
 
         validateInterface(T.mmu, struct {
             createAddressSpaceRoot: fn () MmuError!AddressSpaceRoot,
+            destroyAddressSpaceRoot: fn (root: AddressSpaceRoot) void,
             switchAddressSpaceRoot: fn (root: AddressSpaceRoot) void,
             getPhysicalAddressInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize) ?usize,
             getPhysicalAddress: fn (virtualAddress: usize) ?usize,
@@ -188,8 +189,8 @@ pub fn validateImpl(comptime T: type) void {
             mapPage: fn (virtualAddress: usize, physicalAddress: usize, flags: PageProtection) MmuError!void,
             mapTableInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize, physicalAddress: usize, flags: PageProtection) MmuError!void,
             mapTable: fn (virtualAddress: usize, physicalAddress: usize, flags: PageProtection) MmuError!void,
-            unmapPageInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize) void,
-            unmapPage: fn (virtualAddress: usize) void,
+            unmapPageInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize) ?usize,
+            unmapPage: fn (virtualAddress: usize) ?usize,
             getPageProtectionInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize) ?PageProtection,
             getPageProtection: fn (virtualAddress: usize) ?PageProtection,
             getMaxAvailableAddress: fn () u64,

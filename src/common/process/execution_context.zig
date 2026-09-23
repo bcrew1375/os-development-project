@@ -7,7 +7,6 @@ pub const CapabilitySpaceHandle = u32;
 
 pub const ROOT_THREAD_HANDLE: ThreadHandle = 1;
 pub const ROOT_CAPABILITY_SPACE_HANDLE: CapabilitySpaceHandle = 1;
-pub const ROOT_ADDRESS_SPACE_HANDLE: process.AddressSpaceHandle = 1;
 
 pub const ExecutionContext = struct {
     thread_handle: ThreadHandle,
@@ -28,21 +27,25 @@ pub fn initialize(context: ExecutionContext) ContextError!void {
     current_context = context;
 }
 
-pub fn initializeRoot() ContextError!void {
+pub fn initializeRoot(address_space_handle: process.AddressSpaceHandle) ContextError!void {
     try initialize(.{
         .thread_handle = ROOT_THREAD_HANDLE,
         .capability_space_handle = ROOT_CAPABILITY_SPACE_HANDLE,
-        .address_space_handle = ROOT_ADDRESS_SPACE_HANDLE,
+        .address_space_handle = address_space_handle,
         .process_handle = process.ROOT_PROCESS_HANDLE,
     });
 }
 
-pub fn current() ContextError!ExecutionContext {
-    return current_context orelse ContextError.ExecutionContextUninitialized;
+pub fn current() error{ExecutionContextUninitialized}!ExecutionContext {
+    return current_context orelse error.ExecutionContextUninitialized;
 }
 
-pub fn currentProcessHandle() ContextError!process.ProcessHandle {
+pub fn currentProcessHandle() error{ExecutionContextUninitialized}!process.ProcessHandle {
     return (try current()).process_handle;
+}
+
+pub fn currentAddressSpaceHandle() error{ExecutionContextUninitialized}!process.AddressSpaceHandle {
+    return (try current()).address_space_handle;
 }
 
 pub fn replace(context: ExecutionContext) ContextError!void {

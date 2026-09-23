@@ -367,7 +367,14 @@ activatable, mappable, and destructible hardware address space.
 - two address-space objects map the same virtual address independently;
 - capability resolution reaches the object and its root without global state.
 
-## [ ] U2.2 Register the root task through the normal object path
+## [x] U2.2 Register the root task through the normal object path
+
+- Completed: 2026-09-23
+- Validation: native tests; root-task component tests; x86-32 and x86-64 builds;
+  full physical architecture tests and architecture coverage on both x86 targets
+- Result: bootstrap registers the root hardware root in the bounded address-space
+  table, installs its process-owned capability, and initializes the execution
+  context with the same authoritative object handle used by runtime syscalls.
 
 **Work:**
 
@@ -383,7 +390,16 @@ activatable, mappable, and destructible hardware address space.
 - there is one authoritative root-task address-space identity;
 - syscall mapping operations target the registered root-task object.
 
-## [ ] U2.3 Complete explicit-root mapping operations
+## [x] U2.3 Complete explicit-root mapping operations
+
+- Completed: 2026-09-23
+- Validation: native VMM/process/syscall tests and physical x86-32/x86-64 tests
+  for explicit-root translation, root switching, isolation, permissions, and
+  repeated low-level unmap
+- Semantics: process policy operations require exact VMA ranges; repeated policy
+  unmap returns `mapping_not_found`, while architecture page unmap is idempotent
+  and returns the prior physical mapping when one existed. x86-32 reports pages
+  executable because this target does not currently enable NX enforcement.
 
 **Related assessment:** P3.4 and P3.5.
 
@@ -404,7 +420,18 @@ activatable, mappable, and destructible hardware address space.
 - permission queries match effective hardware behavior;
 - repeated unmap follows one documented result on mock, x86-32, and x86-64.
 
-## [ ] U2.4 Define address-space destruction
+## [x] U2.4 Define address-space destruction
+
+- Completed: 2026-09-23
+- Validation: native process, capability, and syscall tests plus physical
+  x86-32/x86-64 cross-root unmap/destruction isolation tests
+- Limitation: the current execution-context model tracks one active thread, so
+  destruction rejects that active address space; checking all running or runnable
+  thread references is deferred until general thread tracking exists.
+- Deferred reclamation: destruction clears bounded VMA/object metadata and
+  invalidates the capability generation, but owned physical frames and lower-level
+  x86 page-table frames are not reclaimed. Their ownership and reclamation are
+  deferred to Phase 3 physical-memory delegation.
 
 **Kernel work:**
 
@@ -422,7 +449,14 @@ activatable, mappable, and destructible hardware address space.
 - shared memory-object backing is not freed merely because one mapping disappears;
 - all kernel-owned address-space metadata returns to its bounded pool.
 
-## [ ] U2.5 Add root-task address-space wrappers
+## [x] U2.5 Add root-task address-space wrappers
+
+- Completed: 2026-09-23
+- Validation: root-task host tests verify lifecycle syscall numbers, argument
+  ordering, permission results, and every structured ABI error translation
+- Result: transport-injectable typed wrappers expose current/create/map/protect/
+  query/unmap/destroy operations, and startup maps into its registered current
+  address space instead of creating an unused second address space.
 
 **ABI and root-task work:**
 
@@ -468,11 +502,12 @@ zig build architecture-coverage -Darch=x86_64
 
 ## Phase 2 exit gate
 
-- [ ] Every address-space capability identifies a hardware root.
-- [ ] The root task is registered through the normal address-space object path.
-- [ ] Non-current address spaces can be mapped, queried, protected, and unmapped.
-- [ ] Address-space destruction has defined reference and reclamation behavior.
-- [ ] Cross-root isolation is verified natively and under QEMU.
+- [x] Every address-space capability identifies a hardware root.
+- [x] The root task is registered through the normal address-space object path.
+- [x] Non-current address spaces can be mapped, queried, protected, and unmapped.
+- [x] Address-space destruction has defined reference and reclamation behavior,
+  with physical-frame and lower-level page-table reclamation deferred to Phase 3.
+- [x] Cross-root isolation is verified natively and under QEMU.
 
 # Phase 3 — Delegate physical-memory policy to userspace
 

@@ -11,6 +11,9 @@ const module_physical_start = 48 * 1024 * 1024;
 fn initializeLoaderTest() !void {
     try arch.impl.test_support.initializeDefaultMemoryFixture();
     try arch.early_allocator.initialize();
+    kernel_common.capability.resetForTest();
+    kernel_common.process.resetForTest();
+    kernel_common.process.execution_context.resetForTest();
 }
 
 fn makeTestElf() [0x240]u8 {
@@ -38,20 +41,16 @@ fn makeTestElf() [0x240]u8 {
 
 fn prepare(image: []const u8) !launch_root_process.PreparedRootProcess {
     _ = try arch.boot.configureModuleBytesForTest(module_physical_start, image);
-    var vma_backing: [8]vmm.VirtualMemoryArea = undefined;
-    var address_space = vmm.AddressSpace{ .virtual_memory_areas = &vma_backing };
-    return launch_root_process.prepareRootProcess(&address_space);
+    return launch_root_process.prepareRootProcess();
 }
 
 test "Root process preparation rejects missing and invalid boot modules" {
     try initializeLoaderTest();
     defer arch.impl.test_support.deinitializeMemoryFixture();
 
-    var vma_backing: [8]vmm.VirtualMemoryArea = undefined;
-    var address_space = vmm.AddressSpace{ .virtual_memory_areas = &vma_backing };
     try std.testing.expectError(
         error.RootProcessModuleMissing,
-        launch_root_process.prepareRootProcess(&address_space),
+        launch_root_process.prepareRootProcess(),
     );
 
     const direct_map_size: usize = @intCast(arch.mmu.getDirectMapMaxSize());
@@ -65,10 +64,11 @@ test "Root process preparation rejects missing and invalid boot modules" {
         arch.impl.test_support.resetState();
         try arch.early_allocator.initialize();
         arch.boot.configureModulesForTest(&.{module});
-        address_space.length = 0;
+        kernel_common.capability.resetForTest();
+        kernel_common.process.resetForTest();
         try std.testing.expectError(
             error.InvalidBootModuleRange,
-            launch_root_process.prepareRootProcess(&address_space),
+            launch_root_process.prepareRootProcess(),
         );
     }
 }
@@ -190,9 +190,7 @@ test "Root process boot info truncates modules and zeroes unused entries" {
     }
     arch.boot.configureModulesForTest(&modules);
 
-    var vma_backing: [8]vmm.VirtualMemoryArea = undefined;
-    var address_space = vmm.AddressSpace{ .virtual_memory_areas = &vma_backing };
-    const prepared = try launch_root_process.prepareRootProcess(&address_space);
+    const prepared = try launch_root_process.prepareRootProcess();
 
     const blob_size = @sizeOf(abi.boot_info.BootInfo) +
         launch_root_process.MAX_BOOT_INFO_MODULES * @sizeOf(abi.boot_info.BootModuleInfo);
@@ -223,10 +221,8 @@ test "Root process preparation reports missing explicit-root mapping" {
     const image = makeTestElf();
     _ = try arch.boot.configureModuleBytesForTest(module_physical_start, &image);
     arch.mmu.failPhysicalLookupCallForTest(1);
-    var vma_backing: [8]vmm.VirtualMemoryArea = undefined;
-    var address_space = vmm.AddressSpace{ .virtual_memory_areas = &vma_backing };
     try std.testing.expectError(
         error.RootAddressSpaceMappingMissing,
-        launch_root_process.prepareRootProcess(&address_space),
+        launch_root_process.prepareRootProcess(),
     );
 }

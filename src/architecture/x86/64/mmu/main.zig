@@ -4,6 +4,7 @@ const common = @import("common.zig");
 const limine_requests = @import("../../common/boot/limine/requests.zig");
 
 pub const createAddressSpaceRoot = address_space.createAddressSpaceRoot;
+pub const destroyAddressSpaceRoot = address_space.destroyAddressSpaceRoot;
 pub const switchAddressSpaceRoot = address_space.switchAddressSpaceRoot;
 pub const getMemoryMap = @import("memory_map.zig").getMemoryMap;
 pub const getMaxAvailableAddress = @import("memory_map.zig").getMaxAvailableAddress;
@@ -135,16 +136,18 @@ pub fn mapTableInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize
     flushTLB(virtualAddress);
 }
 
-pub fn unmapPage(virtualAddress: usize) void {
-    unmapPageInAddressSpace(getCurrentAddressSpaceRoot(), virtualAddress);
+pub fn unmapPage(virtualAddress: usize) ?usize {
+    return unmapPageInAddressSpace(getCurrentAddressSpaceRoot(), virtualAddress);
 }
 
-pub fn unmapPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize) void {
-    const walk = walkToPageTable(root, virtualAddress) orelse return;
-    if (!walk.page_table[walk.page_table_index].present) return;
+pub fn unmapPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize) ?usize {
+    const walk = walkToPageTable(root, virtualAddress) orelse return null;
+    const page_entry = walk.page_table[walk.page_table_index];
+    if (!page_entry.present) return null;
 
     walk.page_table[walk.page_table_index].present = false;
     flushTLB(virtualAddress);
+    return pageBasePhysicalAddress(page_entry);
 }
 
 fn directMapVirtualAddress() usize {

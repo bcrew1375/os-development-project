@@ -5,6 +5,7 @@ const common = @import("common.zig");
 const address_space = @import("address_space.zig");
 
 pub const createAddressSpaceRoot = address_space.createAddressSpaceRoot;
+pub const destroyAddressSpaceRoot = address_space.destroyAddressSpaceRoot;
 pub const switchAddressSpaceRoot = address_space.switchAddressSpaceRoot;
 pub const initializePaging = @import("early_boot.zig").initializePaging;
 pub const getMemoryMap = @import("memory_map.zig").getMemoryMap;
@@ -133,23 +134,25 @@ pub fn mapTableInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize
     flushTLB(virtualAddress);
 }
 
-pub fn unmapPage(virtualAddress: usize) void {
-    unmapPageInAddressSpace(getCurrentAddressSpaceRoot(), virtualAddress);
+pub fn unmapPage(virtualAddress: usize) ?usize {
+    return unmapPageInAddressSpace(getCurrentAddressSpaceRoot(), virtualAddress);
 }
 
-pub fn unmapPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize) void {
+pub fn unmapPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize) ?usize {
     const page_directory_index = getPageDirectoryIndex(virtualAddress);
     const page_table_index = getPageTableIndex(virtualAddress);
 
     const page_dir = getPageDirectoryFromAddressSpaceRoot(root);
-    if (!page_dir[page_directory_index].present) return;
+    if (!page_dir[page_directory_index].present) return null;
 
     const page_table = getPageTableFromDirectory(page_dir, page_directory_index);
-    if (!page_table[page_table_index].present) return;
+    if (!page_table[page_table_index].present) return null;
 
+    const physical_address = @as(usize, page_table[page_table_index].address) << 12;
     page_table[page_table_index].present = false;
 
     flushTLB(virtualAddress);
+    return physical_address;
 }
 
 pub fn getKernelVirtualAddressStart() u64 {

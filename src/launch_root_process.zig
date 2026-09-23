@@ -32,18 +32,34 @@ const BootInfoBlob = extern struct {
 };
 
 pub const PreparedRootProcess = struct {
+    address_space_handle: kernel_common.process.AddressSpaceHandle,
+    address_space_capability: abi.capability.CapabilityHandle,
     address_space_root: arch.AddressSpaceRoot,
     entry_point: usize,
     initial_stack_pointer: usize,
 };
 
-pub fn launchRootProcess(address_space: *vmm.AddressSpace) !noreturn {
-    const prepared_root_process = try prepareRootProcess(address_space);
+pub fn launchRootProcess() !noreturn {
+    const prepared_root_process = try prepareRootProcess();
     enterPreparedRootProcess(prepared_root_process);
 }
 
-pub fn prepareRootProcess(address_space: *vmm.AddressSpace) !PreparedRootProcess {
+pub fn prepareRootProcess() !PreparedRootProcess {
     const page_table_root = try arch.mmu.createAddressSpaceRoot();
+    const address_space_capability = try kernel_common.capability.registerAddressSpaceRootCapability(
+        kernel_common.process.ROOT_PROCESS_HANDLE,
+        page_table_root,
+    );
+    errdefer kernel_common.capability.destroyAddressSpaceCapability(
+        kernel_common.process.ROOT_PROCESS_HANDLE,
+        address_space_capability,
+    ) catch {};
+    const address_space_handle = try kernel_common.capability.resolveAddressSpace(
+        kernel_common.process.ROOT_PROCESS_HANDLE,
+        address_space_capability,
+        .{ .manage = true },
+    );
+    const address_space = try kernel_common.process.getAddressSpace(address_space_handle);
     activateAsCurrentBootstrapAddressSpace(address_space);
 
     const root_module = try getRootProcessModule();
@@ -58,6 +74,8 @@ pub fn prepareRootProcess(address_space: *vmm.AddressSpace) !PreparedRootProcess
     );
 
     return .{
+        .address_space_handle = address_space_handle,
+        .address_space_capability = address_space_capability,
         .address_space_root = page_table_root,
         .entry_point = entry_point,
         .initial_stack_pointer = initial_stack_pointer,

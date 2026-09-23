@@ -177,24 +177,43 @@ pub fn mapObject(
     addressSpace.length += 1;
 }
 
-/// Removes a VMA and unmaps pages in the current hardware address space.
-pub fn unmap(addressSpace: *AddressSpace, startAddress: u64, endAddress: u64) void {
-    for (addressSpace.virtual_memory_areas[0..addressSpace.length], 0..) |vma, vmaIndex| {
-        if (vma.start_address == startAddress and vma.end_address == endAddress) {
-            const pageSize = @as(u64, @intCast(arch.mmu.getPageSize()));
-            var pageAddress = startAddress;
-            while (pageAddress < endAddress) : (pageAddress += pageSize) {
-                arch.mmu.unmapPage(@intCast(pageAddress));
-            }
+/// Removes an exact VMA and unmaps pages in the current hardware address space.
+pub fn unmap(addressSpace: *AddressSpace, startAddress: u64, endAddress: u64) VMMError!void {
+    try unmapInAddressSpace(null, addressSpace, startAddress, endAddress);
+}
 
-            var shiftIndex = vmaIndex;
-            while (shiftIndex < addressSpace.length - 1) : (shiftIndex += 1) {
-                addressSpace.virtual_memory_areas[shiftIndex] = addressSpace.virtual_memory_areas[shiftIndex + 1];
-            }
-            addressSpace.length -= 1;
-            return;
+/// Removes an exact VMA and unmaps pages in `root`. Repeated removal reports
+/// `UndefinedVirtualMemoryArea`; low-level page unmapping itself is idempotent.
+pub fn unmapInAddressSpace(
+    root: ?arch.AddressSpaceRoot,
+    addressSpace: *AddressSpace,
+    startAddress: u64,
+    endAddress: u64,
+) VMMError!void {
+    const vma_index = findVirtualMemoryAreaIndex(addressSpace, startAddress, endAddress) orelse
+        return VMMError.UndefinedVirtualMemoryArea;
+    const page_size = @as(u64, @intCast(arch.mmu.getPageSize()));
+    var page_address = startAddress;
+    while (page_address < endAddress) : (page_address += page_size) {
+        if (root) |address_space_root| {
+            _ = arch.mmu.unmapPageInAddressSpace(address_space_root, @intCast(page_address));
+        } else {
+            _ = arch.mmu.unmapPage(@intCast(page_address));
         }
     }
+
+    removeVirtualMemoryArea(addressSpace, vma_index);
+}
+
+/// Returns the exact VMA covering the supplied range.
+pub fn query(
+    addressSpace: *AddressSpace,
+    startAddress: u64,
+    endAddress: u64,
+) VMMError!VirtualMemoryArea {
+    const index = findVirtualMemoryAreaIndex(addressSpace, startAddress, endAddress) orelse
+        return VMMError.UndefinedVirtualMemoryArea;
+    return addressSpace.virtual_memory_areas[index];
 }
 
 /// Panic-on-error wrapper around `resolveFault`.
@@ -346,12 +365,23 @@ fn findVirtualMemoryArea(address: usize) ?VirtualMemoryArea {
 }
 
 fn findVirtualMemoryAreaByRange(addressSpace: *AddressSpace, startAddress: u64, endAddress: u64) ?*VirtualMemoryArea {
-    for (addressSpace.virtual_memory_areas[0..addressSpace.length]) |*vma| {
-        if (vma.start_address == startAddress and vma.end_address == endAddress) {
-            return vma;
-        }
+    const index = findVirtualMemoryAreaIndex(addressSpace, startAddress, endAddress) orelse return null;
+    return &addressSpace.virtual_memory_areas[index];
+}
+
+fn findVirtualMemoryAreaIndex(addressSpace: *AddressSpace, startAddress: u64, endAddress: u64) ?usize {
+    for (addressSpace.virtual_memory_areas[0..addressSpace.length], 0..) |vma, index| {
+        if (vma.start_address == startAddress and vma.end_address == endAddress) return index;
     }
     return null;
+}
+
+fn removeVirtualMemoryArea(addressSpace: *AddressSpace, index: usize) void {
+    var shift_index = index;
+    while (shift_index + 1 < addressSpace.length) : (shift_index += 1) {
+        addressSpace.virtual_memory_areas[shift_index] = addressSpace.virtual_memory_areas[shift_index + 1];
+    }
+    addressSpace.length -= 1;
 }
 
 fn isAccessAllowed(faultInfo: arch.FaultInfo, vma: VirtualMemoryArea) bool {

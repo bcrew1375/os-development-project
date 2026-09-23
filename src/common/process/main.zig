@@ -18,6 +18,7 @@ pub const ProcessError = error{
     ObjectRangeOutOfBounds,
     UnalignedMemoryObjectRange,
     InvalidMemoryPermissions,
+    AddressSpaceInUse,
 } || vmm.VMMError || arch.MmuError;
 
 /// Opaque handle for a registered address space.
@@ -64,22 +65,30 @@ pub fn createAddressSpace() ProcessError!AddressSpaceHandle {
 
 /// Creates an address space owned by `owner_process_handle`.
 pub fn createAddressSpaceForOwner(owner_process_handle: ProcessHandle) ProcessError!AddressSpaceHandle {
+    const hardware_root = try arch.mmu.createAddressSpaceRoot();
+    errdefer arch.mmu.destroyAddressSpaceRoot(hardware_root);
+    return registerAddressSpaceRootForOwner(owner_process_handle, hardware_root);
+}
+
+/// Registers a bootstrap-created hardware root through the normal object path.
+pub fn registerAddressSpaceRootForOwner(
+    owner_process_handle: ProcessHandle,
+    hardware_root: arch.AddressSpaceRoot,
+) ProcessError!AddressSpaceHandle {
     const slot = findFreeAddressSpaceSlot() orelse return ProcessError.OutOfAddressSpaces;
-
-    const hardware_root = arch.mmu.createAddressSpaceRoot() catch |err| return err;
-
     const handle = nextAddressSpaceHandle;
     nextAddressSpaceHandle += 1;
 
-    slot.handle = handle;
-    slot.owner_process_handle = owner_process_handle;
-    slot.hardware_root = hardware_root;
-    slot.address_space = .{
-        .virtual_memory_areas = &slot.vma_backing,
-        .length = 0,
+    slot.* = .{
+        .handle = handle,
+        .owner_process_handle = owner_process_handle,
+        .address_space = .{
+            .virtual_memory_areas = &slot.vma_backing,
+            .length = 0,
+        },
+        .hardware_root = hardware_root,
+        .used = true,
     };
-    slot.used = true;
-
     return handle;
 }
 
@@ -101,6 +110,77 @@ pub fn getAddressSpaceOwner(handle: AddressSpaceHandle) ProcessError!ProcessHand
         return ProcessError.InvalidAddressSpaceHandle;
     };
     return slot.owner_process_handle;
+}
+
+/// Updates an exact address-space mapping's permissions.
+pub fn protectAddressSpace(
+    address_space_handle: AddressSpaceHandle,
+    virtual_start: u64,
+    size_in_bytes: u64,
+    permission_flags: u32,
+) ProcessError!void {
+    const virtual_end = try validateNonEmptyUserVirtualRange(virtual_start, size_in_bytes);
+    const slot = findAddressSpaceSlot(address_space_handle) orelse
+        return ProcessError.InvalidAddressSpaceHandle;
+    try vmm.protectInAddressSpace(
+        slot.hardware_root,
+        &slot.address_space,
+        virtual_start,
+        virtual_end,
+        try memoryPermissionsFromFlags(permission_flags),
+    );
+}
+
+/// Removes an exact mapping from an address space.
+pub fn unmapAddressSpace(
+    address_space_handle: AddressSpaceHandle,
+    virtual_start: u64,
+    size_in_bytes: u64,
+) ProcessError!void {
+    const virtual_end = try validateNonEmptyUserVirtualRange(virtual_start, size_in_bytes);
+    const slot = findAddressSpaceSlot(address_space_handle) orelse
+        return ProcessError.InvalidAddressSpaceHandle;
+    try vmm.unmapInAddressSpace(
+        slot.hardware_root,
+        &slot.address_space,
+        virtual_start,
+        virtual_end,
+    );
+}
+
+/// Returns requested permission flags for an exact mapping.
+pub fn queryAddressSpace(
+    address_space_handle: AddressSpaceHandle,
+    virtual_start: u64,
+    size_in_bytes: u64,
+) ProcessError!u32 {
+    const virtual_end = try validateNonEmptyUserVirtualRange(virtual_start, size_in_bytes);
+    const address_space = try getAddressSpace(address_space_handle);
+    const area = try vmm.query(address_space, virtual_start, virtual_end);
+    return memoryPermissionFlags(area.permissions);
+}
+
+/// Destroys an inactive address space and returns its bounded object slot.
+pub fn destroyAddressSpace(address_space_handle: AddressSpaceHandle) ProcessError!void {
+    if (execution_context.current()) |context| {
+        if (context.address_space_handle == address_space_handle) {
+            return ProcessError.AddressSpaceInUse;
+        }
+    } else |_| {}
+
+    const slot = findAddressSpaceSlot(address_space_handle) orelse
+        return ProcessError.InvalidAddressSpaceHandle;
+    while (slot.address_space.length > 0) {
+        const area = slot.address_space.virtual_memory_areas[slot.address_space.length - 1];
+        try vmm.unmapInAddressSpace(
+            slot.hardware_root,
+            &slot.address_space,
+            area.start_address,
+            area.end_address,
+        );
+    }
+    arch.mmu.destroyAddressSpaceRoot(slot.hardware_root);
+    slot.* = .{};
 }
 
 /// Creates a page-aligned memory object owned by the root process.
@@ -172,11 +252,7 @@ pub fn mapMemoryObject(
 
 /// Reserves anonymous user memory in an address space.
 pub fn mapMemory(address_space_handle: AddressSpaceHandle, virtual_start: u64, size_in_bytes: u64) ProcessError!void {
-    if (size_in_bytes == 0) {
-        return ProcessError.EmptyMemoryRange;
-    }
-
-    const virtual_end = try validateUserVirtualRange(virtual_start, size_in_bytes);
+    const virtual_end = try validateNonEmptyUserVirtualRange(virtual_start, size_in_bytes);
 
     const address_space = try getAddressSpace(address_space_handle);
     try vmm.map(address_space, virtual_start, virtual_end, .{
@@ -185,6 +261,11 @@ pub fn mapMemory(address_space_handle: AddressSpaceHandle, virtual_start: u64, s
         .executable = false,
         .user_accessible = true,
     });
+}
+
+fn validateNonEmptyUserVirtualRange(virtual_start: u64, size_in_bytes: u64) ProcessError!u64 {
+    if (size_in_bytes == 0) return ProcessError.EmptyMemoryRange;
+    return validateUserVirtualRange(virtual_start, size_in_bytes);
 }
 
 fn validateUserVirtualRange(virtual_start: u64, size_in_bytes: u64) ProcessError!u64 {
@@ -219,6 +300,14 @@ fn memoryPermissionsFromFlags(permission_flags: u32) ProcessError!vmm.MemoryPerm
         .executable = (permission_flags & abi.syscall.MAP_EXECUTE) != 0,
         .user_accessible = true,
     };
+}
+
+fn memoryPermissionFlags(permissions: vmm.MemoryPermissions) u32 {
+    var flags: u32 = 0;
+    if (permissions.readable) flags |= abi.syscall.MAP_READ;
+    if (permissions.writeable) flags |= abi.syscall.MAP_WRITE;
+    if (permissions.executable) flags |= abi.syscall.MAP_EXECUTE;
+    return flags;
 }
 
 fn findFreeAddressSpaceSlot() ?*AddressSpaceSlot {

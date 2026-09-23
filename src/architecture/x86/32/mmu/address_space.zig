@@ -15,6 +15,11 @@ pub fn createAddressSpaceRoot() arch.MmuError!arch.AddressSpaceRoot {
     };
 }
 
+/// Page-table storage is early-allocator owned until delegated reclamation exists.
+pub fn destroyAddressSpaceRoot(root: arch.AddressSpaceRoot) void {
+    _ = root;
+}
+
 pub fn switchAddressSpaceRoot(root: arch.AddressSpaceRoot) void {
     switchPageDirectoryPhysical(root.value);
 }

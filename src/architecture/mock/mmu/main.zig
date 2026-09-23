@@ -62,6 +62,22 @@ pub fn createAddressSpaceRoot() arch.MmuError!arch.AddressSpaceRoot {
     return address_space_root;
 }
 
+pub fn destroyAddressSpaceRoot(root: arch.AddressSpaceRoot) void {
+    for (pageMappings[0..pageMappingCount]) |*mapping| {
+        if (mapping.root_value == root.value) mapping.present = false;
+    }
+
+    var table_index: usize = 0;
+    while (table_index < tableMappingCount) {
+        if (tableMappings[table_index].root_value != root.value) {
+            table_index += 1;
+            continue;
+        }
+        tableMappingCount -= 1;
+        tableMappings[table_index] = tableMappings[tableMappingCount];
+    }
+}
+
 pub fn switchAddressSpaceRoot(root: arch.AddressSpaceRoot) void {
     currentAddressSpaceRoot = root;
 }
@@ -217,19 +233,23 @@ pub fn getTableProtection(virtualAddress: usize) ?arch.PageProtection {
     return null;
 }
 
-pub fn unmapPage(virtualAddress: usize) void {
-    unmapPageInAddressSpace(currentAddressSpaceRoot, virtualAddress);
+pub fn unmapPage(virtualAddress: usize) ?usize {
+    return unmapPageInAddressSpace(currentAddressSpaceRoot, virtualAddress);
 }
 
-pub fn unmapPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize) void {
+pub fn unmapPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize) ?usize {
     const pageSize = getPageSize();
     const virtualPage = virtualAddress & ~(pageSize - 1);
     for (pageMappings[0..pageMappingCount]) |*mapping| {
-        if (mapping.root_value == root.value and mapping.virtual_page == virtualPage) {
+        if (mapping.present and
+            mapping.root_value == root.value and
+            mapping.virtual_page == virtualPage)
+        {
             mapping.present = false;
-            return;
+            return mapping.physical_page;
         }
     }
+    return null;
 }
 
 pub fn resetForTest() void {

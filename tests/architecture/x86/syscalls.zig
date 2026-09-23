@@ -7,7 +7,15 @@ pub fn interruptGatePreservesRegisterAbi() !void {
     kernel.capability.resetForTest();
     kernel.process.resetForTest();
     kernel.process.execution_context.resetForTest();
-    try kernel.process.execution_context.initializeRoot();
+    const active_capability = try kernel.capability.createAddressSpaceCapability(
+        kernel.process.ROOT_PROCESS_HANDLE,
+    );
+    const active_address_space = try kernel.capability.resolveAddressSpace(
+        kernel.process.ROOT_PROCESS_HANDLE,
+        active_capability,
+        .{ .manage = true },
+    );
+    try kernel.process.execution_context.initializeRoot(active_address_space);
     @call(.never_inline, arch.boot.finishBoot, .{});
 
     const address_space_capability = abi.syscall.syscall3(
@@ -54,7 +62,7 @@ pub fn interruptGatePreservesRegisterAbi() !void {
         ),
     );
     try framework.expectEqual(
-        abi.syscall.SYSCALL_FAILURE,
+        abi.syscall.errorResult(.invalid_permissions),
         abi.syscall.syscall5(
             @intFromEnum(abi.syscall.SyscallNumber.map_memory_object),
             address_space_capability,

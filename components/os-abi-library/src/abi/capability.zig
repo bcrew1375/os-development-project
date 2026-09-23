@@ -1,6 +1,7 @@
 //! Capability ABI types shared across protection domains.
 
 const std = @import("std");
+const abi_error_bit: u32 = 1 << 31;
 
 /// Opaque capability table handle.
 pub const CapabilityHandle = u32;
@@ -10,7 +11,7 @@ pub const INVALID_CAPABILITY: CapabilityHandle = 0;
 /// Number of low-order bits used to encode a capability slot index.
 pub const CAPABILITY_SLOT_BITS: u32 = 7;
 /// Number of high-order bits used to encode a capability generation.
-pub const CAPABILITY_GENERATION_BITS = @bitSizeOf(CapabilityHandle) - CAPABILITY_SLOT_BITS;
+pub const CAPABILITY_GENERATION_BITS = @bitSizeOf(CapabilityHandle) - CAPABILITY_SLOT_BITS - 1;
 /// Maximum capability-table slot index representable by a handle.
 pub const MAX_CAPABILITY_SLOT_INDEX: u32 = (@as(u32, 1) << CAPABILITY_SLOT_BITS) - 1;
 /// Maximum generation representable by a capability handle.
@@ -83,7 +84,8 @@ pub const Rights = packed struct(u32) {
 
 comptime {
     std.debug.assert(@bitSizeOf(CapabilityHandle) == 32);
-    std.debug.assert(CAPABILITY_SLOT_BITS + CAPABILITY_GENERATION_BITS == @bitSizeOf(CapabilityHandle));
+    std.debug.assert(CAPABILITY_SLOT_BITS + CAPABILITY_GENERATION_BITS + 1 == @bitSizeOf(CapabilityHandle));
     std.debug.assert(INVALID_CAPABILITY == 0);
     std.debug.assert(makeCapabilityHandle(0, 1) != INVALID_CAPABILITY);
+    std.debug.assert((makeCapabilityHandle(MAX_CAPABILITY_SLOT_INDEX, MAX_CAPABILITY_GENERATION) & abi_error_bit) == 0);
 }
