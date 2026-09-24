@@ -1,6 +1,4 @@
 const arch = @import("arch");
-const kernel_common = @import("kernel_common");
-
 const common = @import("common.zig");
 const address_space = @import("address_space.zig");
 
@@ -13,6 +11,29 @@ pub const getMaxAvailableAddress = @import("memory_map.zig").getMaxAvailableAddr
 
 pub fn getMaximumPhysicalAddress() u64 {
     return std.math.maxInt(u32);
+}
+
+pub fn zeroPhysicalRange(physicalStart: u64, sizeInBytes: u64) arch.MmuError!void {
+    const physical_end = std.math.add(u64, physicalStart, sizeInBytes) catch {
+        return arch.MmuError.MappingError;
+    };
+    if (physical_end > getDirectMapMaxSize()) return arch.MmuError.MappingError;
+    if (physicalStart % common.PAGE_SIZE != 0 or sizeInBytes % common.PAGE_SIZE != 0) {
+        return arch.MmuError.MappingError;
+    }
+
+    const scratch_virtual_address: usize = 0xF7FF_F000;
+    const protection = arch.PageProtection{ .write = true };
+    if (!isTablePresent(scratch_virtual_address)) {
+        try ensurePageTable(scratch_virtual_address, protection);
+    }
+
+    var physical_address: u64 = physicalStart;
+    while (physical_address < physical_end) : (physical_address += common.PAGE_SIZE) {
+        try mapPage(scratch_virtual_address, @intCast(physical_address), protection);
+        @memset(@as([*]u8, @ptrFromInt(scratch_virtual_address))[0..common.PAGE_SIZE], 0);
+        _ = unmapPage(scratch_virtual_address);
+    }
 }
 
 const std = @import("std");
@@ -190,18 +211,6 @@ pub fn getDirectMapVirtualAddress() u64 {
 
 pub fn getDirectMapMaxSize() u64 {
     return common.DIRECT_MAP_SIZE;
-}
-
-pub fn getKernelHeapVirtualAddress() u64 {
-    return common.KERNEL_HEAP_VIRTUAL_ADDRESS;
-}
-
-pub fn getKernelHeapSize() u64 {
-    const available_ram = kernel_common.pmm.getTotalAvailableRAM();
-    const heap_size_float = @as(f64, @floatFromInt(available_ram)) * common.KERNEL_HEAP_SIZE_RATIO;
-    const heap_size_int = @as(u64, @intFromFloat(heap_size_float));
-    const aligned_heap_size = std.mem.alignForward(u64, heap_size_int, common.PAGE_SIZE) & std.mem.alignBackward(u64, heap_size_int, common.PAGE_SIZE);
-    return aligned_heap_size;
 }
 
 pub fn getPageSize() usize {

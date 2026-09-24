@@ -107,7 +107,20 @@ pub fn interruptHandler(vector: u8, stack_pointer: usize) callconv(.c) void {
 }
 
 fn handlePageFault(trap_frame: *const TrapFrame, diagnostic: diagnostics.Decision) void {
-    kernel_common.vmm.faultHandler(readPageFaultInfo(trap_frame));
+    const fault_info = readPageFaultInfo(trap_frame);
+    if (diagnostic.print) {
+        arch.platform.writer().print(
+            "Page fault address=0x{x} present={} write={} user={} execute={}\n",
+            .{
+                fault_info.address,
+                fault_info.present,
+                fault_info.write,
+                fault_info.user,
+                fault_info.instruction_fetch,
+            },
+        ) catch {};
+    }
+    kernel_common.vmm.faultHandler(fault_info);
     if (diagnostic.print) {
         arch.platform.writer().writeAll("Page fault.\n") catch {};
     }

@@ -106,20 +106,49 @@ pub fn destroyAddressSpaceCapability(
     try deleteCapability(owner_process_handle, capability_handle);
 }
 
-/// Creates a managed memory-object capability owned by `owner_process_handle`.
-pub fn createMemoryObjectCapability(owner_process_handle: process.ProcessHandle, size_in_bytes: u64) CapabilityError!abi.capability.CapabilityHandle {
-    const slot_index = findFreeCapabilitySlot() orelse return CapabilityError.OutOfCapabilities;
-    const slot = &capabilitySlots[slot_index];
-    const memory_object_handle = try process.createMemoryObjectForOwner(owner_process_handle, size_in_bytes);
-
-    return initializeCapabilitySlot(
-        slot_index,
-        slot,
+/// Converts a typed-frame capability in place into an immutable memory object.
+pub fn createMemoryObjectCapability(
+    owner_process_handle: process.ProcessHandle,
+    frame_capability: abi.capability.CapabilityHandle,
+) CapabilityError!abi.capability.CapabilityHandle {
+    const resolved = try resolveCapabilitySlot(
         owner_process_handle,
-        .{ .manage = true, .read = true, .write = true, .execute = true },
-        abi.capability.INVALID_CAPABILITY,
-        .{ .memory_object = memory_object_handle },
+        frame_capability,
+        .{ .manage = true },
     );
+    const authority_handle = switch (resolved.object.?) {
+        .physical_frame => |handle| handle,
+        else => return CapabilityError.InvalidCapabilityType,
+    };
+    const authority = try physical_memory_authority.get(authority_handle);
+    const memory_object_handle = try process.createMemoryObjectForOwner(
+        owner_process_handle,
+        authority_handle,
+    );
+    arch.mmu.zeroPhysicalRange(authority.physical_start, authority.size()) catch |err| {
+        process.destroyMemoryObject(memory_object_handle) catch {};
+        return err;
+    };
+    const slot_index = abi.capability.capabilitySlotIndex(frame_capability);
+    capabilitySlots[slot_index].object = .{ .memory_object = memory_object_handle };
+    return frame_capability;
+}
+
+/// Destroys an unmapped memory object, its frame authority, and its capability.
+pub fn destroyMemoryObjectCapability(
+    owner_process_handle: process.ProcessHandle,
+    capability_handle: abi.capability.CapabilityHandle,
+) CapabilityError!void {
+    const memory_object_handle = try resolveMemoryObject(
+        owner_process_handle,
+        capability_handle,
+        .{ .manage = true },
+    );
+    if (hasDirectCapabilityChild(capability_handle)) return CapabilityError.CapabilityHasDescendants;
+    const info = try process.getMemoryObjectInfo(memory_object_handle);
+    try process.destroyMemoryObject(memory_object_handle);
+    try physical_memory_authority.delete(info.authority_handle);
+    clearCapabilitySlot(abi.capability.capabilitySlotIndex(capability_handle));
 }
 
 /// Creates a physical-memory authority object and installs its owning capability.
@@ -307,8 +336,15 @@ pub fn revokePhysicalMemoryCapability(
 
     while (findLeafCapabilityDescendant(capability_handle)) |descendant| {
         const descendant_slot = try resolveCapabilitySlot(owner_process_handle, descendant, .{});
-        const authority_handle = physicalAuthorityHandle(descendant_slot.object.?) orelse {
-            return CapabilityError.InvalidCapabilityType;
+        const authority_handle = switch (descendant_slot.object.?) {
+            .memory_object => |memory_object_handle| blk: {
+                const info = try process.getMemoryObjectInfo(memory_object_handle);
+                try process.revokeMemoryObject(memory_object_handle);
+                break :blk info.authority_handle;
+            },
+            else => physicalAuthorityHandle(descendant_slot.object.?) orelse {
+                return CapabilityError.InvalidCapabilityType;
+            },
         };
         try physical_memory_authority.delete(authority_handle);
         clearCapabilitySlot(abi.capability.capabilitySlotIndex(descendant));

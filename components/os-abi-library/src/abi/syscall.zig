@@ -18,6 +18,7 @@ pub const SyscallNumber = enum(u32) {
     retype_untyped_memory = 18,
     delete_physical_memory = 19,
     revoke_physical_memory = 20,
+    destroy_memory_object = 21,
     _,
 };
 

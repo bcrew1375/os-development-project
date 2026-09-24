@@ -2,6 +2,7 @@ const arch = @import("arch");
 const address_space = @import("address_space.zig");
 const common = @import("common.zig");
 const limine_requests = @import("../../common/boot/limine/requests.zig");
+const std = @import("std");
 
 pub const createAddressSpaceRoot = address_space.createAddressSpaceRoot;
 pub const destroyAddressSpaceRoot = address_space.destroyAddressSpaceRoot;
@@ -11,6 +12,29 @@ pub const getMaxAvailableAddress = @import("memory_map.zig").getMaxAvailableAddr
 
 pub fn getMaximumPhysicalAddress() u64 {
     return (@as(u64, 1) << 52) - 1;
+}
+
+pub fn zeroPhysicalRange(physicalStart: u64, sizeInBytes: u64) arch.MmuError!void {
+    const physical_end = std.math.add(u64, physicalStart, sizeInBytes) catch {
+        return arch.MmuError.MappingError;
+    };
+    if (physical_end > getDirectMapMaxSize()) return arch.MmuError.MappingError;
+    if (physicalStart % common.PAGE_SIZE != 0 or sizeInBytes % common.PAGE_SIZE != 0) {
+        return arch.MmuError.MappingError;
+    }
+
+    const scratch_virtual_address: usize = 0xFFFF_FFFF_F7FF_F000;
+    const protection = arch.PageProtection{ .write = true };
+    if (!isTablePresent(scratch_virtual_address)) {
+        try ensurePageTable(scratch_virtual_address, protection);
+    }
+
+    var physical_address: u64 = physicalStart;
+    while (physical_address < physical_end) : (physical_address += common.PAGE_SIZE) {
+        try mapPage(scratch_virtual_address, @intCast(physical_address), protection);
+        @memset(@as([*]u8, @ptrFromInt(scratch_virtual_address))[0..common.PAGE_SIZE], 0);
+        _ = unmapPage(scratch_virtual_address);
+    }
 }
 
 const PageWalk = struct {
@@ -205,14 +229,6 @@ pub fn getDirectMapVirtualAddress() u64 {
 
 pub fn getDirectMapMaxSize() u64 {
     return common.DIRECT_MAP_SIZE;
-}
-
-pub fn getKernelHeapVirtualAddress() u64 {
-    return common.KERNEL_HEAP_VIRTUAL_ADDRESS;
-}
-
-pub fn getKernelHeapSize() u64 {
-    return common.KERNEL_HEAP_SIZE;
 }
 
 pub fn getPageSize() usize {

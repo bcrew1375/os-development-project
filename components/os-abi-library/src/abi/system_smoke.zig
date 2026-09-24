@@ -8,11 +8,13 @@ pub const ROOT_PROCESS_PREPARED = PREFIX ++ " milestone=root_process_prepared\n"
 pub const KERNEL_INITIALIZED = PREFIX ++ " milestone=kernel_initialized\n";
 pub const USERSPACE_ENTERED = PREFIX ++ " milestone=userspace_entered\n";
 pub const BOOT_INFO_VALIDATED = PREFIX ++ " milestone=boot_info_validated\n";
+pub const PHYSICAL_MEMORY_ALLOCATED = PREFIX ++ " milestone=physical_memory_allocated\n";
 pub const ADDRESS_SPACE_CAPABILITY_ACQUIRED =
     PREFIX ++ " milestone=address_space_capability_acquired\n";
 pub const MEMORY_OBJECT_CAPABILITY_ACQUIRED =
     PREFIX ++ " milestone=memory_object_capability_acquired\n";
 pub const MEMORY_OBJECT_MAPPED = PREFIX ++ " milestone=memory_object_mapped\n";
+pub const USERSPACE_HEAP_VERIFIED = PREFIX ++ " milestone=userspace_heap_verified\n";
 pub const EXIT_FORMAT = PREFIX ++ " EXIT status={d}\n";
 
 pub const ordered_milestones = [_][]const u8{
@@ -20,7 +22,9 @@ pub const ordered_milestones = [_][]const u8{
     KERNEL_INITIALIZED,
     USERSPACE_ENTERED,
     BOOT_INFO_VALIDATED,
+    PHYSICAL_MEMORY_ALLOCATED,
     ADDRESS_SPACE_CAPABILITY_ACQUIRED,
     MEMORY_OBJECT_CAPABILITY_ACQUIRED,
     MEMORY_OBJECT_MAPPED,
+    USERSPACE_HEAP_VERIFIED,
 };

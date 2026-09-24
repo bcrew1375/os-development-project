@@ -1,6 +1,6 @@
 # Kernel Object Model
 
-Status date: 2026-09-22
+Status date: 2026-09-24
 
 This document is the design contract for kernel objects that will support the
 transition from the bootstrapped root task to multiple isolated userspace
@@ -198,6 +198,83 @@ The initial authority model must define:
 
 The root task should receive bounded authority during bootstrap and use it to fund
 child address spaces, stacks, executable segments, and userspace heaps.
+
+The initial root-task allocator ingests validated, sorted normal-RAM descriptors
+and retains each descriptor's parent capability and physical base. It uses bounded
+sorted free extents plus generation-checked active allocation slots. Allocation is
+checked first-fit with power-of-two alignment applied to absolute physical
+addresses; returned ranges identify the parent capability, physical start,
+parent-relative offset, and byte size. Free extents coalesce only when physically
+adjacent and owned by the same parent capability.
+
+Allocator handles are local policy identities, not kernel capabilities. They bind
+the allocator instance, slot, generation, and an integrity guard so fabricated,
+foreign, stale, and duplicate frees are rejected. Because allocator identity uses
+its address, an allocator is initialized in its final storage and must not be moved
+while handles remain live. Metadata exhaustion is explicit and failed operations
+leave byte accounting and live allocation identities unchanged.
+
+Userspace must delete the derived physical-frame capability or destroy the memory
+object before returning its allocation handle to the allocator. If kernel cleanup
+fails, the allocation remains reserved; advertising it as free would permit an
+unsafe second derivation over still-live kernel authority.
+
+### Frame-backed memory objects
+
+A normal-RAM `MemoryObject` is created by atomically converting an existing typed
+physical-frame capability slot. Conversion preserves the capability handle,
+generation, rights, and derivation parent while changing the referenced object
+type from `PhysicalFrame` to `MemoryObject`. A failed conversion leaves the frame
+capability and physical authority intact.
+
+The kernel retains immutable backing metadata for each memory object:
+
+- physical start and byte size;
+- normal-RAM attributes;
+- the generation-checked physical-authority identity;
+- the current number of published VMA mappings.
+
+Normal RAM is zeroed through the architecture MMU interface before the converted
+capability is exposed as a memory object. Mapping is eager and uses the exact
+backing frame at `physical_start + object_offset`; it does not allocate object data
+pages through the PMM or early allocator. Every mapping of the same object offset
+therefore aliases the same physical frame.
+
+Object mapping is transactional. The VMM installs page mappings into the explicit
+address-space root before publishing VMA metadata or incrementing the object
+mapping reference. If any page installation fails, all pages installed by that
+request are unmapped and no mapping reference remains. Object-backed fault repair
+may restore a missing PTE from immutable VMA backing metadata, but must never
+allocate anonymous physical memory.
+
+Explicit object destruction requires the `manage` right, rejects live mappings,
+destroys the retained physical-frame authority, and invalidates the capability.
+Revoking a physical-memory ancestor is stronger: descendant memory objects are
+forcibly unmapped from every address space, destroyed deepest-first, and their
+capability slots are invalidated before the authority range becomes reusable.
+
+Anonymous VMAs are reservation-only metadata. They carry no implicit physical
+allocation authority, and a not-present fault returns `MissingPhysicalBacking`.
+Userspace must supply typed frame backing through a memory object before access can
+succeed.
+
+### Root-task userspace heap
+
+The root task owns a bounded collection of page-aligned heap extents inside a
+linker-defined virtual range. Every extent independently contains a boundary-tag
+allocator; extents are not assumed to be physically or virtually contiguous.
+
+Extent growth is transactional in this order: allocate a delegated physical
+range, retype frames, create a memory object, map it, resolve the mapped address,
+initialize allocator metadata, and only then publish the extent. Failure unwinds
+in reverse order. If any kernel cleanup step fails, physical allocator ownership
+is retained rather than advertised as free.
+
+Allocation scans extents deterministically by virtual address and grows only after
+all published extents report exhaustion. Empty non-initial extents may be reclaimed
+through an explicit fallible operation. Partial cleanup progress is recorded so a
+later retry cannot double-unmap or double-destroy. Reclaimed virtual holes are
+eligible for deterministic reuse.
 
 ## Ownership and lifetime rules
 

@@ -1,9 +1,8 @@
-//! Common virtual memory area manager and demand-mapping helpers.
+//! Common virtual memory area manager and explicit-backing fault repair.
 
 const arch = @import("arch");
 const abi = @import("abi");
-
-const pmm = @import("pmm.zig");
+const std = @import("std");
 
 /// Errors produced by virtual memory operations.
 pub const VMMError = error{
@@ -16,6 +15,7 @@ pub const VMMError = error{
     FaultBeforeMemoryManagementActive,
     FaultOutsideVirtualMemoryArea,
     ProtectionViolation,
+    MissingPhysicalBacking,
     PhysicalMemoryAllocationFailed,
     MappingFailed,
 };
@@ -35,6 +35,7 @@ pub const VirtualMemoryArea = struct {
     permissions: MemoryPermissions = undefined,
     memory_object_handle: u32 = abi.syscall.INVALID_HANDLE,
     memory_object_offset: u64 = 0,
+    backing_physical_start: u64 = 0,
 };
 
 /// Common address-space metadata backed by caller-provided VMA storage.
@@ -53,30 +54,6 @@ pub fn setAddressSpace(addressSpace: *AddressSpace) void {
 /// Reserves a virtual range without eagerly allocating backing frames.
 pub fn map(addressSpace: *AddressSpace, startAddress: u64, endAddress: u64, memoryPermissions: MemoryPermissions) !void {
     try mapObject(addressSpace, startAddress, endAddress, memoryPermissions, abi.syscall.INVALID_HANDLE, 0);
-}
-
-/// Reserves and immediately backs a virtual range in the current hardware address space.
-/// Mapping failures preserve the VMA and any pages mapped before the failure.
-pub fn mapEager(addressSpace: *AddressSpace, startAddress: u64, endAddress: u64, memoryPermissions: MemoryPermissions) !void {
-    try map(addressSpace, startAddress, endAddress, memoryPermissions);
-
-    const pageSize: u64 = @intCast(arch.mmu.getPageSize());
-    var pageAddress = startAddress;
-    while (pageAddress < endAddress) : (pageAddress += pageSize) {
-        try mapAllocatedPage(@intCast(pageAddress), memoryPermissions);
-    }
-}
-
-/// Reserves and immediately backs a virtual range in `root`.
-/// Mapping failures preserve the VMA and any pages mapped before the failure.
-pub fn mapEagerInAddressSpace(root: arch.AddressSpaceRoot, addressSpace: *AddressSpace, startAddress: u64, endAddress: u64, memoryPermissions: MemoryPermissions) !void {
-    try map(addressSpace, startAddress, endAddress, memoryPermissions);
-
-    const pageSize: u64 = @intCast(arch.mmu.getPageSize());
-    var pageAddress = startAddress;
-    while (pageAddress < endAddress) : (pageAddress += pageSize) {
-        try mapAllocatedPageInAddressSpace(root, @intCast(pageAddress), memoryPermissions);
-    }
 }
 
 /// Maps bootstrap-time contiguous physical pages for a virtual range in `root`.
@@ -173,7 +150,62 @@ pub fn mapObject(
     addressSpace.virtual_memory_areas[addressSpace.length].permissions = memoryPermissions;
     addressSpace.virtual_memory_areas[addressSpace.length].memory_object_handle = memoryObjectHandle;
     addressSpace.virtual_memory_areas[addressSpace.length].memory_object_offset = memoryObjectOffset;
+    addressSpace.virtual_memory_areas[addressSpace.length].backing_physical_start = 0;
 
+    addressSpace.length += 1;
+}
+
+/// Installs immutable contiguous backing and publishes the VMA only after all
+/// page mappings succeed.
+pub fn mapBackedObjectInAddressSpace(
+    root: arch.AddressSpaceRoot,
+    addressSpace: *AddressSpace,
+    startAddress: u64,
+    endAddress: u64,
+    memoryPermissions: MemoryPermissions,
+    memoryObjectHandle: u32,
+    memoryObjectOffset: u64,
+    physicalStart: u64,
+) VMMError!void {
+    try validateVirtualMemoryArea(addressSpace, startAddress, endAddress);
+
+    const page_size = arch.mmu.getPageSize();
+    const page_protection = arch.PageProtection{
+        .write = memoryPermissions.writeable,
+        .user = memoryPermissions.user_accessible,
+        .execute = memoryPermissions.executable,
+    };
+    var mapped_bytes: usize = 0;
+    errdefer rollbackMappedPages(root, @intCast(startAddress), mapped_bytes, page_size);
+
+    const mapping_size: usize = @intCast(endAddress - startAddress);
+    while (mapped_bytes < mapping_size) : (mapped_bytes += page_size) {
+        const virtual_address = @as(usize, @intCast(startAddress)) + mapped_bytes;
+        const table_address = virtual_address & ~(arch.mmu.getPageTableRegionSize() - 1);
+        if (!arch.mmu.isTablePresentInAddressSpace(root, table_address)) {
+            arch.mmu.ensurePageTableInAddressSpace(root, table_address, page_protection) catch {
+                return VMMError.MappingFailed;
+            };
+        }
+        const physical_address = std.math.add(u64, physicalStart, mapped_bytes) catch {
+            return VMMError.MappingFailed;
+        };
+        arch.mmu.mapPageInAddressSpace(
+            root,
+            virtual_address,
+            @intCast(physical_address),
+            page_protection,
+        ) catch return VMMError.MappingFailed;
+    }
+
+    addressSpace.virtual_memory_areas[addressSpace.length] = .{
+        .start_address = startAddress,
+        .end_address = endAddress,
+        .permissions = memoryPermissions,
+        .memory_object_handle = memoryObjectHandle,
+        .memory_object_offset = memoryObjectOffset,
+        .backing_physical_start = physicalStart,
+    };
     addressSpace.length += 1;
 }
 
@@ -223,7 +255,7 @@ pub fn faultHandler(faultInfo: arch.FaultInfo) void {
     };
 }
 
-/// Resolves a not-present page fault by allocating and mapping a frame.
+/// Resolves a not-present page fault only from immutable object backing.
 pub fn resolveFault(faultInfo: arch.FaultInfo) VMMError!void {
     const vma = findVirtualMemoryArea(faultInfo.address) orelse {
         return VMMError.FaultOutsideVirtualMemoryArea;
@@ -237,60 +269,65 @@ pub fn resolveFault(faultInfo: arch.FaultInfo) VMMError!void {
         return VMMError.ProtectionViolation;
     }
 
-    try mapAllocatedPage(faultInfo.address, vma.permissions);
-}
-
-fn mapAllocatedPage(virtualAddress: usize, memoryPermissions: MemoryPermissions) VMMError!void {
-    const pageSize = arch.mmu.getPageSize();
-    const pageAlignedAddress = virtualAddress & ~(pageSize - 1);
-    const tableAlignedAddress = virtualAddress & ~(arch.mmu.getPageTableRegionSize() - 1);
-
-    const pageProtection = arch.PageProtection{
-        .write = memoryPermissions.writeable,
-        .user = memoryPermissions.user_accessible,
-        .execute = memoryPermissions.executable,
-    };
-
-    if (!arch.mmu.isTablePresent(tableAlignedAddress)) {
-        arch.mmu.ensurePageTable(tableAlignedAddress, pageProtection) catch {
+    if (vma.memory_object_handle != abi.syscall.INVALID_HANDLE) {
+        const page_size = arch.mmu.getPageSize();
+        const page_address = faultInfo.address & ~(page_size - 1);
+        const vma_offset = page_address - @as(usize, @intCast(vma.start_address));
+        const physical_address = std.math.add(
+            u64,
+            vma.backing_physical_start,
+            vma_offset,
+        ) catch return VMMError.MappingFailed;
+        const table_address = page_address & ~(arch.mmu.getPageTableRegionSize() - 1);
+        const protection = arch.PageProtection{
+            .write = vma.permissions.writeable,
+            .user = vma.permissions.user_accessible,
+            .execute = vma.permissions.executable,
+        };
+        if (!arch.mmu.isTablePresent(table_address)) {
+            arch.mmu.ensurePageTable(table_address, protection) catch return VMMError.MappingFailed;
+        }
+        arch.mmu.mapPage(page_address, @intCast(physical_address), protection) catch {
             return VMMError.MappingFailed;
         };
+        return;
     }
 
-    const dataPhysicalAddress = try allocatePhysicalPage();
-
-    arch.mmu.mapPage(pageAlignedAddress, dataPhysicalAddress, pageProtection) catch {
-        return VMMError.MappingFailed;
-    };
-
-    @memset(@as([*]u8, @ptrFromInt(pageAlignedAddress))[0..pageSize], 0);
+    return VMMError.MissingPhysicalBacking;
 }
 
-fn mapAllocatedPageInAddressSpace(root: arch.AddressSpaceRoot, virtualAddress: usize, memoryPermissions: MemoryPermissions) VMMError!void {
-    const pageSize = arch.mmu.getPageSize();
-    const pageAlignedAddress = virtualAddress & ~(pageSize - 1);
-    const tableAlignedAddress = virtualAddress & ~(arch.mmu.getPageTableRegionSize() - 1);
-
-    const pageProtection = arch.PageProtection{
-        .write = memoryPermissions.writeable,
-        .user = memoryPermissions.user_accessible,
-        .execute = memoryPermissions.executable,
-    };
-
-    if (!arch.mmu.isTablePresentInAddressSpace(root, tableAlignedAddress)) {
-        arch.mmu.ensurePageTableInAddressSpace(root, tableAlignedAddress, pageProtection) catch {
-            return VMMError.MappingFailed;
-        };
+fn validateVirtualMemoryArea(
+    addressSpace: *AddressSpace,
+    startAddress: u64,
+    endAddress: u64,
+) VMMError!void {
+    if (addressSpace.virtual_memory_areas.len == 0) return VMMError.UndefinedAddressSpace;
+    if (addressSpace.length >= addressSpace.virtual_memory_areas.len) {
+        return VMMError.OutOfVirtualMemoryAreas;
     }
+    if (startAddress >= endAddress) return VMMError.InvalidVirtualMemoryAreaRange;
 
-    const dataPhysicalAddress = try allocatePhysicalPage();
+    const page_size: u64 = @intCast(arch.mmu.getPageSize());
+    if (startAddress % page_size != 0 or endAddress % page_size != 0) {
+        return VMMError.UnalignedVirtualMemoryArea;
+    }
+    for (addressSpace.virtual_memory_areas[0..addressSpace.length]) |vma| {
+        if (startAddress < vma.end_address and endAddress > vma.start_address) {
+            return VMMError.OverlappingVirtualMemoryArea;
+        }
+    }
+}
 
-    arch.mmu.mapPageInAddressSpace(root, pageAlignedAddress, dataPhysicalAddress, pageProtection) catch {
-        return VMMError.MappingFailed;
-    };
-
-    const directMapAddress = @as(usize, @intCast(arch.mmu.getDirectMapVirtualAddress())) + dataPhysicalAddress;
-    @memset(@as([*]u8, @ptrFromInt(directMapAddress))[0..pageSize], 0);
+fn rollbackMappedPages(
+    root: arch.AddressSpaceRoot,
+    start_address: usize,
+    mapped_bytes: usize,
+    page_size: usize,
+) void {
+    var offset: usize = 0;
+    while (offset < mapped_bytes) : (offset += page_size) {
+        _ = arch.mmu.unmapPageInAddressSpace(root, start_address + offset);
+    }
 }
 
 fn mapBootstrapContiguousPagesInAddressSpace(
@@ -333,21 +370,6 @@ fn mapBootstrapContiguousPagesInAddressSpace(
             return VMMError.MappingFailed;
         };
     }
-}
-
-fn allocatePhysicalPage() VMMError!usize {
-    const pageSize = arch.mmu.getPageSize();
-
-    if (arch.earlyAllocatorActive) {
-        const page = arch.early_allocator.allocate(pageSize, pageSize, arch.ReservedMapRegionType.PERSISTENT) catch {
-            return VMMError.PhysicalMemoryAllocationFailed;
-        };
-        return @intFromPtr(page);
-    }
-
-    return pmm.allocate(1) catch {
-        return VMMError.PhysicalMemoryAllocationFailed;
-    };
 }
 
 fn findVirtualMemoryArea(address: usize) ?VirtualMemoryArea {

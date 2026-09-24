@@ -18,7 +18,7 @@ pub const RootProcessLayout = struct {
     pub const boot_info_size: u64 = 0x1000;
     pub const boot_info_end: u64 = boot_info_start + boot_info_size;
 
-    pub const initial_stack_committed_size: u64 = 0x1000;
+    pub const initial_stack_committed_size: u64 = 0x0001_0000;
     pub const initial_stack_top: u64 = 0x00C0_0000;
     pub const initial_stack_start: u64 = initial_stack_top - initial_stack_committed_size;
 };
@@ -76,9 +76,9 @@ pub fn prepareRootProcess() !PreparedRootProcess {
     const root_module = try getRootProcessModule();
     const entry_point = try loadRootProcessElf(page_table_root, address_space, root_module);
 
+    try mapInitialUserStack(page_table_root, address_space);
     const delegated_boot_info = try mapAndWriteBootInfoPage(page_table_root, address_space);
     errdefer rollbackDelegatedBootInfo(delegated_boot_info);
-    try mapInitialUserStack(page_table_root, address_space);
     const initial_stack_pointer = try writeInitialCdeclCallFrame(
         page_table_root,
         RootProcessLayout.initial_stack_top,

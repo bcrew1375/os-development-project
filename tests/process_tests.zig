@@ -6,7 +6,20 @@ const kernel = @import("kernel_common");
 fn testSetup() void {
     kernel.process.resetForTest();
     kernel.process.execution_context.resetForTest();
+    kernel.memory_management.physical_memory_authority.resetForTest();
     arch.impl.test_support.resetState();
+}
+
+fn createMemoryObject(size_in_bytes: u64) !kernel.process.MemoryObjectHandle {
+    const authority = kernel.memory_management.physical_memory_authority;
+    const root = try authority.createRoot(
+        0,
+        size_in_bytes,
+        abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM,
+        0x1000,
+    );
+    const frame = try authority.derive(root, 0, size_in_bytes, .physical_frame, 0x1000);
+    return kernel.process.createMemoryObjectForOwner(kernel.process.ROOT_PROCESS_HANDLE, frame);
 }
 
 test "Execution context: root context is explicit and replaceable" {
@@ -104,7 +117,10 @@ test "Process: owner-aware creation preserves object ownership" {
     testSetup();
     const owner: kernel.process.ProcessHandle = 42;
     const address_space = try kernel.process.createAddressSpaceForOwner(owner);
-    const memory_object = try kernel.process.createMemoryObjectForOwner(owner, 0x1000);
+    const authority = kernel.memory_management.physical_memory_authority;
+    const root = try authority.createRoot(0, 0x1000, abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM, 0x1000);
+    const frame = try authority.derive(root, 0, 0x1000, .physical_frame, 0x1000);
+    const memory_object = try kernel.process.createMemoryObjectForOwner(owner, frame);
 
     try std.testing.expectEqual(owner, try kernel.process.getAddressSpaceOwner(address_space));
     try std.testing.expectEqual(owner, try kernel.process.getMemoryObjectOwner(memory_object));
@@ -225,19 +241,16 @@ test "Process: destroy rejects the active space and reuses bounded storage" {
     try std.testing.expectError(error.OutOfAddressSpaces, kernel.process.createAddressSpace());
 }
 
-test "Process: createMemoryObject returns tracked memory object handle" {
+test "Process: frame-backed memory object retains immutable authority metadata" {
     testSetup();
 
-    const handle = try kernel.process.createMemoryObject(0x2000);
+    const handle = try createMemoryObject(0x2000);
     try std.testing.expect(handle != abi.syscall.INVALID_HANDLE);
-}
-
-test "Process: createMemoryObject rejects invalid sizes" {
-    testSetup();
-
-    try std.testing.expectError(error.EmptyMemoryRange, kernel.process.createMemoryObject(0));
-    try std.testing.expectError(error.UnalignedMemoryObjectRange, kernel.process.createMemoryObject(1));
-    try std.testing.expectError(error.UnalignedMemoryObjectRange, kernel.process.createMemoryObject(0x1001));
+    const info = try kernel.process.getMemoryObjectInfo(handle);
+    try std.testing.expectEqual(@as(u64, 0), info.physical_start);
+    try std.testing.expectEqual(@as(u64, 0x2000), info.size_in_bytes);
+    try std.testing.expectEqual(abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM, info.attributes);
+    try std.testing.expectEqual(@as(usize, 0), info.mapping_count);
 }
 
 test "Process: memory object table exhaustion returns error" {
@@ -245,17 +258,32 @@ test "Process: memory object table exhaustion returns error" {
 
     var created: usize = 0;
     while (created < 64) : (created += 1) {
-        _ = try kernel.process.createMemoryObject(0x1000);
+        const physical_start = created * 0x2000;
+        const authority = kernel.memory_management.physical_memory_authority;
+        const root = try authority.createRoot(
+            physical_start,
+            0x1000,
+            abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM,
+            0x1000,
+        );
+        const frame = try authority.derive(root, 0, 0x1000, .physical_frame, 0x1000);
+        _ = try kernel.process.createMemoryObjectForOwner(kernel.process.ROOT_PROCESS_HANDLE, frame);
     }
 
-    try std.testing.expectError(error.OutOfMemoryObjects, kernel.process.createMemoryObject(0x1000));
+    try std.testing.expectError(
+        error.OutOfMemoryObjects,
+        kernel.process.createMemoryObjectForOwner(
+            kernel.process.ROOT_PROCESS_HANDLE,
+            kernel.memory_management.physical_memory_authority.INVALID_HANDLE,
+        ),
+    );
 }
 
 test "Process: mapMemoryObject maps object-backed virtual memory area" {
     testSetup();
 
     const address_space_handle = try kernel.process.createAddressSpace();
-    const memory_object_handle = try kernel.process.createMemoryObject(0x4000);
+    const memory_object_handle = try createMemoryObject(0x4000);
 
     try kernel.process.mapMemoryObject(
         address_space_handle,
@@ -280,11 +308,71 @@ test "Process: mapMemoryObject maps object-backed virtual memory area" {
     try std.testing.expect(mapped_area.permissions.user_accessible);
 }
 
+test "Process: repeated object mappings alias backing and track references" {
+    testSetup();
+    const first_address_space = try kernel.process.createAddressSpace();
+    const second_address_space = try kernel.process.createAddressSpace();
+    const memory_object = try createMemoryObject(0x2000);
+
+    try kernel.process.mapMemoryObject(
+        first_address_space,
+        memory_object,
+        0x0210_0000,
+        0,
+        0x2000,
+        abi.syscall.MAP_READ | abi.syscall.MAP_WRITE,
+    );
+    try kernel.process.mapMemoryObject(
+        second_address_space,
+        memory_object,
+        0x0220_0000,
+        0,
+        0x2000,
+        abi.syscall.MAP_READ | abi.syscall.MAP_WRITE,
+    );
+
+    const first_root = try kernel.process.getAddressSpaceRoot(first_address_space);
+    const second_root = try kernel.process.getAddressSpaceRoot(second_address_space);
+    try std.testing.expectEqual(
+        arch.mmu.getPhysicalAddressInAddressSpace(first_root, 0x0210_1000),
+        arch.mmu.getPhysicalAddressInAddressSpace(second_root, 0x0220_1000),
+    );
+    try std.testing.expectEqual(@as(usize, 2), (try kernel.process.getMemoryObjectInfo(memory_object)).mapping_count);
+
+    try kernel.process.unmapAddressSpace(first_address_space, 0x0210_0000, 0x2000);
+    try std.testing.expectEqual(@as(usize, 1), (try kernel.process.getMemoryObjectInfo(memory_object)).mapping_count);
+    try kernel.process.unmapAddressSpace(second_address_space, 0x0220_0000, 0x2000);
+    try std.testing.expectEqual(@as(usize, 0), (try kernel.process.getMemoryObjectInfo(memory_object)).mapping_count);
+}
+
+test "Process: failed backed mapping publishes no reference" {
+    testSetup();
+    const address_space = try kernel.process.createAddressSpace();
+    const memory_object = try createMemoryObject(0x2000);
+    const root = try kernel.process.getAddressSpaceRoot(address_space);
+    arch.mmu.failPageMappingCallForTest(2);
+
+    try std.testing.expectError(
+        error.MappingFailed,
+        kernel.process.mapMemoryObject(
+            address_space,
+            memory_object,
+            0x0230_0000,
+            0,
+            0x2000,
+            abi.syscall.MAP_READ,
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 0), (try kernel.process.getMemoryObjectInfo(memory_object)).mapping_count);
+    try std.testing.expectEqual(@as(usize, 0), (try kernel.process.getAddressSpace(address_space)).length);
+    try std.testing.expect(arch.mmu.getPhysicalAddressInAddressSpace(root, 0x0230_0000) == null);
+}
+
 test "Process: mapMemoryObject converts execute-only permission flags" {
     testSetup();
 
     const address_space_handle = try kernel.process.createAddressSpace();
-    const memory_object_handle = try kernel.process.createMemoryObject(0x1000);
+    const memory_object_handle = try createMemoryObject(0x1000);
 
     try kernel.process.mapMemoryObject(
         address_space_handle,
@@ -306,7 +394,7 @@ test "Process: mapMemoryObject converts execute-only permission flags" {
 test "Process: mapMemoryObject supports every nonempty permission combination" {
     testSetup();
     const address_space_handle = try kernel.process.createAddressSpace();
-    const memory_object_handle = try kernel.process.createMemoryObject(7 * 0x1000);
+    const memory_object_handle = try createMemoryObject(7 * 0x1000);
 
     for (1..8) |flags| {
         const index = flags - 1;
@@ -332,7 +420,7 @@ test "Process: mapMemoryObject supports every nonempty permission combination" {
 test "Process: mapMemoryObject propagates overlap and object range overflow" {
     testSetup();
     const address_space_handle = try kernel.process.createAddressSpace();
-    const memory_object_handle = try kernel.process.createMemoryObject(std.math.maxInt(u64) & ~@as(u64, 0xfff));
+    const memory_object_handle = try createMemoryObject(std.math.maxInt(u64) & ~@as(u64, 0xfff));
 
     try kernel.process.mapMemoryObject(
         address_space_handle,
@@ -370,7 +458,7 @@ test "Process: mapMemoryObject rejects invalid handles and ranges" {
     testSetup();
 
     const address_space_handle = try kernel.process.createAddressSpace();
-    const memory_object_handle = try kernel.process.createMemoryObject(0x2000);
+    const memory_object_handle = try createMemoryObject(0x2000);
 
     try std.testing.expectError(
         error.InvalidMemoryObjectHandle,

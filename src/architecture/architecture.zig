@@ -157,9 +157,6 @@ pub const FaultInfo = struct {
     instruction_fetch: bool,
 };
 
-/// True while boot code still relies on the architecture early allocator.
-pub var earlyAllocatorActive = true;
-
 /// Performs compile-time interface validation for an architecture implementation.
 pub fn validateImpl(comptime T: type) void {
     comptime {
@@ -193,6 +190,7 @@ pub fn validateImpl(comptime T: type) void {
             ensurePageTable: fn (virtualAddress: usize, flags: PageProtection) MmuError!void,
             getMemoryMap: fn () *MemoryMap,
             getMaximumPhysicalAddress: fn () u64,
+            zeroPhysicalRange: fn (physicalStart: u64, sizeInBytes: u64) MmuError!void,
             mapPageInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize, physicalAddress: usize, flags: PageProtection) MmuError!void,
             mapPage: fn (virtualAddress: usize, physicalAddress: usize, flags: PageProtection) MmuError!void,
             mapTableInAddressSpace: fn (root: AddressSpaceRoot, virtualAddress: usize, physicalAddress: usize, flags: PageProtection) MmuError!void,
@@ -205,8 +203,6 @@ pub fn validateImpl(comptime T: type) void {
             getDirectMapVirtualAddress: fn () u64,
             getDirectMapMaxSize: fn () u64,
             getKernelVirtualAddressStart: fn () u64,
-            getKernelHeapVirtualAddress: fn () u64,
-            getKernelHeapSize: fn () u64,
             getPageSize: fn () usize,
             getPageTableRegionSize: fn () usize,
             getPageTablePoolAvailableFrameCount: fn () usize,

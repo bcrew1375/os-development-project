@@ -1,6 +1,6 @@
 # Testing Roadmap
 
-Status date: 2026-09-22
+Status date: 2026-09-24
 
 This document is the operational plan for improving test fidelity and expanding
 what can be tested. The broader architectural priorities remain in the
@@ -10,12 +10,11 @@ testing work, dependencies, acceptance criteria, and validation commands.
 Coverage percentages are diagnostic. A higher percentage is not, by itself, a
 reason to expose private production hooks or distort production code.
 
-Physical-memory allocation and kernel-heap policy are excluded from this kernel
-testing roadmap. Their current implementations and tests are experimental
-fragments intended to move to a user-space memory-management component in the
-seL4-style design. The kernel test root therefore does not import
-`tests/pmm_tests.zig` or `tests/heap_tests.zig`. Mock physical-memory backing may
-still be used to test kernel-owned MMU and virtual-address-space mechanisms.
+Physical-memory allocation and heap policy live in the root-task component rather
+than the privileged kernel. Kernel tests cover authority, MMU, VMA, object, and
+bounded bootstrap mechanisms; root-task tests cover physical-range allocation,
+heap suballocation, transactional growth, cleanup failure, and reclamation. Mock
+physical-memory backing remains available for kernel-owned mapping mechanisms.
 
 ## Status legend
 
@@ -532,7 +531,7 @@ and leave the non-returning transition to physical integration tests.
 
 **Files:**
 
-- `components/os-root-task/src/memory_manager.zig`
+- `components/os-root-task/src/memory_management/operations.zig`
 - `components/os-root-task/tests/tests.zig`
 - a new root-task syscall transport helper if needed
 

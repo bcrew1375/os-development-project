@@ -28,7 +28,7 @@ test "Mock memory fixture supports configurable regions" {
     try std.testing.expectEqual(@as(u64, 4096), memory_map.entries[1].address);
 }
 
-test "Mock reset clears reservations mappings and allocator transition state" {
+test "Mock reset clears reservations mappings and boot state" {
     try arch.impl.test_support.initializeDefaultMemoryFixture();
     defer arch.impl.test_support.deinitializeMemoryFixture();
     try arch.early_allocator.initialize();
@@ -38,8 +38,6 @@ test "Mock reset clears reservations mappings and allocator transition state" {
     try arch.mmu.mapPage(0x400000, 0, .{});
     arch.boot.configureModulesForTest(&.{.{ .physical_start = 0x1000, .physical_end = 0x2000 }});
     arch.boot.finishBoot();
-    arch.earlyAllocatorActive = false;
-
     arch.impl.test_support.resetState();
 
     try std.testing.expectEqual(@as(usize, 0), arch.early_allocator.getReservedMap().length);
@@ -47,7 +45,6 @@ test "Mock reset clears reservations mappings and allocator transition state" {
     try std.testing.expectEqual(@as(?usize, null), arch.mmu.getPhysicalAddress(0x400000));
     try std.testing.expectEqual(@as(usize, 0), arch.boot.getBootModuleCount());
     try std.testing.expect(!arch.boot.isBootFinishedForTest());
-    try std.testing.expect(arch.earlyAllocatorActive);
 }
 
 test "Mock boot services expose configured modules and finalization" {

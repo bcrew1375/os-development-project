@@ -188,8 +188,8 @@ test "Root process preparation loads segments boot info and cdecl stack" {
         abi.boot_info.PhysicalMemoryInfo,
         physical_memory_bytes[2 * @sizeOf(abi.boot_info.PhysicalMemoryInfo) ..][0..@sizeOf(abi.boot_info.PhysicalMemoryInfo)],
     );
-    try std.testing.expectEqual(@as(u64, 0x4000), first_memory.physical_start);
-    try std.testing.expectEqual(@as(u64, module_physical_start - 0x4000), first_memory.size);
+    try std.testing.expectEqual(@as(u64, 0x14000), first_memory.physical_start);
+    try std.testing.expectEqual(@as(u64, module_physical_start - 0x14000), first_memory.size);
     try std.testing.expectEqual(@as(u64, 0x0300_1000), second_memory.physical_start);
     try std.testing.expectEqual(@as(u64, 0x00ff_f000), second_memory.size);
     for ([_]abi.boot_info.PhysicalMemoryInfo{ first_memory, second_memory }) |descriptor| {

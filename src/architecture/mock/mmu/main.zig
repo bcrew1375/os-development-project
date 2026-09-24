@@ -425,6 +425,14 @@ pub fn getMaximumPhysicalAddress() u64 {
     return std.math.maxInt(u64);
 }
 
+pub fn zeroPhysicalRange(physicalStart: u64, sizeInBytes: u64) arch.MmuError!void {
+    const destination = physicalMemorySliceForTest(
+        @intCast(physicalStart),
+        @intCast(sizeInBytes),
+    ) catch return arch.MmuError.MappingError;
+    @memset(destination, 0);
+}
+
 pub fn getDirectMapVirtualAddress() u64 {
     return @intFromPtr(requireMemoryFixture().ptr);
 }
@@ -435,14 +443,6 @@ pub fn getDirectMapMaxSize() u64 {
 
 pub fn getKernelVirtualAddressStart() u64 {
     return 0xC0000000;
-}
-
-pub fn getKernelHeapVirtualAddress() u64 {
-    return 0;
-}
-
-pub fn getKernelHeapSize() u64 {
-    return 0;
 }
 
 pub fn getPageSize() usize {

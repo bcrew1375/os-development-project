@@ -4,6 +4,7 @@ const abi = @import("abi");
 const arch = @import("arch");
 const std = @import("std");
 const vmm = @import("../memory_management/vmm.zig");
+const physical_memory_authority = @import("../memory_management/physical_memory_authority.zig");
 
 /// Errors produced by process and memory-object management operations.
 pub const ProcessError = error{
@@ -19,7 +20,8 @@ pub const ProcessError = error{
     UnalignedMemoryObjectRange,
     InvalidMemoryPermissions,
     AddressSpaceInUse,
-} || vmm.VMMError || arch.MmuError;
+    MemoryObjectInUse,
+} || vmm.VMMError || arch.MmuError || physical_memory_authority.Error;
 
 /// Opaque handle for a registered address space.
 pub const AddressSpaceHandle = u32;
@@ -50,6 +52,10 @@ const MemoryObjectSlot = struct {
     handle: MemoryObjectHandle = abi.syscall.INVALID_HANDLE,
     owner_process_handle: ProcessHandle = 0,
     size_in_bytes: u64 = 0,
+    physical_start: u64 = 0,
+    attributes: u32 = 0,
+    authority_handle: physical_memory_authority.Handle = physical_memory_authority.INVALID_HANDLE,
+    mapping_count: usize = 0,
     used: bool = false,
 };
 
@@ -140,12 +146,14 @@ pub fn unmapAddressSpace(
     const virtual_end = try validateNonEmptyUserVirtualRange(virtual_start, size_in_bytes);
     const slot = findAddressSpaceSlot(address_space_handle) orelse
         return ProcessError.InvalidAddressSpaceHandle;
+    const area = try vmm.query(&slot.address_space, virtual_start, virtual_end);
     try vmm.unmapInAddressSpace(
         slot.hardware_root,
         &slot.address_space,
         virtual_start,
         virtual_end,
     );
+    decrementMemoryObjectMapping(area.memory_object_handle);
 }
 
 /// Returns requested permission flags for an exact mapping.
@@ -178,40 +186,85 @@ pub fn destroyAddressSpace(address_space_handle: AddressSpaceHandle) ProcessErro
             area.start_address,
             area.end_address,
         );
+        decrementMemoryObjectMapping(area.memory_object_handle);
     }
     arch.mmu.destroyAddressSpaceRoot(slot.hardware_root);
     slot.* = .{};
 }
 
-/// Creates a page-aligned memory object owned by the root process.
-pub fn createMemoryObject(size_in_bytes: u64) ProcessError!MemoryObjectHandle {
-    return createMemoryObjectForOwner(ROOT_PROCESS_HANDLE, size_in_bytes);
-}
-
-/// Creates a page-aligned memory object owned by `owner_process_handle`.
-pub fn createMemoryObjectForOwner(owner_process_handle: ProcessHandle, size_in_bytes: u64) ProcessError!MemoryObjectHandle {
-    if (size_in_bytes == 0) {
-        return ProcessError.EmptyMemoryRange;
-    }
-
-    const page_size: u64 = @intCast(arch.mmu.getPageSize());
-    if (size_in_bytes % page_size != 0) {
-        return ProcessError.UnalignedMemoryObjectRange;
-    }
-
+/// Creates an immutable memory object from generation-checked typed frames.
+pub fn createMemoryObjectForOwner(
+    owner_process_handle: ProcessHandle,
+    authority_handle: physical_memory_authority.Handle,
+) ProcessError!MemoryObjectHandle {
     const slot = findFreeMemoryObjectSlot() orelse return ProcessError.OutOfMemoryObjects;
-
+    const authority = try physical_memory_authority.get(authority_handle);
+    if (authority.kind != .physical_frame) return physical_memory_authority.Error.InvalidAuthorityKind;
     const handle = nextMemoryObjectHandle;
     nextMemoryObjectHandle += 1;
-
     slot.* = .{
         .handle = handle,
         .owner_process_handle = owner_process_handle,
-        .size_in_bytes = size_in_bytes,
+        .size_in_bytes = authority.size(),
+        .physical_start = authority.physical_start,
+        .attributes = authority.attributes,
+        .authority_handle = authority_handle,
         .used = true,
     };
-
     return handle;
+}
+
+pub const MemoryObjectInfo = struct {
+    physical_start: u64,
+    size_in_bytes: u64,
+    attributes: u32,
+    authority_handle: physical_memory_authority.Handle,
+    mapping_count: usize,
+};
+
+/// Returns immutable backing identity and current mapping references.
+pub fn getMemoryObjectInfo(handle: MemoryObjectHandle) ProcessError!MemoryObjectInfo {
+    const slot = findMemoryObjectSlot(handle) orelse return ProcessError.InvalidMemoryObjectHandle;
+    return .{
+        .physical_start = slot.physical_start,
+        .size_in_bytes = slot.size_in_bytes,
+        .attributes = slot.attributes,
+        .authority_handle = slot.authority_handle,
+        .mapping_count = slot.mapping_count,
+    };
+}
+
+/// Removes an unmapped memory object from the registry.
+pub fn destroyMemoryObject(handle: MemoryObjectHandle) ProcessError!void {
+    const slot = findMemoryObjectSlot(handle) orelse return ProcessError.InvalidMemoryObjectHandle;
+    if (slot.mapping_count != 0) return ProcessError.MemoryObjectInUse;
+    slot.* = .{};
+}
+
+/// Forcibly removes every mapping of an object before revocation.
+pub fn revokeMemoryObject(handle: MemoryObjectHandle) ProcessError!void {
+    const memory_object = findMemoryObjectSlot(handle) orelse return ProcessError.InvalidMemoryObjectHandle;
+    for (&addressSpaceSlots) |*address_space_slot| {
+        if (!address_space_slot.used) continue;
+        var index: usize = 0;
+        while (index < address_space_slot.address_space.length) {
+            const area = address_space_slot.address_space.virtual_memory_areas[index];
+            if (area.memory_object_handle != handle) {
+                index += 1;
+                continue;
+            }
+            try vmm.unmapInAddressSpace(
+                address_space_slot.hardware_root,
+                &address_space_slot.address_space,
+                area.start_address,
+                area.end_address,
+            );
+            std.debug.assert(memory_object.mapping_count > 0);
+            memory_object.mapping_count -= 1;
+        }
+    }
+    std.debug.assert(memory_object.mapping_count == 0);
+    memory_object.* = .{};
 }
 
 /// Returns the process that owns the memory object referenced by `handle`.
@@ -239,15 +292,22 @@ pub fn mapMemoryObject(
     const virtual_end = try validateUserVirtualRange(virtual_start, size_in_bytes);
     try validateObjectRange(memory_object, object_offset, size_in_bytes);
 
-    const address_space = try getAddressSpace(address_space_handle);
-    try vmm.mapObject(
-        address_space,
+    const address_space_slot = findAddressSpaceSlot(address_space_handle) orelse
+        return ProcessError.InvalidAddressSpaceHandle;
+    const physical_start = std.math.add(u64, memory_object.physical_start, object_offset) catch {
+        return ProcessError.ObjectRangeOverflow;
+    };
+    try vmm.mapBackedObjectInAddressSpace(
+        address_space_slot.hardware_root,
+        &address_space_slot.address_space,
         virtual_start,
         virtual_end,
         try memoryPermissionsFromFlags(permission_flags),
         memory_object_handle,
         object_offset,
+        physical_start,
     );
+    memory_object.mapping_count += 1;
 }
 
 /// Reserves anonymous user memory in an address space.
@@ -340,6 +400,13 @@ fn findMemoryObjectSlot(handle: MemoryObjectHandle) ?*MemoryObjectSlot {
         if (slot.used and slot.handle == handle) return slot;
     }
     return null;
+}
+
+fn decrementMemoryObjectMapping(handle: MemoryObjectHandle) void {
+    if (handle == abi.syscall.INVALID_HANDLE) return;
+    const slot = findMemoryObjectSlot(handle) orelse return;
+    std.debug.assert(slot.mapping_count > 0);
+    slot.mapping_count -= 1;
 }
 
 /// Resets all process registry state for unit tests.

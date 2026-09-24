@@ -7,6 +7,7 @@ pub fn interruptGatePreservesRegisterAbi() !void {
     kernel.capability.resetForTest();
     kernel.process.resetForTest();
     kernel.process.execution_context.resetForTest();
+    kernel.memory_management.physical_memory_authority.resetForTest();
     const active_capability = try kernel.capability.createAddressSpaceCapability(
         kernel.process.ROOT_PROCESS_HANDLE,
     );
@@ -39,9 +40,33 @@ pub fn interruptGatePreservesRegisterAbi() !void {
     );
 
     const memory_object_size: usize = 0x3000;
+    const physical_frames = arch.early_allocator.allocate(
+        memory_object_size,
+        arch.mmu.getPageSize(),
+        arch.ReservedMapRegionType.PERSISTENT,
+    ) catch return framework.TestError.ExpectationFailed;
+    const untyped_capability = kernel.capability.createUntypedMemoryCapability(
+        kernel.process.ROOT_PROCESS_HANDLE,
+        @intFromPtr(physical_frames),
+        memory_object_size,
+        abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM,
+        arch.mmu.getPageSize(),
+    ) catch return framework.TestError.ExpectationFailed;
+    const frame_capability = abi.syscall.syscall5(
+        @intFromEnum(abi.syscall.SyscallNumber.retype_untyped_memory),
+        untyped_capability,
+        0,
+        0,
+        memory_object_size / arch.mmu.getPageSize(),
+        abi.syscall.packRetypeTarget(
+            .physical_frame,
+            .{ .manage = true, .read = true, .write = true, .execute = true },
+        ),
+    );
+    try framework.expect(frame_capability != abi.capability.INVALID_CAPABILITY);
     const memory_object_capability = abi.syscall.syscall3(
         @intFromEnum(abi.syscall.SyscallNumber.create_memory_object),
-        memory_object_size,
+        frame_capability,
         0,
         0,
     );
@@ -93,4 +118,12 @@ pub fn interruptGatePreservesRegisterAbi() !void {
     try framework.expect(!object_area.permissions.writeable);
     try framework.expect(object_area.permissions.executable);
     try framework.expectEqual(@as(u64, 0), object_area.memory_object_offset);
+    try framework.expectEqual(
+        @as(?usize, @intFromPtr(physical_frames)),
+        arch.mmu.getPhysicalAddressInAddressSpace(
+            kernel.process.getAddressSpaceRoot(address_space_handle) catch
+                return framework.TestError.ExpectationFailed,
+            object_virtual_start,
+        ),
+    );
 }

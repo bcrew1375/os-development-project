@@ -74,6 +74,7 @@ test "Physical-memory syscall numbers are stable" {
     try std.testing.expectEqual(@as(u32, 18), @intFromEnum(abi.syscall.SyscallNumber.retype_untyped_memory));
     try std.testing.expectEqual(@as(u32, 19), @intFromEnum(abi.syscall.SyscallNumber.delete_physical_memory));
     try std.testing.expectEqual(@as(u32, 20), @intFromEnum(abi.syscall.SyscallNumber.revoke_physical_memory));
+    try std.testing.expectEqual(@as(u32, 21), @intFromEnum(abi.syscall.SyscallNumber.destroy_memory_object));
 }
 
 test "Capability handles encode stable slots and generations" {
@@ -138,9 +139,11 @@ test "system smoke protocol records are complete ordered serial lines" {
         "SYSTEM-SMOKE milestone=kernel_initialized\n",
         "SYSTEM-SMOKE milestone=userspace_entered\n",
         "SYSTEM-SMOKE milestone=boot_info_validated\n",
+        "SYSTEM-SMOKE milestone=physical_memory_allocated\n",
         "SYSTEM-SMOKE milestone=address_space_capability_acquired\n",
         "SYSTEM-SMOKE milestone=memory_object_capability_acquired\n",
         "SYSTEM-SMOKE milestone=memory_object_mapped\n",
+        "SYSTEM-SMOKE milestone=userspace_heap_verified\n",
     };
     try std.testing.expectEqual(expected.len, abi.system_smoke.ordered_milestones.len);
     for (expected, abi.system_smoke.ordered_milestones) |expected_record, actual_record| {

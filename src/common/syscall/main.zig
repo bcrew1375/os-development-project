@@ -27,6 +27,7 @@ pub const Operation = enum {
     retype_untyped_memory,
     delete_physical_memory,
     revoke_physical_memory,
+    destroy_memory_object,
     convert_argument,
 };
 
@@ -106,6 +107,11 @@ pub fn dispatchWithServices(
             caller_process_handle,
             request.arguments[0],
         ),
+        .destroy_memory_object => destroyMemoryObject(
+            Services,
+            caller_process_handle,
+            request.arguments[0],
+        ),
         _ => .{ .unsupported = .{ .number = request.number } },
     };
 }
@@ -150,15 +156,33 @@ fn mapMemory(
 fn createMemoryObject(
     comptime Services: type,
     caller_process_handle: process.ProcessHandle,
-    size_in_bytes: u64,
+    frame_capability_value: u64,
 ) Result {
+    const frame_capability = toU32(frame_capability_value) catch |err| {
+        return failure(.convert_argument, err);
+    };
     const handle = Services.createMemoryObjectCapability(
         caller_process_handle,
-        size_in_bytes,
+        frame_capability,
     ) catch |err| {
         return failure(.create_memory_object, err);
     };
     return .{ .returned = handle };
+}
+
+fn destroyMemoryObject(
+    comptime Services: type,
+    caller_process_handle: process.ProcessHandle,
+    capability_value: u64,
+) Result {
+    const capability_handle = toU32(capability_value) catch |err| {
+        return failure(.convert_argument, err);
+    };
+    Services.destroyMemoryObjectCapability(
+        caller_process_handle,
+        capability_handle,
+    ) catch |err| return failure(.destroy_memory_object, err);
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
 }
 
 fn mapMemoryObject(
@@ -413,7 +437,9 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.UndefinedVirtualMemoryArea,
         error.FaultOutsideVirtualMemoryArea,
         => .mapping_not_found,
-        error.AddressSpaceInUse => .address_space_in_use,
+        error.AddressSpaceInUse,
+        error.MemoryObjectInUse,
+        => .address_space_in_use,
         else => .internal_failure,
     };
 }
@@ -443,6 +469,7 @@ const ProductionServices = struct {
     pub const deletePhysicalMemoryCapability = capability.deletePhysicalMemoryCapability;
     pub const revokePhysicalMemoryCapability = capability.revokePhysicalMemoryCapability;
     pub const createMemoryObjectCapability = capability.createMemoryObjectCapability;
+    pub const destroyMemoryObjectCapability = capability.destroyMemoryObjectCapability;
     pub const resolveMemoryObject = capability.resolveMemoryObject;
     pub const mapMemory = process.mapMemory;
     pub const mapMemoryObject = process.mapMemoryObject;

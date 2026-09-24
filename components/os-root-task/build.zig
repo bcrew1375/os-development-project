@@ -64,18 +64,12 @@ fn addRootTask(
     abi_path: []const u8,
 ) void {
     const abi = createAbiModule(b, config.target, optimize, abi_path);
-    const memory_manager = b.createModule(.{
-        .root_source_file = b.path("src/memory_manager.zig"),
+    const memory_management = b.createModule(.{
+        .root_source_file = b.path("src/memory_management/main.zig"),
         .target = config.target,
         .optimize = optimize,
     });
-    memory_manager.addImport("abi", abi);
-    const bootstrap_memory = b.createModule(.{
-        .root_source_file = b.path("src/bootstrap_memory.zig"),
-        .target = config.target,
-        .optimize = optimize,
-    });
-    bootstrap_memory.addImport("abi", abi);
+    memory_management.addImport("abi", abi);
 
     const root_task = b.addExecutable(.{
         .name = "root_process.elf",
@@ -90,8 +84,7 @@ fn addRootTask(
     });
 
     root_task.root_module.addImport("abi", abi);
-    root_task.root_module.addImport("bootstrap_memory", bootstrap_memory);
-    root_task.root_module.addImport("memory_manager", memory_manager);
+    root_task.root_module.addImport("memory_management", memory_management);
     root_task.setLinkerScript(b.path(config.linker_script));
 
     const install_root_task = b.addInstallArtifact(root_task, .{
@@ -115,28 +108,20 @@ fn addTests(
         }),
     });
     tests.root_module.addImport("abi", abi);
-    const memory_manager = b.createModule(.{
-        .root_source_file = b.path("src/memory_manager.zig"),
+    const memory_management = b.createModule(.{
+        .root_source_file = b.path("src/memory_management/main.zig"),
         .target = b.graph.host,
         .optimize = optimize,
     });
-    memory_manager.addImport("abi", abi);
-    tests.root_module.addImport("memory_manager", memory_manager);
-    const bootstrap_memory = b.createModule(.{
-        .root_source_file = b.path("src/bootstrap_memory.zig"),
-        .target = b.graph.host,
-        .optimize = optimize,
-    });
-    bootstrap_memory.addImport("abi", abi);
-    tests.root_module.addImport("bootstrap_memory", bootstrap_memory);
+    memory_management.addImport("abi", abi);
+    tests.root_module.addImport("memory_management", memory_management);
     const startup = b.createModule(.{
         .root_source_file = b.path("src/startup.zig"),
         .target = b.graph.host,
         .optimize = optimize,
     });
     startup.addImport("abi", abi);
-    startup.addImport("bootstrap_memory", bootstrap_memory);
-    startup.addImport("memory_manager", memory_manager);
+    startup.addImport("memory_management", memory_management);
     tests.root_module.addImport("startup", startup);
 
     const run_tests = b.addRunArtifact(tests);

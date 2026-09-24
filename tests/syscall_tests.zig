@@ -1,5 +1,6 @@
 const std = @import("std");
 const abi = @import("abi");
+const arch = @import("arch");
 const kernel = @import("kernel_common");
 
 fn request(number: abi.syscall.SyscallNumber, arguments: [5]u64) kernel.syscall.Request {
@@ -36,6 +37,25 @@ fn resetProductionState() void {
     kernel.capability.resetForTest();
     kernel.process.resetForTest();
     kernel.process.execution_context.resetForTest();
+    kernel.memory_management.physical_memory_authority.resetForTest();
+}
+
+fn createProductionFrameCapability(size_in_bytes: u64) !abi.capability.CapabilityHandle {
+    const root = try kernel.capability.createUntypedMemoryCapability(
+        kernel.process.ROOT_PROCESS_HANDLE,
+        0,
+        size_in_bytes,
+        abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM,
+        0x1000,
+    );
+    return kernel.capability.retypeUntypedMemoryCapability(
+        kernel.process.ROOT_PROCESS_HANDLE,
+        root,
+        0,
+        @intCast(size_in_bytes / 0x1000),
+        .physical_frame,
+        .{ .manage = true, .read = true, .write = true },
+    );
 }
 
 fn initializeContext(process_handle: kernel.process.ProcessHandle) !void {
@@ -358,6 +378,7 @@ test "Syscall: oversized handles and flags fail before service invocation" {
 }
 
 test "Syscall: production dispatch creates and maps capability-backed objects" {
+    try arch.impl.test_support.initializeDefaultMemoryFixture();
     resetProductionState();
     try initializeContext(kernel.process.ROOT_PROCESS_HANDLE);
 
@@ -375,8 +396,9 @@ test "Syscall: production dispatch creates and maps capability-backed objects" {
         ),
     );
 
+    const frame_capability = try createProductionFrameCapability(0x3000);
     const memory_object_result = kernel.syscall.dispatchFromCurrentContext(
-        request(.create_memory_object, .{ 0x3000, 0, 0, 0, 0 }),
+        request(.create_memory_object, .{ frame_capability, 0, 0, 0, 0 }),
     );
     const memory_object_capability = switch (memory_object_result) {
         .returned => |handle| handle,
@@ -408,6 +430,7 @@ test "Syscall: production dispatch creates and maps capability-backed objects" {
 }
 
 test "Syscall: production capability and invocation failures return stable statuses" {
+    try arch.impl.test_support.initializeDefaultMemoryFixture();
     resetProductionState();
     try initializeContext(kernel.process.ROOT_PROCESS_HANDLE);
 
@@ -426,8 +449,9 @@ test "Syscall: production capability and invocation failures return stable statu
         .returned => |handle| handle,
         else => return error.UnexpectedSyscallResult,
     };
+    const frame_capability = try createProductionFrameCapability(0x1000);
     const memory_object_capability = switch (kernel.syscall.dispatchFromCurrentContext(
-        request(.create_memory_object, .{ 0x1000, 0, 0, 0, 0 }),
+        request(.create_memory_object, .{ frame_capability, 0, 0, 0, 0 }),
     )) {
         .returned => |handle| handle,
         else => return error.UnexpectedSyscallResult,
@@ -681,6 +705,12 @@ const RecordingServices = struct {
         state.address_space_capability = handle;
     }
 
+    pub fn destroyMemoryObjectCapability(caller_process_handle: u32, handle: u32) !void {
+        state.call_count += 1;
+        state.caller_process_handle = caller_process_handle;
+        state.memory_object_capability = handle;
+    }
+
     pub fn retypeUntypedMemoryCapability(
         caller_process_handle: u32,
         source_capability: u32,
@@ -768,6 +798,10 @@ const FailingServices = struct {
 
     pub fn destroyAddressSpaceCapability(_: u32, _: u32) !void {
         if (failure_operation == .destroy_address_space) return error.AddressSpaceInUse;
+    }
+
+    pub fn destroyMemoryObjectCapability(_: u32, _: u32) !void {
+        if (failure_operation == .destroy_memory_object) return error.MemoryObjectInUse;
     }
 
     pub fn retypeUntypedMemoryCapability(

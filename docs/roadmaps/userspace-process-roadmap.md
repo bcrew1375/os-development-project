@@ -1,6 +1,6 @@
 # Userspace Process Roadmap
 
-Status date: 2026-09-23
+Status date: 2026-09-24
 
 This document is the implementation plan for progressing from the bootstrapped
 root task to multiple isolated, useful userspace processes. The architectural
@@ -601,7 +601,21 @@ partitioned and used.
 - rights can only be preserved or attenuated;
 - revocation invalidates descendants and permits defined reuse.
 
-## [ ] U3.4 Give memory objects immutable physical backing
+## [x] U3.4 Give memory objects immutable physical backing
+
+- Completed: 2026-09-23
+- Validation: ABI and root-task component tests; `zig build tests` (152 tests);
+  `zig build coverage` (580/580 common lines, 100%); both production builds;
+  both full `architecture-tests`; both `architecture-coverage`; both default
+  production `system-smoke` tests; `zig fmt --check`; `git diff --check`
+- Result: typed physical-frame capabilities are converted in place into immutable
+  memory objects, normal RAM is zeroed before exposure, explicit-root mappings
+  eagerly install exact backing frames transactionally, repeated mappings alias the
+  same frames, mapping references govern destruction, and ancestor revoke forcibly
+  unmaps and destroys descendant objects.
+- Limitation: legacy anonymous VMAs retain their existing demand-allocation path;
+  root-task physical allocation policy remains U3.5 and retirement of anonymous
+  kernel PMM/early-allocation fallback remains U3.7.
 
 **Related assessment:** P1.3.
 
@@ -623,7 +637,24 @@ partitioned and used.
 - no runtime memory-object path calls a kernel-global PMM;
 - mapping failure does not leak references or consume authority incorrectly.
 
-## [ ] U3.5 Implement the root-task physical-range allocator
+## [x] U3.5 Implement the root-task physical-range allocator
+
+- Completed: 2026-09-23
+- Validation: ABI and root-task component tests; `zig build tests` (152 kernel
+  tests plus host and component suites); `zig build coverage` (580/580 common
+  lines, 100%); both production builds; both full `architecture-tests`; both
+  `architecture-coverage`; both production `system-smoke` tests, including the
+  ordered `physical_memory_allocated` milestone; `zig fmt --check`;
+  `git diff --check`
+- Result: the root task now owns a bounded first-fit physical-range allocator with
+  checked absolute-address alignment, split and same-parent coalescing, byte
+  accounting, transactional metadata exhaustion, and allocator/slot/generation
+  checked handles. Startup allocates its managed page through this policy, retypes
+  the selected parent capability and offset, and releases allocator metadata only
+  after successful kernel-object cleanup.
+- Limitation: this allocator supplies physical ranges, not general-purpose virtual
+  memory. Building a userspace heap remains U3.6, and legacy anonymous kernel
+  PMM/early-allocation paths remain until U3.7.
 
 **Root-task work:**
 
@@ -642,7 +673,25 @@ partitioned and used.
 - duplicate and foreign frees are rejected;
 - metadata exhaustion is explicit and leaves allocator state unchanged.
 
-## [ ] U3.6 Build a userspace heap on mapped memory
+## [x] U3.6 Build a userspace heap on mapped memory
+
+- Completed: 2026-09-24
+- Validation: root-task component tests (25 tests); `zig build tests` (135 kernel
+  tests plus host and component suites); `zig build coverage` (540/540 common
+  lines, 100%); both root-task target builds; both production builds; both
+  `architecture-tests`; both `architecture-coverage`; both production
+  `system-smoke` tests with the ordered `userspace_heap_verified` milestone;
+  linker `PT_LOAD` page-range inspection; `zig fmt --check`; `git diff --check`
+- Result: the root task now owns a fixed-capacity multi-extent heap over the
+  linker-defined `[__root_heap_start, __root_heap_end)` range. Each extent is
+  funded through delegated physical allocation, frame retyping, memory-object
+  creation, and explicit mapping before its checked boundary-tag allocator is
+  published. Allocation is deterministic, growth and initialization roll back in
+  reverse order, empty later extents can be reclaimed and retried after partial
+  cleanup, and reclaimed virtual holes are reused.
+- Limitation: extent metadata is currently capped at eight entries, the heap range
+  is 16 MiB, and the initial 4 KiB extent remains mapped for the root task's
+  lifetime. Concurrency control is deferred until root-task threading exists.
 
 **Root-task work:**
 
@@ -660,7 +709,22 @@ partitioned and used.
 - heap accounting remains consistent after split, coalesce, and exhaustion tests;
 - kernel code gains no `kmalloc`-style interface.
 
-## [ ] U3.7 Retire legacy kernel PMM and heap paths
+## [x] U3.7 Retire legacy kernel PMM and heap paths
+
+- Completed: 2026-09-24
+- Validation: `zig build tests`; `zig build coverage`; both production builds;
+  both full `architecture-tests`; both `architecture-coverage`; both production
+  `system-smoke` tests; source-only retired-symbol scan; linker `PT_LOAD`
+  page-range inspection; `zig fmt --check`; `git diff --check`
+- Result: the experimental PMM, boundary-tag kernel heap, global heap facade,
+  architecture heap-query APIs, `earlyAllocatorActive`, eager VMM allocation, and
+  obsolete tests and compatibility exports are removed. Anonymous VMAs are now
+  reservation-only and unbacked faults return `MissingPhysicalBacking`.
+- Limitation: the kernel retains bounded bootstrap reservation for root ELF
+  segments, a 64 KiB initial stack, boot information, and page-table construction.
+  Runtime page tables use the 512-frame fixed pool with a 64-frame per-address-space
+  limit; fixed-capacity object registries remain until capability-funded metadata
+  storage is designed.
 
 **Related assessment:** P3.3 and P3.7.
 
@@ -702,12 +766,12 @@ partitioned and used.
 
 ## Phase 3 exit gate
 
-- [ ] The root task receives non-overlapping physical-memory authority.
-- [ ] The root task can allocate one aligned page from that authority.
-- [ ] Retype creates a genuinely frame-backed memory object.
-- [ ] Shared mappings use the same physical backing.
-- [ ] The root task has a functioning userspace heap.
-- [ ] Production kernel paths no longer expose the experimental PMM or heap.
+- [x] The root task receives non-overlapping physical-memory authority.
+- [x] The root task can allocate one aligned page from that authority.
+- [x] Retype creates a genuinely frame-backed memory object.
+- [x] Shared mappings use the same physical backing.
+- [x] The root task has a functioning userspace heap.
+- [x] Production kernel paths no longer expose the experimental PMM or heap.
 
 # Phase 4 — Create threads and run a second process
 

@@ -44,6 +44,7 @@ pub fn makeArchitecture(comptime implementation: anytype) type {
             pub const ensurePageTable = implementation.mmu.ensurePageTable;
             pub const getMemoryMap = implementation.mmu.getMemoryMap;
             pub const getMaximumPhysicalAddress = implementation.mmu.getMaximumPhysicalAddress;
+            pub const zeroPhysicalRange = implementation.mmu.zeroPhysicalRange;
             pub const mapPageInAddressSpace = implementation.mmu.mapPageInAddressSpace;
             pub const mapPage = implementation.mmu.mapPage;
             pub const mapTableInAddressSpace = implementation.mmu.mapTableInAddressSpace;
@@ -56,8 +57,6 @@ pub fn makeArchitecture(comptime implementation: anytype) type {
             pub const getDirectMapVirtualAddress = implementation.mmu.getDirectMapVirtualAddress;
             pub const getDirectMapMaxSize = implementation.mmu.getDirectMapMaxSize;
             pub const getKernelVirtualAddressStart = implementation.mmu.getKernelVirtualAddressStart;
-            pub const getKernelHeapVirtualAddress = implementation.mmu.getKernelHeapVirtualAddress;
-            pub const getKernelHeapSize = implementation.mmu.getKernelHeapSize;
             pub const getPageSize = implementation.mmu.getPageSize;
             pub const getPageTableRegionSize = implementation.mmu.getPageTableRegionSize;
             pub const getPageTablePoolAvailableFrameCount = implementation.mmu.getPageTablePoolAvailableFrameCount;

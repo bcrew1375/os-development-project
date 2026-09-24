@@ -20,9 +20,11 @@ MILESTONES = (
     "kernel_initialized",
     "userspace_entered",
     "boot_info_validated",
+    "physical_memory_allocated",
     "address_space_capability_acquired",
     "memory_object_capability_acquired",
     "memory_object_mapped",
+    "userspace_heap_verified",
 )
 MILESTONE_PATTERN = re.compile(r"^SYSTEM-SMOKE milestone=(?P<name>[a-z0-9_]+)$")
 EXIT_PATTERN = re.compile(r"^SYSTEM-SMOKE EXIT status=(?P<status>\d+)$")

@@ -119,16 +119,25 @@ pub fn MemoryManager(comptime Transport: type) type {
             ));
         }
 
-        pub fn createMemoryObject(size_in_bytes: usize) Error!MemoryObject {
+        pub fn createMemoryObject(frame: PhysicalFrame) Error!MemoryObject {
             const result = Transport.syscall3(
                 @intFromEnum(abi.syscall.SyscallNumber.create_memory_object),
-                size_in_bytes,
+                frame.capability,
                 0,
                 0,
             );
             try checkError(result);
             if (result == abi.capability.INVALID_CAPABILITY) return Error.InternalFailure;
             return .{ .capability = result };
+        }
+
+        pub fn destroyMemoryObject(memory_object: MemoryObject) Error!void {
+            try voidResult(Transport.syscall3(
+                @intFromEnum(abi.syscall.SyscallNumber.destroy_memory_object),
+                memory_object.capability,
+                0,
+                0,
+            ));
         }
 
         pub fn mapMemoryObject(
@@ -268,6 +277,7 @@ pub const unmapAddressSpace = native.unmapAddressSpace;
 pub const destroyAddressSpace = native.destroyAddressSpace;
 pub const createMemoryObject = native.createMemoryObject;
 pub const mapMemoryObject = native.mapMemoryObject;
+pub const destroyMemoryObject = native.destroyMemoryObject;
 pub const retypeUntypedMemory = native.retypeUntypedMemory;
 pub const retypePhysicalFrames = native.retypePhysicalFrames;
 pub const deletePhysicalMemory = native.deletePhysicalMemory;

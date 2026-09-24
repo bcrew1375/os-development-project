@@ -1,6 +1,6 @@
 # Current Kernel Structure and Rationale
 
-Status date: 2026-09-22
+Status date: 2026-09-24
 
 This document summarizes the kernel as it is implemented now and explains why
 its current boundaries exist. It is the architectural starting point for readers
@@ -17,8 +17,8 @@ ELF, enter ring 3, service system calls, enforce basic capability ownership and
 rights, and observe a clean root-task exit. This is a real initial userspace
 process, but it is still a bootstrap special case rather than a reusable process
 model. It cannot yet schedule multiple
-threads, contain a user fault, transfer capabilities, back memory objects with
-delegated physical frames, or provide IPC.
+threads, contain a user fault, transfer capabilities between protection domains,
+or provide IPC.
 
 ## System boundary
 
@@ -66,11 +66,12 @@ versioned independently.
 
 ### Root task
 
-`components/os-root-task` is the first userspace program. Today it validates its
-boot information, requests address-space and memory-object capabilities, asks the
-kernel to record a mapping, and exits. In the target design it becomes the first
-resource manager and process manager: policy that does not require privilege
-should move there rather than expand the kernel.
+`components/os-root-task` is the first userspace program. It validates its boot
+information, owns a bounded allocator for delegated physical ranges, and builds a
+general-purpose userspace heap from capability-backed mapped extents. Heap growth,
+suballocation, accounting, rollback, and optional empty-extent reclamation are
+root-task policy. The kernel supplies only authority validation, protected objects,
+and mapping mechanisms. Process-management policy remains future work.
 
 ## Kernel source structure
 
@@ -134,7 +135,8 @@ The current production path is:
 9. the root task uses the shared syscall ABI;
 10. architecture interrupt code converts registers into a common syscall request;
 11. common syscall policy performs capability and object-registry operations;
-12. the root task exits and the production smoke protocol records success.
+12. the root task constructs and verifies its initial userspace heap extent;
+13. the root task exits and the production smoke protocol records success.
 
 This path proves a real privilege transition and cross-domain ABI. It does not yet
 prove a reusable process model: the root task is still a privileged bootstrap
@@ -149,20 +151,39 @@ translates portable permissions into architecture MMU operations. The mock MMU
 tracks mappings per hardware root, which lets native tests exercise explicit-root
 behavior rather than accepting no-op mocks.
 
-The root bootstrap has a real hardware root. Address-space objects created by the
-syscall registry currently do not. They are metadata containers, not complete
-independently activatable address spaces.
+Anonymous `map_memory` requests reserve VMA metadata only. A fault in an unbacked
+VMA returns `MissingPhysicalBacking`; the kernel does not allocate a frame. Typed
+memory objects map immutable physical backing transactionally, and object-backed
+fault repair may reinstall a missing PTE for that same frame. Bootstrap-contiguous
+mapping remains only for the bounded pre-userspace construction of root ELF
+segments, the initial stack, and boot information.
 
 ### Process and memory-object registry
 
-`src/common/process` is currently a fixed-capacity registry for address-space and
-memory-object metadata. It records ownership, sizes, VMAs, and opaque handles.
-The name reflects the problem domain, but there is not yet a first-class kernel
-process or thread object.
+`src/common/process` is a fixed-capacity registry for address spaces and immutable
+frame-backed memory objects. Address-space objects own hardware roots and bounded
+VMA metadata. Memory objects retain physical start, size, authority identity, and
+mapping count. The name reflects the problem domain, but there is not yet a
+first-class kernel process or schedulable thread object.
 
-Memory objects currently have a size and ownership record but no delegated frame
-backing. A successful mapping syscall proves authorization and VMA bookkeeping;
-it does not yet prove shared physical storage.
+## Bounded privileged allocation
+
+The production kernel exposes no general-purpose PMM or heap. Retained allocation
+mechanisms are bounded:
+
+- early reservation metadata holds at most 128 ranges and returns
+  `OutOfReservations` when full;
+- runtime page-table storage is one 512-frame pool, with at most 64 frames owned by
+  one address space;
+- address-space, VMA, memory-object, capability, and physical-authority registries
+  use fixed-capacity arrays with explicit exhaustion;
+- root ELF segments, the bounded 64 KiB initial stack, and the one-page
+  boot-information blob are the only bootstrap-contiguous VMM allocations before
+  userspace entry.
+
+The early allocator remains a monotonic bootstrap reservation mechanism, not a
+runtime physical-memory policy service. Delegable RAM excludes every retained
+reservation before authority reaches userspace.
 
 ### Capability table
 
@@ -235,8 +256,12 @@ early allocator for page tables and bootstrap state. Long-lived kernel objects
 should use fixed-capacity storage initially and later move to an explicit
 capability-funded model rather than an implicit global heap.
 
-This design is not implemented completely. The ABI does not yet transfer safe
-physical-range authority or provide retype operations.
+The implemented bootstrap ABI delegates validated normal-RAM ranges together with
+capabilities. The root task tracks those ranges in sorted bounded free extents and
+active allocation slots, performs checked first-fit allocation against absolute
+physical addresses, and supplies the selected parent capability and relative
+offset to the kernel retype mechanism. Kernel-global anonymous allocation paths
+remain for legacy VMAs until U3.7; they are not used by frame-backed memory objects.
 
 ## Build and component boundaries
 
@@ -276,12 +301,12 @@ details.
 | Architectures | x86-32, x86-64, and native mock | More implementations behind the same interface |
 | Userspace | One bootstrapped root task | Isolated threads and protection domains |
 | Address spaces | Hardware root only for the root task | Hardware root for every address-space object |
-| Memory objects | Ownership, size, rights, and VMA metadata | Delegated physical backing and lifetime |
+| Memory objects | Immutable delegated physical backing and transactional explicit-root mapping | Broader object attributes and sharing policy |
 | Capabilities | Global owner/type/rights table | Per-space derivation, transfer, and revocation |
 | Scheduling | None | Cooperative switching, then timer preemption |
 | Fault handling | User faults can halt progress | Attribute and contain user faults |
 | IPC | None | Synchronous endpoints, then notifications |
-| Memory policy | Bootstrap allocation; PMM/heap experiments inactive | Root-task allocation policy |
+| Memory policy | Bounded root-task physical-range allocator and capability-backed multi-extent userspace heap; no kernel PMM or heap | Capability-funded userspace services and broader reclamation policy |
 | Testing | Native, physical, coverage, and smoke layers | Cover threads, faults, IPC, and child processes |
 
 ## Why the repository is shaped this way
@@ -306,11 +331,11 @@ bootstrap conveniences to become permanent monolithic services.
 
 ## Known structural debt
 
-- `src/kernel.zig` still contains large disabled PMM and heap experiments that
-  obscure the active path;
 - architecture syscall entry still assumes the root process as caller identity;
-- registered address spaces and memory objects overstate their current semantics;
-- object destruction and storage reclamation are undefined;
+- the root task remains a bootstrap-special execution context rather than a normal
+  scheduled thread;
+- lower-level page-table reclamation is bounded by address-space destruction rather
+  than performed eagerly for every empty table;
 - x86 interrupt and fault policy still has duplication and limited containment;
 - no locking or CPU-local ownership model exists because preemption and SMP have
   not yet been introduced.

@@ -15,6 +15,8 @@ research are not confused with one another.
   assessment, risks, and priority-ordered technical critique.
 - [Kernel Object Model](kernel-object-model.md) — current ownership, lifetime,
   authorization, and concurrency contract for kernel objects.
+- [Execution Flowcharts](flowcharts/README.md) — categorized production paths
+  from bootloader handoff through root-task entry.
 
 ## Architecture
 
@@ -25,6 +27,20 @@ research are not confused with one another.
 
 Architecture documents describe stable or currently implemented relationships.
 Proposals that are not implemented belong in `roadmaps`, not here.
+
+## Flowcharts
+
+- [Execution Flowcharts](flowcharts/README.md) — complete boot-to-root-task path
+  and navigation by execution responsibility.
+- [Bootloader Handoff](flowcharts/bootloader-handoff.md)
+- [Architecture Bootstrap](flowcharts/architecture-bootstrap.md)
+- [Kernel Initialization](flowcharts/kernel-initialization.md)
+- [Root-Process Preparation](flowcharts/root-process-preparation.md)
+- [Userspace Transition and Root-Task Entry](flowcharts/userspace-transition.md)
+
+Flowcharts document implemented control flow. Update the affected chart whenever
+the production boot, initialization, preparation, or privilege-transition path
+changes.
 
 ## Development
 
@@ -94,4 +110,5 @@ repository without reconstructing its build or usage documentation.
 5. Keep commands and protocol details beside the subsystem that owns them.
 6. Describe experimental or metadata-only code explicitly; do not present names
    as proof of complete semantics.
-7. Add new documents to this index and verify all relative links.
+7. Update `flowcharts` with any production execution-path change.
+8. Add new documents to this index and verify all relative links.

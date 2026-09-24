@@ -24,7 +24,9 @@ The kernel is moving toward a small, policy-light trusted core inspired by seL4:
 - the shared ABI and root task remain independently buildable components.
 
 Start with [Current Kernel Structure and Rationale](docs/architecture/current-state.md)
-for the implemented architecture and the reasons behind it. The complete
+for the implemented architecture and the reasons behind it. The
+[execution flowcharts](docs/flowcharts/README.md) trace the production path from
+bootloader handoff through root-task entry. The complete
 [documentation index](docs/README.md) separates current-state documentation,
 development guides, testing guides, roadmaps, and background references.
 
