@@ -15,12 +15,6 @@ pub export fn kernelMain() void {
         arch.cpu.unrecoverableHalt();
     };
 
-    kernel_common.process.execution_context.initializeRoot(
-        prepared_root_process.address_space_handle,
-    ) catch {
-        arch.cpu.unrecoverableHalt();
-    };
-
     launch_root_process.enterPreparedRootProcess(prepared_root_process);
 }
 

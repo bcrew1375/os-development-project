@@ -40,6 +40,10 @@ pub const TestId = enum {
     x86_64_platform_timer_initializes,
     boot_modules_are_cached_reserved_and_capacity_limited,
     syscall_interrupt_gate_preserves_register_abi,
+    user_invalid_opcode_fault_is_contained,
+    thread_context_initial_state_uses_bounded_kernel_stack,
+    thread_context_switch_round_trip_restores_architecture_state,
+    kernel_continuation_switch_round_trip_restores_architecture_state,
 };
 
 pub const ExpectedFault = struct {
@@ -74,6 +78,7 @@ pub const tests = [_]Test{
     .{ .id = .boot_memory_map_contains_available_memory, .name = "boot memory map contains available memory", .mode = .shared_machine, .architectures = all_x86 },
     .{ .id = .maximum_available_address_covers_available_regions, .name = "maximum available address covers available regions", .mode = .shared_machine, .architectures = all_x86 },
     .{ .id = .kernel_symbol_has_physical_mapping, .name = "kernel symbol has a physical mapping", .mode = .shared_machine, .architectures = all_x86 },
+    .{ .id = .thread_context_initial_state_uses_bounded_kernel_stack, .name = "thread context initial state uses bounded kernel stack", .mode = .shared_machine, .architectures = all_x86 },
     .{ .id = .x86_32_direct_map_uses_higher_half, .name = "x86-32 direct map uses higher half", .mode = .shared_machine, .architectures = only_x86_32 },
     .{ .id = .x86_32_descriptor_tables_initialize, .name = "x86-32 descriptor tables initialize", .mode = .shared_machine, .architectures = only_x86_32 },
     .{ .id = .x86_64_kernel_uses_higher_half, .name = "x86-64 kernel uses higher half", .mode = .shared_machine, .architectures = only_x86_64 },
@@ -99,6 +104,9 @@ pub const tests = [_]Test{
     .{ .id = .x86_64_platform_timer_initializes, .name = "x86-64 timer interrupts are delivered", .mode = .isolated_machine, .architectures = only_x86_64 },
     .{ .id = .boot_modules_are_cached_reserved_and_capacity_limited, .name = "boot modules are cached, reserved, and capacity limited", .mode = .isolated_machine, .architectures = all_x86 },
     .{ .id = .syscall_interrupt_gate_preserves_register_abi, .name = "syscall interrupt gate preserves register ABI", .mode = .isolated_machine, .architectures = all_x86 },
+    .{ .id = .user_invalid_opcode_fault_is_contained, .name = "user invalid opcode faults only the responsible thread", .mode = .isolated_machine, .architectures = all_x86 },
+    .{ .id = .thread_context_switch_round_trip_restores_architecture_state, .name = "thread context switch round trip restores architecture state", .mode = .isolated_machine, .architectures = all_x86 },
+    .{ .id = .kernel_continuation_switch_round_trip_restores_architecture_state, .name = "kernel continuation switch round trip restores architecture state", .mode = .isolated_machine, .architectures = all_x86 },
 };
 
 pub fn find(id: TestId) Test {

@@ -22,6 +22,7 @@ pub fn makeArchitecture(comptime implementation: anytype) type {
         pub const cpu = struct {
             pub const unrecoverableHalt = implementation.cpu.unrecoverableHalt;
             pub const enterUserMode = implementation.cpu.enterUserMode;
+            pub const waitForInterrupt = implementation.cpu.waitForInterrupt;
         };
 
         pub const interrupts = struct {
@@ -60,6 +61,24 @@ pub fn makeArchitecture(comptime implementation: anytype) type {
             pub const getPageSize = implementation.mmu.getPageSize;
             pub const getPageTableRegionSize = implementation.mmu.getPageTableRegionSize;
             pub const getPageTablePoolAvailableFrameCount = implementation.mmu.getPageTablePoolAvailableFrameCount;
+        };
+
+        pub const thread_context = struct {
+            pub const MAX_CONTEXTS = implementation.thread_context.MAX_CONTEXTS;
+            pub const KERNEL_STACK_SIZE = implementation.thread_context.KERNEL_STACK_SIZE;
+            pub const InitialStateForTest = implementation.thread_context.InitialStateForTest;
+            pub const create = implementation.thread_context.create;
+            pub const createKernelContinuation = implementation.thread_context.createKernelContinuation;
+            pub const destroy = implementation.thread_context.destroy;
+            pub const activate = implementation.thread_context.activate;
+            pub const switchContext = implementation.thread_context.switchContext;
+            pub const availableCount = implementation.thread_context.availableCount;
+            pub const getInitialStateForTest = implementation.thread_context.getInitialStateForTest;
+            pub const getKernelStackBoundsForTest = implementation.thread_context.getKernelStackBoundsForTest;
+            pub const prepareKernelContinuationForTest = implementation.thread_context.prepareKernelContinuationForTest;
+            pub const bindCurrentForTest = implementation.thread_context.bindCurrentForTest;
+            pub const getCurrentAddressSpaceRootForTest = implementation.thread_context.getCurrentAddressSpaceRootForTest;
+            pub const getPrivilegeStackForTest = implementation.thread_context.getPrivilegeStackForTest;
         };
 
         pub const platform = struct {

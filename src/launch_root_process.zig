@@ -3,6 +3,7 @@ const kernel_common = @import("kernel_common");
 const shared = @import("shared");
 const std = @import("std");
 const abi = @import("abi");
+const builtin = @import("builtin");
 
 const vmm = kernel_common.memory_management.virtual_memory;
 const physical_memory_authority = kernel_common.memory_management.physical_memory_authority;
@@ -48,6 +49,7 @@ pub const PreparedRootProcess = struct {
     address_space_root: arch.AddressSpaceRoot,
     entry_point: usize,
     initial_stack_pointer: usize,
+    thread_handle: kernel_common.process.thread.Handle,
 };
 
 pub fn launchRootProcess() !noreturn {
@@ -79,11 +81,22 @@ pub fn prepareRootProcess() !PreparedRootProcess {
     try mapInitialUserStack(page_table_root, address_space);
     const delegated_boot_info = try mapAndWriteBootInfoPage(page_table_root, address_space);
     errdefer rollbackDelegatedBootInfo(delegated_boot_info);
-    const initial_stack_pointer = try writeInitialCdeclCallFrame(
+    const initial_stack_pointer = try writeInitialCallFrame(
         page_table_root,
         RootProcessLayout.initial_stack_top,
         RootProcessLayout.boot_info_start,
     );
+    const thread_handle = try kernel_common.process.createThread(
+        kernel_common.process.ROOT_PROCESS_HANDLE,
+    );
+    errdefer kernel_common.process.thread.destroy(thread_handle) catch {};
+    try kernel_common.process.configureThread(thread_handle, .{
+        .capability_space_handle = kernel_common.process.ROOT_PROCESS_HANDLE,
+        .address_space_handle = address_space_handle,
+        .entry_point = entry_point,
+        .stack_pointer = initial_stack_pointer,
+        .argument = RootProcessLayout.boot_info_start,
+    });
 
     return .{
         .address_space_handle = address_space_handle,
@@ -91,16 +104,18 @@ pub fn prepareRootProcess() !PreparedRootProcess {
         .address_space_root = page_table_root,
         .entry_point = entry_point,
         .initial_stack_pointer = initial_stack_pointer,
+        .thread_handle = thread_handle,
     };
 }
 
 pub fn enterPreparedRootProcess(prepared_root_process: PreparedRootProcess) noreturn {
-    arch.mmu.switchAddressSpaceRoot(prepared_root_process.address_space_root);
-    arch.cpu.enterUserMode(
-        prepared_root_process.entry_point,
-        prepared_root_process.initial_stack_pointer,
-        RootProcessLayout.boot_info_start,
-    );
+    kernel_common.process.scheduler.initialize(prepared_root_process.address_space_root) catch {
+        @panic("failed to initialize scheduler");
+    };
+    kernel_common.process.scheduler.makeReady(prepared_root_process.thread_handle) catch {
+        @panic("failed to enqueue prepared root thread");
+    };
+    kernel_common.process.scheduler.start();
 }
 
 /// `vmm`'s bootstrap-mapping calls (mapBootstrapContiguousInAddressSpace,
@@ -220,19 +235,45 @@ fn mapInitialUserStack(page_table_root: arch.AddressSpaceRoot, address_space: *v
     );
 }
 
-/// The root process's `_start` is entered as a 32-bit cdecl function, so the
-/// stack must hold, from the top down: a fake return address, then the
-/// boot-info pointer as its one argument.
-fn writeInitialCdeclCallFrame(page_table_root: arch.AddressSpaceRoot, stack_top: u64, boot_info_address: u64) !usize {
+/// Constructs the target C ABI's function-entry stack shape. x86-32 carries
+/// the boot-info pointer on the stack; x86-64 carries it in RDI.
+fn writeInitialCallFrame(
+    page_table_root: arch.AddressSpaceRoot,
+    stack_top: u64,
+    boot_info_address: u64,
+) !usize {
     var stack_pointer = @as(usize, @intCast(stack_top));
 
-    stack_pointer -= @sizeOf(u32);
-    const boot_info_argument: u32 = @intCast(boot_info_address);
-    try copyIntoUserSpace(page_table_root, stack_pointer, std.mem.asBytes(&boot_info_argument));
+    switch (builtin.cpu.arch) {
+        .x86 => {
+            stack_pointer -= 3 * @sizeOf(u32);
+            stack_pointer -= @sizeOf(u32);
+            const boot_info_argument: u32 = @intCast(boot_info_address);
+            try copyIntoUserSpace(
+                page_table_root,
+                stack_pointer,
+                std.mem.asBytes(&boot_info_argument),
+            );
 
-    stack_pointer -= @sizeOf(u32);
-    const fake_return_address: u32 = 0;
-    try copyIntoUserSpace(page_table_root, stack_pointer, std.mem.asBytes(&fake_return_address));
+            stack_pointer -= @sizeOf(u32);
+            const fake_return_address: u32 = 0;
+            try copyIntoUserSpace(
+                page_table_root,
+                stack_pointer,
+                std.mem.asBytes(&fake_return_address),
+            );
+        },
+        .x86_64 => {
+            stack_pointer -= @sizeOf(u64);
+            const fake_return_address: u64 = 0;
+            try copyIntoUserSpace(
+                page_table_root,
+                stack_pointer,
+                std.mem.asBytes(&fake_return_address),
+            );
+        },
+        else => @compileError("unsupported root-process entry ABI"),
+    }
 
     return stack_pointer;
 }

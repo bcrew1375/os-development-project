@@ -290,3 +290,59 @@ test "Mock CPU operation observation starts reset" {
 
     try std.testing.expectEqual(@as(?arch.cpu.Operation, null), arch.cpu.getLastOperationForTest());
 }
+
+test "Mock thread contexts are bounded and switch address-space roots" {
+    arch.impl.test_support.resetState();
+    const first_root = try arch.mmu.createAddressSpaceRoot();
+    const second_root = try arch.mmu.createAddressSpaceRoot();
+    const first = try arch.thread_context.create(.{
+        .address_space_root = first_root,
+        .entry_point = 0x400000,
+        .stack_pointer = 0x800000,
+        .argument = 1,
+    });
+    const second = try arch.thread_context.create(.{
+        .address_space_root = second_root,
+        .entry_point = 0x500000,
+        .stack_pointer = 0x900000,
+        .argument = 2,
+    });
+
+    try arch.thread_context.switchContext(first, second);
+    try std.testing.expectEqual(second, arch.thread_context.getCurrentForTest());
+    try std.testing.expectEqual(second_root, arch.mmu.getCurrentAddressSpaceRootForTest());
+    try std.testing.expectEqualDeep(
+        @as(?arch.thread_context.SwitchOperation, .{ .current = first, .next = second }),
+        arch.thread_context.getLastSwitchForTest(),
+    );
+}
+
+test "Mock thread context exhaustion and stale handles are explicit" {
+    arch.impl.test_support.resetState();
+    var handles: [arch.impl.thread_context.MAX_CONTEXTS]arch.ThreadContextHandle = undefined;
+    for (&handles, 0..) |*handle, index| {
+        handle.* = try arch.thread_context.create(.{
+            .address_space_root = .{ .value = index + 1 },
+            .entry_point = 0x400000,
+            .stack_pointer = 0x800000,
+            .argument = 0,
+        });
+    }
+    try std.testing.expectError(error.OutOfThreadContexts, arch.thread_context.create(.{
+        .address_space_root = .{ .value = 100 },
+        .entry_point = 0x400000,
+        .stack_pointer = 0x800000,
+        .argument = 0,
+    }));
+
+    const stale = handles[0];
+    try arch.thread_context.destroy(stale);
+    try std.testing.expectError(error.InvalidThreadContextHandle, arch.thread_context.getForTest(stale));
+    const replacement = try arch.thread_context.create(.{
+        .address_space_root = .{ .value = 100 },
+        .entry_point = 0x400000,
+        .stack_pointer = 0x800000,
+        .argument = 0,
+    });
+    try std.testing.expect(replacement != stale);
+}

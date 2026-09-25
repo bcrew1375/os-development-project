@@ -63,6 +63,10 @@ const RecordingEnvironment = struct {
         diagnostic_count += 1;
     }
 
+    pub fn yield() u32 {
+        return syscall3(@intFromEnum(abi.syscall.SyscallNumber.yield), 0, 0, 0);
+    }
+
     pub fn physicalMemoryDescriptors(
         _: *const abi.boot_info.BootInfo,
     ) bootstrap_memory.Error![]const abi.boot_info.PhysicalMemoryInfo {
@@ -816,11 +820,19 @@ test "startup retains allocator ownership when kernel cleanup fails" {
 
 test "startup completes capability-based memory setup in order" {
     const boot_info = validBootInfo();
-    RecordingEnvironment.reset(&.{ 11, 21, 21, abi.syscall.SYSCALL_SUCCESS });
+    RecordingEnvironment.reset(&.{
+        11,
+        21,
+        21,
+        abi.syscall.SYSCALL_SUCCESS,
+        abi.syscall.SYSCALL_SUCCESS,
+        abi.syscall.SYSCALL_SUCCESS,
+        abi.syscall.SYSCALL_SUCCESS,
+    });
 
     try std.testing.expectEqual(abi.syscall.EXIT_SUCCESS, startup.run(RecordingEnvironment, &boot_info));
-    try std.testing.expectEqual(@as(usize, 4), RecordingEnvironment.syscall_count);
-    try std.testing.expectEqual(@as(usize, 14), RecordingEnvironment.diagnostic_count);
+    try std.testing.expectEqual(@as(usize, 7), RecordingEnvironment.syscall_count);
+    try std.testing.expectEqual(@as(usize, 16), RecordingEnvironment.diagnostic_count);
     try expectDiagnostic(0, abi.system_smoke.USERSPACE_ENTERED);
     try expectDiagnostic(1, "root: started\n");
     try expectDiagnostic(2, abi.system_smoke.BOOT_INFO_VALIDATED);
@@ -835,6 +847,8 @@ test "startup completes capability-based memory setup in order" {
     try expectDiagnostic(11, "root: mapped initial userspace heap extent\n");
     try expectDiagnostic(12, abi.system_smoke.USERSPACE_HEAP_VERIFIED);
     try expectDiagnostic(13, "root: userspace heap verified\n");
+    try expectDiagnostic(14, abi.system_smoke.COOPERATIVE_YIELD_COMPLETED);
+    try expectDiagnostic(15, "root: cooperative yield completed\n");
 
     const current_call = RecordingEnvironment.syscalls[0].three;
     try std.testing.expectEqual(
@@ -870,4 +884,11 @@ test "startup completes capability-based memory setup in order" {
         },
         map_call.arguments,
     );
+    for (RecordingEnvironment.syscalls[4..7]) |yield_call| {
+        try std.testing.expectEqual(
+            @intFromEnum(abi.syscall.SyscallNumber.yield),
+            yield_call.three.number,
+        );
+        try std.testing.expectEqual([_]usize{ 0, 0, 0 }, yield_call.three.arguments);
+    }
 }

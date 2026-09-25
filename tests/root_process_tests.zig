@@ -4,6 +4,7 @@ const elf_fixture = @import("elf_fixture");
 const kernel_common = @import("kernel_common");
 const launch_root_process = @import("launch_root_process");
 const std = @import("std");
+const builtin = @import("builtin");
 
 const vmm = kernel_common.memory_management.virtual_memory;
 const module_physical_start = 48 * 1024 * 1024;
@@ -82,7 +83,7 @@ test "Root process preparation propagates malformed ELF errors" {
     try std.testing.expectError(error.InvalidElfImage, prepare("not an elf"));
 }
 
-test "Root process preparation loads segments boot info and cdecl stack" {
+test "Root process preparation loads segments boot info and ABI entry stack" {
     try initializeLoaderTest();
     defer arch.impl.test_support.deinitializeMemoryFixture();
 
@@ -90,12 +91,28 @@ test "Root process preparation loads segments boot info and cdecl stack" {
     const prepared = try prepare(&image);
 
     try std.testing.expectEqual(@as(usize, 0x0040_0ffe), prepared.entry_point);
-    try std.testing.expectEqual(
-        @as(usize, launch_root_process.RootProcessLayout.initial_stack_top - 8),
-        prepared.initial_stack_pointer,
-    );
+    const expected_stack_pointer = switch (builtin.cpu.arch) {
+        .x86 => launch_root_process.RootProcessLayout.initial_stack_top - 20,
+        .x86_64 => launch_root_process.RootProcessLayout.initial_stack_top - 8,
+        else => unreachable,
+    };
+    try std.testing.expectEqual(@as(usize, expected_stack_pointer), prepared.initial_stack_pointer);
     try std.testing.expectEqual(@as(usize, 0), arch.mmu.getCurrentAddressSpaceRootForTest().value);
     try std.testing.expectEqual(@as(?arch.cpu.Operation, null), arch.cpu.getLastOperationForTest());
+    const root_thread = try kernel_common.process.thread.get(prepared.thread_handle);
+    const root_context = try arch.thread_context.getForTest(
+        root_thread.architecture_context_handle,
+    );
+    try std.testing.expectEqual(prepared.address_space_root, root_context.configuration.address_space_root);
+    try std.testing.expectEqual(prepared.entry_point, root_context.configuration.entry_point);
+    try std.testing.expectEqual(
+        prepared.initial_stack_pointer,
+        root_context.configuration.stack_pointer,
+    );
+    try std.testing.expectEqual(
+        @as(usize, launch_root_process.RootProcessLayout.boot_info_start),
+        root_context.configuration.argument,
+    );
 
     var text_and_bss: [8]u8 = undefined;
     try arch.mmu.readVirtualMemoryInAddressSpaceForTest(
@@ -224,11 +241,23 @@ test "Root process preparation loads segments boot info and cdecl stack" {
         prepared.initial_stack_pointer,
         &stack_frame_bytes,
     );
-    try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, stack_frame_bytes[0..4], .little));
-    try std.testing.expectEqual(
-        @as(u32, @intCast(launch_root_process.RootProcessLayout.boot_info_start)),
-        std.mem.readInt(u32, stack_frame_bytes[4..8], .little),
-    );
+    switch (builtin.cpu.arch) {
+        .x86 => {
+            try std.testing.expectEqual(
+                @as(u32, 0),
+                std.mem.readInt(u32, stack_frame_bytes[0..4], .little),
+            );
+            try std.testing.expectEqual(
+                @as(u32, @intCast(launch_root_process.RootProcessLayout.boot_info_start)),
+                std.mem.readInt(u32, stack_frame_bytes[4..8], .little),
+            );
+        },
+        .x86_64 => try std.testing.expectEqual(
+            @as(u64, 0),
+            std.mem.readInt(u64, &stack_frame_bytes, .little),
+        ),
+        else => unreachable,
+    }
 }
 
 test "Root process boot info truncates modules and zeroes unused entries" {

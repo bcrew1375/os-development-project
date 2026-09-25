@@ -13,6 +13,10 @@ const NativeEnvironment = struct {
             0,
         );
     }
+
+    pub fn yield() u32 {
+        return syscall3(@intFromEnum(abi.syscall.SyscallNumber.yield), 0, 0, 0);
+    }
 };
 
 pub export fn _start(boot_info: *const abi.boot_info.BootInfo) callconv(.c) noreturn {

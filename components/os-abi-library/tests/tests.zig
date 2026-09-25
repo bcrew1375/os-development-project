@@ -77,6 +77,10 @@ test "Physical-memory syscall numbers are stable" {
     try std.testing.expectEqual(@as(u32, 21), @intFromEnum(abi.syscall.SyscallNumber.destroy_memory_object));
 }
 
+test "Scheduling syscall numbers are stable" {
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(abi.syscall.SyscallNumber.yield));
+}
+
 test "Capability handles encode stable slots and generations" {
     const handle = abi.capability.makeCapabilityHandle(17, 23);
     try std.testing.expectEqual(@as(u32, 17), abi.capability.capabilitySlotIndex(handle));
@@ -144,6 +148,7 @@ test "system smoke protocol records are complete ordered serial lines" {
         "SYSTEM-SMOKE milestone=memory_object_capability_acquired\n",
         "SYSTEM-SMOKE milestone=memory_object_mapped\n",
         "SYSTEM-SMOKE milestone=userspace_heap_verified\n",
+        "SYSTEM-SMOKE milestone=cooperative_yield_completed\n",
     };
     try std.testing.expectEqual(expected.len, abi.system_smoke.ordered_milestones.len);
     for (expected, abi.system_smoke.ordered_milestones) |expected_record, actual_record| {

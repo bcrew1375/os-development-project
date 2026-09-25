@@ -87,6 +87,14 @@ pub fn initialize(kernel_stack_top: usize) void {
         : .{ .rax = true, .memory = true });
 }
 
+pub fn setPrivilegeStack(kernel_stack_top: usize) void {
+    tss.rsp0 = kernel_stack_top;
+}
+
+pub fn getPrivilegeStackForTest() usize {
+    return tss.rsp0;
+}
+
 fn codeDescriptor(dpl: u2) u64 {
     return descriptor(presentBit() | descriptorPrivilegeLevelBits(dpl) | 0x1A, 0x20);
 }

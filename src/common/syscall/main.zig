@@ -41,15 +41,13 @@ pub const Failure = struct {
 /// Result of common syscall policy before architecture-specific side effects.
 pub const Result = union(enum) {
     returned: u32,
+    yield,
     debug_write: struct {
         address: u64,
         length: u64,
     },
     exit: struct {
         status: u64,
-    },
-    unsupported: struct {
-        number: u32,
     },
     failure: Failure,
 };
@@ -75,6 +73,7 @@ pub fn dispatchWithServices(
             .length = request.arguments[1],
         } },
         .exit => .{ .exit = .{ .status = request.arguments[0] } },
+        .yield => .yield,
         .current_address_space => currentAddressSpace(Services, caller_process_handle),
         .create_address_space => createAddressSpace(Services, caller_process_handle),
         .map_memory => mapMemory(Services, caller_process_handle, request.arguments),
@@ -112,7 +111,7 @@ pub fn dispatchWithServices(
             caller_process_handle,
             request.arguments[0],
         ),
-        _ => .{ .unsupported = .{ .number = request.number } },
+        _ => .{ .returned = abi.syscall.errorResult(.unsupported) },
     };
 }
 

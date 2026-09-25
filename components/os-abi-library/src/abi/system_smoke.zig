@@ -15,6 +15,7 @@ pub const MEMORY_OBJECT_CAPABILITY_ACQUIRED =
     PREFIX ++ " milestone=memory_object_capability_acquired\n";
 pub const MEMORY_OBJECT_MAPPED = PREFIX ++ " milestone=memory_object_mapped\n";
 pub const USERSPACE_HEAP_VERIFIED = PREFIX ++ " milestone=userspace_heap_verified\n";
+pub const COOPERATIVE_YIELD_COMPLETED = PREFIX ++ " milestone=cooperative_yield_completed\n";
 pub const EXIT_FORMAT = PREFIX ++ " EXIT status={d}\n";
 
 pub const ordered_milestones = [_][]const u8{
@@ -27,4 +28,5 @@ pub const ordered_milestones = [_][]const u8{
     MEMORY_OBJECT_CAPABILITY_ACQUIRED,
     MEMORY_OBJECT_MAPPED,
     USERSPACE_HEAP_VERIFIED,
+    COOPERATIVE_YIELD_COMPLETED,
 };

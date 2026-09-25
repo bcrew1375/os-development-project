@@ -92,16 +92,25 @@ test "Syscall: side-effect requests preserve native-width arguments" {
     }
 }
 
-test "Syscall: unknown numbers return a typed unsupported result" {
+test "Syscall: yield decodes as a scheduler side effect" {
+    const result = kernel.syscall.dispatchWithServices(
+        RecordingServices,
+        42,
+        request(.yield, .{ 0, 0, 0, 0, 0 }),
+    );
+    switch (result) {
+        .yield => {},
+        else => return error.UnexpectedSyscallResult,
+    }
+}
+
+test "Syscall: unknown numbers return the structured unsupported error" {
     const result = kernel.syscall.dispatchWithServices(
         RecordingServices,
         42,
         .{ .number = 0xffff_fffe },
     );
-    switch (result) {
-        .unsupported => |unsupported| try std.testing.expectEqual(@as(u32, 0xffff_fffe), unsupported.number),
-        else => return error.UnexpectedSyscallResult,
-    }
+    try expectReturned(abi.syscall.errorResult(.unsupported), result);
 }
 
 test "Syscall: injected services receive caller and all mapping arguments" {

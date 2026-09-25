@@ -25,6 +25,7 @@ MILESTONES = (
     "memory_object_capability_acquired",
     "memory_object_mapped",
     "userspace_heap_verified",
+    "cooperative_yield_completed",
 )
 MILESTONE_PATTERN = re.compile(r"^SYSTEM-SMOKE milestone=(?P<name>[a-z0-9_]+)$")
 EXIT_PATTERN = re.compile(r"^SYSTEM-SMOKE EXIT status=(?P<status>\d+)$")

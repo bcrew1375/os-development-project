@@ -1,6 +1,6 @@
 # Userspace Process Roadmap
 
-Status date: 2026-09-24
+Status date: 2026-09-25
 
 This document is the implementation plan for progressing from the bootstrapped
 root task to multiple isolated, useful userspace processes. The architectural
@@ -30,8 +30,8 @@ any deliberate limitation.
 ## Current baseline
 
 The current system already provides several foundations. The root task is a
-real initial userspace process, but it is not yet a normal schedulable child
-process created through the runtime object model.
+real initial userspace process and normal schedulable thread, but it is not yet
+a userspace-created child process constructed through the public runtime object model.
 
 - the kernel loads and enters one freestanding root-task ELF;
 - x86-32 and x86-64 have separate hardware page-table roots for the root task;
@@ -43,11 +43,12 @@ process created through the runtime object model.
 
 The current objects are not sufficient for multiple processes:
 
-- syscall caller identity is hard-coded to the root process;
-- registered address-space objects do not own hardware roots;
-- memory objects contain metadata but no delegated physical backing;
+- syscall caller identity comes from the scheduler-selected current thread;
+- address-space objects own hardware roots and support explicit-root operations;
+- memory objects have immutable delegated physical backing;
 - capability slots are global and cannot yet be copied, attenuated, or revoked;
-- there are no thread objects, runnable queues, context switches, or IPC objects;
+- architecture-neutral threads own bounded architecture contexts and are selected
+  through a fixed-capacity cooperative FIFO scheduler; there are no IPC objects;
 - user faults and process exit can still halt the system.
 
 ## Target process model
@@ -778,7 +779,19 @@ partitioned and used.
 **Objective:** Let the root task construct a child protection domain, load an ELF,
 start its initial thread, schedule it cooperatively, and contain its exit or fault.
 
-## [ ] U4.1 Define the architecture-neutral thread object
+## [x] U4.1 Define the architecture-neutral thread object
+
+- Completed: 2026-09-25
+- Result: fixed-capacity generation-checked thread storage; ownership and
+  address/capability-space associations; initial entry metadata; lifecycle, exit,
+  and user-fault records; legal common state transitions; address-space reference
+  protection; owned architecture contexts; transactional configuration and
+  destruction; explicit exhaustion, reuse, and stale-handle rejection.
+- Validation: `zig build tests`; `zig build coverage`; both production builds;
+  both full `architecture-tests`; both production `system-smoke` tests;
+  `zig fmt`; `git diff --check`.
+- Limitation: queue membership and scheduler-selected state transitions remain
+  U4.3 policy.
 
 **Related assessment:** P2.1.
 
@@ -799,7 +812,24 @@ start its initial thread, schedule it cooperatively, and contain its exit or fau
 - exited and faulted threads cannot be resumed accidentally;
 - thread storage can be exhausted and reused without stale-handle acceptance.
 
-## [ ] U4.2 Add architecture context creation and switching
+## [x] U4.2 Add architecture context creation and switching
+
+- Completed: 2026-09-25
+- Result: one compile-time-checked context API across mock, x86-32, and x86-64;
+  generation-checked pools of 32 contexts; one page-aligned 16 KiB kernel stack
+  per context; shared trap-frame definitions with layout assertions; initial
+  userspace frames for the x86 cdecl and x86-64 SysV entry ABIs; CR3 and TSS
+  `esp0`/`rsp0` updates on activation and switching; and naked low-level switch
+  primitives that preserve the kernel ABI callee-saved register set and stack
+  pointer.
+- Validation: native lifecycle, rollback, exhaustion, reuse, and mock-switch
+  tests; physical frame-layout and bounded-stack tests; physical x86-32 and
+  x86-64 switch round trips validating address-space and privilege-stack
+  restoration; both production root-task smoke tests through context activation;
+  `zig build tests`; `zig build coverage`; both production builds; both full
+  `architecture-tests`; `zig fmt`; `git diff --check`.
+- Limitation: SIMD state remains unsupported/disabled, and ready queues, idle
+  context policy, yield, and scheduling remain U4.3.
 
 **Architecture work:**
 
@@ -819,7 +849,24 @@ start its initial thread, schedule it cooperatively, and contain its exit or fau
 - initial entry reaches the configured userspace instruction and stack pointer;
 - x86 implementations satisfy one common interface.
 
-## [ ] U4.3 Implement a cooperative scheduler
+## [x] U4.3 Implement a cooperative scheduler
+
+- Completed: 2026-09-25
+- Result: fixed-capacity FIFO ready queue with duplicate protection; scheduler-owned
+  thread state and execution identity; one separately reserved 16 KiB idle kernel
+  continuation without reducing the 32 userspace context slots; interruptible
+  idle wait; scheduler-based root-thread enrollment using its real generation-checked
+  handle; userspace syscall number 2 for cooperative `yield`; self-yield without a
+  physical switch; and a non-requeue selection path for later exit, block, and fault
+  handling.
+- Validation: native scheduler FIFO, duplicate, identity, self-yield, and idle-selection
+  tests; repeated physical context-switch round trips; physical reserved kernel-
+  continuation round trips on x86-32 and x86-64; both full `architecture-tests`;
+  both production builds; both production `system-smoke` tests with three successful
+  root-task yields; `zig build tests`; `zig build coverage`; `zig fmt`; `git diff --check`.
+- Limitation: timer preemption remains disabled; only the bootstrap root thread is
+  currently userspace-runnable because public child-thread construction and lifecycle
+  syscalls remain U4.4 through U4.6.
 
 **Related assessment:** P2.2.
 
@@ -840,7 +887,20 @@ start its initial thread, schedule it cooperatively, and contain its exit or fau
 - queue exhaustion and invalid state are explicit errors or kernel invariants;
 - scheduler paths do not allocate dynamically.
 
-## [ ] U4.4 Contain exit, invalid syscalls, and user faults
+## [x] U4.4 Contain exit, invalid syscalls, and user faults
+
+- Completed: 2026-09-25
+- Implemented: common current-thread exit and fault lifecycle policy; structured
+  unsupported-syscall returns; fallible user page-fault resolution with fatal kernel
+  fallback; user divide-by-zero, invalid-opcode, general-protection, page, and
+  alignment fault records; and scheduler handoff to another runnable thread or idle.
+- Validation: native lifecycle and syscall tests; real CPL3 invalid-opcode containment
+  and fault attribution on x86-32 and x86-64; both full `architecture-tests`; both
+  production builds; both production `system-smoke` tests; `zig build tests`;
+  `zig fmt --check .`; `git diff --check`.
+- Limitation: public child-thread construction and lifecycle syscalls remain U4.5 and
+  U4.6; the physical containment proof constructs its two scheduler-owned threads in
+  the architecture-test kernel.
 
 **Related assessment:** P0.2.
 

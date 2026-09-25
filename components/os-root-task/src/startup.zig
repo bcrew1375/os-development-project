@@ -93,6 +93,14 @@ pub fn run(comptime Environment: type, boot_info: *const abi.boot_info.BootInfo)
     }
     Environment.debugWrite(abi.system_smoke.USERSPACE_HEAP_VERIFIED);
     Environment.debugWrite("root: userspace heap verified\n");
+    for (0..3) |_| {
+        if (Environment.yield() != abi.syscall.SYSCALL_SUCCESS) {
+            Environment.debugWrite("root: cooperative yield failed\n");
+            return abi.syscall.EXIT_FAILURE;
+        }
+    }
+    Environment.debugWrite(abi.system_smoke.COOPERATIVE_YIELD_COMPLETED);
+    Environment.debugWrite("root: cooperative yield completed\n");
     return abi.syscall.EXIT_SUCCESS;
 }
 

@@ -126,3 +126,11 @@ pub fn initialize(kernel_stack_top: usize) void {
           [tssSelector] "i" (TSS_SELECTOR),
         : .{ .ecx = true, .memory = true });
 }
+
+pub fn setPrivilegeStack(kernel_stack_top: usize) void {
+    tss.esp0 = @truncate(kernel_stack_top);
+}
+
+pub fn getPrivilegeStackForTest() usize {
+    return tss.esp0;
+}

@@ -5,10 +5,12 @@ const framework = @import("framework.zig");
 pub const manifest = framework.manifest;
 const common = @import("x86/common.zig");
 const boot_modules = @import("x86/boot_modules.zig");
+const containment = @import("x86/containment.zig");
 const faults = @import("x86/faults.zig");
 const mmu = @import("x86/mmu.zig");
 const syscalls = @import("x86/syscalls.zig");
 const timer = @import("x86/timer.zig");
+const thread_context = @import("x86/thread_context.zig");
 const x86_32 = @import("x86/x86_32.zig");
 const x86_64 = @import("x86/x86_64.zig");
 
@@ -94,5 +96,9 @@ fn testFunction(id: manifest.TestId) framework.TestFunction {
         => timer.interruptsAreDelivered,
         .boot_modules_are_cached_reserved_and_capacity_limited => boot_modules.areCachedReservedAndCapacityLimited,
         .syscall_interrupt_gate_preserves_register_abi => syscalls.interruptGatePreservesRegisterAbi,
+        .user_invalid_opcode_fault_is_contained => containment.invalidOpcodeFaultIsContained,
+        .thread_context_initial_state_uses_bounded_kernel_stack => thread_context.initialStateUsesBoundedKernelStack,
+        .thread_context_switch_round_trip_restores_architecture_state => thread_context.switchRoundTripRestoresAddressSpaceAndPrivilegeStack,
+        .kernel_continuation_switch_round_trip_restores_architecture_state => thread_context.kernelContinuationRoundTripRestoresAddressSpaceAndPrivilegeStack,
     };
 }

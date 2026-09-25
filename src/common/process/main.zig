@@ -21,7 +21,8 @@ pub const ProcessError = error{
     InvalidMemoryPermissions,
     AddressSpaceInUse,
     MemoryObjectInUse,
-} || vmm.VMMError || arch.MmuError || physical_memory_authority.Error;
+    ThreadOwnerMismatch,
+} || thread.Error || vmm.VMMError || arch.MmuError || arch.ThreadContextError || physical_memory_authority.Error;
 
 /// Opaque handle for a registered address space.
 pub const AddressSpaceHandle = u32;
@@ -33,6 +34,12 @@ pub const ProcessHandle = u32;
 pub const ROOT_PROCESS_HANDLE: ProcessHandle = 1;
 /// Current execution identity and its uniprocessor accessor.
 pub const execution_context = @import("execution_context.zig");
+/// Architecture-neutral thread objects and lifecycle policy.
+pub const thread = @import("thread.zig");
+/// Current-thread termination and user-fault containment policy.
+pub const lifecycle = @import("lifecycle.zig");
+/// Cooperative FIFO scheduling and current-thread ownership.
+pub const scheduler = @import("scheduler/main.zig");
 
 const MAX_ADDRESS_SPACES = 16;
 const MAX_MEMORY_OBJECTS = 64;
@@ -170,6 +177,9 @@ pub fn queryAddressSpace(
 
 /// Destroys an inactive address space and returns its bounded object slot.
 pub fn destroyAddressSpace(address_space_handle: AddressSpaceHandle) ProcessError!void {
+    if (thread.referencesAddressSpace(address_space_handle)) {
+        return ProcessError.AddressSpaceInUse;
+    }
     if (execution_context.current()) |context| {
         if (context.address_space_handle == address_space_handle) {
             return ProcessError.AddressSpaceInUse;
@@ -190,6 +200,32 @@ pub fn destroyAddressSpace(address_space_handle: AddressSpaceHandle) ProcessErro
     }
     arch.mmu.destroyAddressSpaceRoot(slot.hardware_root);
     slot.* = .{};
+}
+
+/// Creates an unconfigured thread object owned by `owner_process_handle`.
+pub fn createThread(owner_process_handle: ProcessHandle) ProcessError!thread.Handle {
+    return thread.create(owner_process_handle);
+}
+
+/// Binds a new thread to an existing address space and capability space.
+pub fn configureThread(
+    thread_handle: thread.Handle,
+    configuration: thread.Configuration,
+) ProcessError!void {
+    const thread_object = try thread.get(thread_handle);
+    const address_space_owner = try getAddressSpaceOwner(configuration.address_space_handle);
+    if (address_space_owner != thread_object.owner_process_handle) {
+        return ProcessError.ThreadOwnerMismatch;
+    }
+    const address_space_root = try getAddressSpaceRoot(configuration.address_space_handle);
+    const architecture_context_handle = try arch.thread_context.create(.{
+        .address_space_root = address_space_root,
+        .entry_point = @intCast(configuration.entry_point),
+        .stack_pointer = @intCast(configuration.stack_pointer),
+        .argument = @intCast(configuration.argument),
+    });
+    errdefer arch.thread_context.destroy(architecture_context_handle) catch {};
+    try thread.configure(thread_handle, configuration, architecture_context_handle);
 }
 
 /// Creates an immutable memory object from generation-checked typed frames.
@@ -411,6 +447,7 @@ fn decrementMemoryObjectMapping(handle: MemoryObjectHandle) void {
 
 /// Resets all process registry state for unit tests.
 pub fn resetForTest() void {
+    scheduler.resetForTest();
     nextAddressSpaceHandle = 1;
     nextMemoryObjectHandle = 1;
     for (&addressSpaceSlots) |*slot| {
@@ -419,6 +456,7 @@ pub fn resetForTest() void {
     for (&memoryObjectSlots) |*slot| {
         slot.* = .{};
     }
+    thread.resetForTest();
 }
 
 comptime {

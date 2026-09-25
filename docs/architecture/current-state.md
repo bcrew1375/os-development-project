@@ -1,6 +1,6 @@
 # Current Kernel Structure and Rationale
 
-Status date: 2026-09-24
+Status date: 2026-09-25
 
 This document summarizes the kernel as it is implemented now and explains why
 its current boundaries exist. It is the architectural starting point for readers
@@ -9,16 +9,16 @@ who need context before entering the source or the detailed roadmaps.
 ## Maturity in one sentence
 
 > The repository is a well-structured x86 kernel bring-up environment with a real
-> userspace transition and an initial capability-shaped API, but it does not yet
-> provide a complete microkernel execution or resource model.
+> userspace transition, cooperative scheduling, and an initial capability-shaped
+> API, but it does not yet provide a complete microkernel execution or resource model.
 
 The production system can boot on x86-32 and x86-64, load a freestanding root
 ELF, enter ring 3, service system calls, enforce basic capability ownership and
 rights, and observe a clean root-task exit. This is a real initial userspace
-process, but it is still a bootstrap special case rather than a reusable process
-model. It cannot yet schedule multiple
-threads, contain a user fault, transfer capabilities between protection domains,
-or provide IPC.
+process, and its thread is enrolled through the normal cooperative scheduler. It is
+still bootstrap-created rather than a reusable userspace-constructed process model.
+The kernel cannot yet contain a user fault, transfer capabilities between protection
+domains, or provide IPC.
 
 ## System boundary
 
@@ -43,6 +43,7 @@ The repository contains three independently scoped deliverables:
 - virtual-address-space bookkeeping;
 - capability checks and protected-object registries;
 - architecture-independent syscall policy;
+- bounded cooperative thread scheduling;
 - bounded early allocation and platform access.
 
 The kernel does not link root-task source. It consumes the root task as an ELF
@@ -131,12 +132,16 @@ The current production path is:
 5. the root-task ELF is validated and its loadable segments are mapped;
 6. boot information and an initial user stack are written through the direct map;
 7. boot services are finalized and interrupts are initialized;
-8. the kernel switches to the root address-space root and enters ring 3;
-9. the root task uses the shared syscall ABI;
-10. architecture interrupt code converts registers into a common syscall request;
-11. common syscall policy performs capability and object-registry operations;
-12. the root task constructs and verifies its initial userspace heap extent;
-13. the root task exits and the production smoke protocol records success.
+8. the kernel initializes the scheduler and its reserved idle continuation, enrolls
+   the real root thread, and selects it from the ready queue;
+9. context activation switches the root address-space root, installs its
+   privilege-transition stack, and enters ring 3;
+10. the root task uses the shared syscall ABI, including cooperative `yield`;
+11. architecture interrupt code converts registers into a common syscall request;
+12. common syscall policy performs capability and object-registry operations;
+13. the root task constructs and verifies its initial userspace heap extent;
+14. repeated yields resume the preserved syscall trap frame successfully;
+15. the root task exits and the production smoke protocol records success.
 
 This path proves a real privilege transition and cross-domain ABI. It does not yet
 prove a reusable process model: the root task is still a privileged bootstrap
@@ -158,13 +163,37 @@ fault repair may reinstall a missing PTE for that same frame. Bootstrap-contiguo
 mapping remains only for the bounded pre-userspace construction of root ELF
 segments, the initial stack, and boot information.
 
-### Process and memory-object registry
+### Process, thread, and memory-object registries
 
-`src/common/process` is a fixed-capacity registry for address spaces and immutable
-frame-backed memory objects. Address-space objects own hardware roots and bounded
-VMA metadata. Memory objects retain physical start, size, authority identity, and
-mapping count. The name reflects the problem domain, but there is not yet a
-first-class kernel process or schedulable thread object.
+`src/common/process` contains fixed-capacity registries for address spaces,
+architecture-neutral threads, and immutable frame-backed memory objects.
+Address-space objects own hardware roots and bounded VMA metadata. Memory objects
+retain physical start, size, authority identity, and mapping count.
+
+Thread objects use generation-checked handles and record ownership, address-space
+and capability-space association, initial entry metadata, lifecycle state, exit
+status, attributed user faults, and one owned architecture-context handle. Common
+policy validates legal transitions among `new`, `ready`, `running`, `blocked`,
+`faulted`, and `exited`. Configuration transactionally allocates the architecture
+context, destruction releases it, and an address space cannot be destroyed while
+a thread references it.
+
+The architecture context implementations use generation-checked pools of 32
+contexts. Every context owns one page-aligned 16 KiB kernel stack. Initial
+userspace state reuses the interrupt-return frame layout, while kernel-to-kernel
+switches preserve the ABI callee-saved registers and saved stack pointer. Context
+activation and switching install the target CR3 and TSS `esp0`/`rsp0`. The root
+task now enters userspace through this context path on both x86 targets.
+
+`src/common/process/scheduler` owns a fixed-capacity FIFO ready queue, current-thread
+selection, thread state transitions, and current execution identity. A separately
+reserved 16 KiB kernel continuation provides idle execution without consuming any
+of the 32 userspace context slots. Idle waits interruptibly, and userspace syscall
+number 2 performs cooperative `yield`; a sole runnable thread yields to itself
+without a physical switch. Timer preemption remains disabled.
+
+There is still not yet a first-class kernel process object; process grouping remains
+intended userspace policy. Public child-thread construction is also not yet exposed.
 
 ## Bounded privileged allocation
 
@@ -175,8 +204,12 @@ mechanisms are bounded:
   `OutOfReservations` when full;
 - runtime page-table storage is one 512-frame pool, with at most 64 frames owned by
   one address space;
-- address-space, VMA, memory-object, capability, and physical-authority registries
-  use fixed-capacity arrays with explicit exhaustion;
+- address-space, VMA, thread, memory-object, capability, and physical-authority
+  registries use fixed-capacity arrays with explicit exhaustion;
+- architecture thread contexts use 32 fixed slots with one 16 KiB kernel stack
+  per slot;
+- the scheduler ready queue holds at most 32 thread handles, and idle owns one
+  separately reserved page-aligned 16 KiB stack;
 - root ELF segments, the bounded 64 KiB initial stack, and the one-page
   boot-information blob are the only bootstrap-contiguous VMM allocations before
   userspace entry.
@@ -206,7 +239,7 @@ rejection; it is not yet a public lifecycle syscall.
 Architecture handlers extract register state and pass a canonical request to
 `src/common/syscall`. The common dispatcher performs policy and returns an
 explicit result describing return values, debug writes, exit, unsupported calls,
-or failures.
+cooperative yield, or failures.
 
 This keeps ABI decoding and authorization testable on the host and minimizes
 policy duplicated across x86 targets. Production syscall authorization obtains
@@ -300,10 +333,10 @@ details.
 | --- | --- | --- |
 | Architectures | x86-32, x86-64, and native mock | More implementations behind the same interface |
 | Userspace | One bootstrapped root task | Isolated threads and protection domains |
-| Address spaces | Hardware root only for the root task | Hardware root for every address-space object |
+| Address spaces | Every registered object owns a hardware root and bounded VMA registry | Thread-driven activation and broader lifecycle integration |
 | Memory objects | Immutable delegated physical backing and transactional explicit-root mapping | Broader object attributes and sharing policy |
 | Capabilities | Global owner/type/rights table | Per-space derivation, transfer, and revocation |
-| Scheduling | None | Cooperative switching, then timer preemption |
+| Scheduling | Bounded FIFO cooperative scheduler, reserved idle continuation, and userspace `yield` | Child-thread integration, lifecycle containment, then timer preemption |
 | Fault handling | User faults can halt progress | Attribute and contain user faults |
 | IPC | None | Synchronous endpoints, then notifications |
 | Memory policy | Bounded root-task physical-range allocator and capability-backed multi-extent userspace heap; no kernel PMM or heap | Capability-funded userspace services and broader reclamation policy |
@@ -331,9 +364,8 @@ bootstrap conveniences to become permanent monolithic services.
 
 ## Known structural debt
 
-- architecture syscall entry still assumes the root process as caller identity;
-- the root task remains a bootstrap-special execution context rather than a normal
-  scheduled thread;
+- the root task owns a normal generation-checked thread and architecture context,
+  and is scheduler-selected, but remains bootstrap-created rather than userspace-constructed;
 - lower-level page-table reclamation is bounded by address-space destruction rather
   than performed eagerly for every empty table;
 - x86 interrupt and fault policy still has duplication and limited containment;

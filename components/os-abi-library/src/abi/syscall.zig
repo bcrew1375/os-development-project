@@ -6,6 +6,7 @@ const capability = @import("capability.zig");
 pub const SyscallNumber = enum(u32) {
     debug_write = 0,
     exit = 1,
+    yield = 2,
     current_address_space = 9,
     create_address_space = 10,
     map_memory = 11,

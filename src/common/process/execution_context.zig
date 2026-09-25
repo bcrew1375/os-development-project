@@ -1,10 +1,12 @@
 //! Current execution identity for syscall and exception attribution.
 
 const process = @import("main.zig");
+const thread = @import("thread.zig");
 
-pub const ThreadHandle = u32;
-pub const CapabilitySpaceHandle = u32;
+pub const ThreadHandle = thread.Handle;
+pub const CapabilitySpaceHandle = thread.CapabilitySpaceHandle;
 
+/// Compatibility identity used only by isolated tests that do not construct a real thread.
 pub const ROOT_THREAD_HANDLE: ThreadHandle = 1;
 pub const ROOT_CAPABILITY_SPACE_HANDLE: CapabilitySpaceHandle = 1;
 
@@ -27,6 +29,8 @@ pub fn initialize(context: ExecutionContext) ContextError!void {
     current_context = context;
 }
 
+/// Installs the legacy synthetic root identity for isolated subsystem tests.
+/// Production startup installs the real root thread through the scheduler.
 pub fn initializeRoot(address_space_handle: process.AddressSpaceHandle) ContextError!void {
     try initialize(.{
         .thread_handle = ROOT_THREAD_HANDLE,
@@ -51,6 +55,14 @@ pub fn currentAddressSpaceHandle() error{ExecutionContextUninitialized}!process.
 pub fn replace(context: ExecutionContext) ContextError!void {
     if (current_context == null) return ContextError.ExecutionContextUninitialized;
     current_context = context;
+}
+
+pub fn install(context: ExecutionContext) void {
+    current_context = context;
+}
+
+pub fn clear() void {
+    current_context = null;
 }
 
 pub fn resetForTest() void {

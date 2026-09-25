@@ -7,10 +7,11 @@ the first userspace process; the next execution milestone is a separately
 created child process.
 
 The project is intentionally **not described as a complete microkernel yet**.
-Its current object registries and capability checks establish useful boundaries,
-but threads, scheduling, IPC, fault containment, capability derivation, object
-lifetime management, and userspace physical-memory authority are still future
-work.
+Its current object registries, capability checks, physical-memory delegation,
+architecture-neutral thread lifecycle, and low-level x86 context switching
+plus bounded cooperative scheduling establish useful boundaries, but IPC, fault
+containment, complete capability spaces, and general process construction are
+still future work.
 
 ## Design direction
 
@@ -74,7 +75,7 @@ validation semantics.
 The next major milestone is to let the root task safely construct and run a
 second isolated userspace process. The shortest useful vertical slice is:
 explicit execution identity, safe user-memory access, contained user faults,
-complete address-space objects, one cooperative thread switch, and real child
+complete address-space objects, public child-thread construction, and real child
 memory backing. The detailed sequence is tracked in the [userspace process
 roadmap](docs/roadmaps/userspace-process-roadmap.md), while ownership and
 lifetime rules are defined in the [kernel object model](docs/kernel-object-model.md).

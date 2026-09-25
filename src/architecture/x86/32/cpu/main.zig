@@ -8,6 +8,13 @@ pub fn unrecoverableHalt() noreturn {
     unreachable;
 }
 
+pub fn waitForInterrupt() void {
+    asm volatile (
+        \\sti
+        \\hlt
+        ::: .{ .memory = true });
+}
+
 pub fn enterUserMode(entry_point: usize, stack_top: usize, argument0: usize) noreturn {
     _ = argument0;
 

@@ -37,6 +37,8 @@ pub const mmu = impl.mmu;
 pub const page_table_pool = @import("page_table_pool.zig");
 /// Platform device services such as console and timers.
 pub const platform = impl.platform;
+/// Per-thread saved CPU contexts and bounded kernel stacks.
+pub const thread_context = impl.thread_context;
 
 /// Portable terminal color names.
 pub const TextColor = enum(u8) {
@@ -78,6 +80,35 @@ pub const MmuError = error{
 /// Opaque architecture address-space root identifier.
 pub const AddressSpaceRoot = struct {
     value: usize,
+};
+
+/// Opaque generation-checked architecture thread-context handle.
+pub const ThreadContextHandle = u32;
+pub const INVALID_THREAD_CONTEXT_HANDLE: ThreadContextHandle = 0;
+
+/// Initial userspace state used to construct an architecture context.
+pub const ThreadContextConfiguration = struct {
+    address_space_root: AddressSpaceRoot,
+    entry_point: usize,
+    stack_pointer: usize,
+    argument: usize,
+};
+
+/// Initial state used to construct a reserved kernel continuation.
+pub const KernelContinuationConfiguration = struct {
+    address_space_root: AddressSpaceRoot,
+    entry: *const fn () callconv(.c) noreturn,
+};
+
+/// Errors exposed by architecture thread-context implementations.
+pub const ThreadContextError = error{
+    OutOfThreadContexts,
+    InvalidThreadContextHandle,
+    InvalidEntryPoint,
+    InvalidStackPointer,
+    InvalidAddressSpaceRoot,
+    ThreadContextInUse,
+    KernelContinuationAlreadyExists,
 };
 
 /// Boot-time physical memory map.
@@ -176,6 +207,16 @@ pub fn validateImpl(comptime T: type) void {
         validateInterface(T.cpu, struct {
             unrecoverableHalt: fn () noreturn,
             enterUserMode: fn (entry_point: usize, stack_top: usize, argument0: usize) noreturn,
+            waitForInterrupt: fn () void,
+        });
+
+        validateInterface(T.thread_context, struct {
+            create: fn (configuration: ThreadContextConfiguration) ThreadContextError!ThreadContextHandle,
+            createKernelContinuation: fn (configuration: KernelContinuationConfiguration) ThreadContextError!ThreadContextHandle,
+            destroy: fn (handle: ThreadContextHandle) ThreadContextError!void,
+            activate: fn (handle: ThreadContextHandle) noreturn,
+            switchContext: fn (current: ThreadContextHandle, next: ThreadContextHandle) ThreadContextError!void,
+            availableCount: fn () usize,
         });
 
         validateInterface(T.mmu, struct {

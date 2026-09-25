@@ -12,6 +12,13 @@ pub fn unrecoverableHalt() noreturn {
     unreachable;
 }
 
+pub fn waitForInterrupt() void {
+    asm volatile (
+        \\sti
+        \\hlt
+        ::: .{ .memory = true });
+}
+
 pub fn initializeMemoryProtection() void {
     var control_register_0 = asm volatile ("mov %%cr0, %[value]"
         : [value] "=r" (-> usize),

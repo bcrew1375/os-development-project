@@ -4,4 +4,5 @@ pub const cpu = @import("cpu/main.zig");
 pub const interrupts = @import("interrupts/main.zig");
 pub const mmu = @import("mmu/main.zig");
 pub const platform = @import("platform/main.zig");
+pub const thread_context = @import("thread_context/main.zig");
 pub const test_support = @import("test_support.zig");

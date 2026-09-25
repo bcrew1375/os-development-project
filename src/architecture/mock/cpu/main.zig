@@ -5,6 +5,7 @@ pub const Operation = union(enum) {
         stack_top: usize,
         argument0: usize,
     },
+    wait_for_interrupt,
 };
 
 var lastOperation: ?Operation = null;
@@ -21,6 +22,10 @@ pub fn enterUserMode(entry_point: usize, stack_top: usize, argument0: usize) nor
         .argument0 = argument0,
     } };
     @panic("mock architecture cannot enter user mode");
+}
+
+pub fn waitForInterrupt() void {
+    lastOperation = .wait_for_interrupt;
 }
 
 pub fn resetForTest() void {
