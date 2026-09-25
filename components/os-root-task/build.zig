@@ -70,6 +70,12 @@ fn addRootTask(
         .optimize = optimize,
     });
     memory_management.addImport("abi", abi);
+    const process_management = b.createModule(.{
+        .root_source_file = b.path("src/process_management/main.zig"),
+        .target = config.target,
+        .optimize = optimize,
+    });
+    process_management.addImport("abi", abi);
 
     const root_task = b.addExecutable(.{
         .name = "root_process.elf",
@@ -85,6 +91,7 @@ fn addRootTask(
 
     root_task.root_module.addImport("abi", abi);
     root_task.root_module.addImport("memory_management", memory_management);
+    root_task.root_module.addImport("process_management", process_management);
     root_task.setLinkerScript(b.path(config.linker_script));
 
     const install_root_task = b.addInstallArtifact(root_task, .{
@@ -115,6 +122,13 @@ fn addTests(
     });
     memory_management.addImport("abi", abi);
     tests.root_module.addImport("memory_management", memory_management);
+    const process_management = b.createModule(.{
+        .root_source_file = b.path("src/process_management/main.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    });
+    process_management.addImport("abi", abi);
+    tests.root_module.addImport("process_management", process_management);
     const startup = b.createModule(.{
         .root_source_file = b.path("src/startup.zig"),
         .target = b.graph.host,

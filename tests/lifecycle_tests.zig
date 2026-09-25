@@ -11,7 +11,7 @@ fn createConfiguredThread(owner: kernel.process.ProcessHandle) !kernel.process.t
     const address_space = try kernel.process.createAddressSpaceForOwner(owner);
     const handle = try kernel.process.createThread(owner);
     try kernel.process.configureThread(handle, .{
-        .capability_space_handle = owner,
+        .capability_space_handle = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE,
         .address_space_handle = address_space,
         .entry_point = 0x0040_0000 + owner * 0x1000,
         .stack_pointer = 0x0080_0000 + owner * 0x1000,

@@ -13,12 +13,13 @@ who need context before entering the source or the detailed roadmaps.
 > API, but it does not yet provide a complete microkernel execution or resource model.
 
 The production system can boot on x86-32 and x86-64, load a freestanding root
-ELF, enter ring 3, service system calls, enforce basic capability ownership and
-rights, and observe a clean root-task exit. This is a real initial userspace
-process, and its thread is enrolled through the normal cooperative scheduler. It is
-still bootstrap-created rather than a reusable userspace-constructed process model.
-The kernel cannot yet contain a user fault, transfer capabilities between protection
-domains, or provide IPC.
+ELF, enter ring 3, service system calls, enforce capability-space-local rights,
+contain user faults, and observe a clean root-task exit. This is a real initial
+userspace process, and its thread is enrolled through the normal cooperative
+scheduler. Userspace can create, configure, control, and delegate authority to
+additional bounded thread and capability-space objects. The root task is still
+bootstrap-created, and reusable userspace process records, ELF construction, and
+IPC remain future work.
 
 ## System boundary
 
@@ -57,6 +58,7 @@ layout and the produced binaries.
 - boot information;
 - syscall numbers, arguments, and result conventions;
 - capability handles and rights;
+- fixed-layout thread configuration inputs;
 - system-smoke protocol records;
 - shared ELF parsing helpers that are safe for kernel and userspace consumers.
 
@@ -71,8 +73,10 @@ versioned independently.
 information, owns a bounded allocator for delegated physical ranges, and builds a
 general-purpose userspace heap from capability-backed mapped extents. Heap growth,
 suballocation, accounting, rollback, and optional empty-extent reclamation are
-root-task policy. The kernel supplies only authority validation, protected objects,
-and mapping mechanisms. Process-management policy remains future work.
+root-task policy. Its `process_management` subsystem exposes typed wrappers for
+thread and capability-space creation, configuration, lifecycle control, authority
+attenuation, delegation, deletion, and destruction. Userspace process records and
+ELF-loading policy remain U4.6 work.
 
 ## Kernel source structure
 
@@ -190,10 +194,13 @@ selection, thread state transitions, and current execution identity. A separatel
 reserved 16 KiB kernel continuation provides idle execution without consuming any
 of the 32 userspace context slots. Idle waits interruptibly, and userspace syscall
 number 2 performs cooperative `yield`; a sole runnable thread yields to itself
-without a physical switch. Timer preemption remains disabled.
+without a physical switch. Ready threads may be removed transactionally for
+suspension or termination, and blocked threads may be resumed. Timer preemption
+remains disabled.
 
 There is still not yet a first-class kernel process object; process grouping remains
-intended userspace policy. Public child-thread construction is also not yet exposed.
+intended userspace policy. Public child-thread and capability-space construction is
+exposed, while the userspace process record and ELF construction path remain U4.6.
 
 ## Bounded privileged allocation
 
@@ -218,21 +225,26 @@ The early allocator remains a monotonic bootstrap reservation mechanism, not a
 runtime physical-memory policy service. Delegable RAM excludes every retained
 reservation before authority reaches userspace.
 
-### Capability table
+### Capability spaces
 
-`src/common/capability` stores fixed-capacity capability slots with an owner,
-object type, rights, and generation. The shared `u32` ABI uses 7 slot-index bits
-and 25 generation bits, with zero reserved as invalid. Slot reuse advances the
-generation, stale handles are rejected, and exhaustion is returned explicitly.
-It also prevents a caller from resolving another owner's handle or using a
-handle with insufficient rights. Per-process capability spaces remain future
-work; ownership is still the transitional isolation boundary.
+`src/common/capability` stores up to 16 generation-checked capability-space kernel
+objects, each with 128 fixed-capacity slots. The shared local capability handle uses
+7 slot-index bits and 24 usable generation bits below the structured-error bit;
+zero remains invalid. Slot and capability-space reuse advance generations, stale
+handles are rejected, and exhaustion is explicit.
 
-This is useful enforcement scaffolding, not a seL4-complete capability space.
-There is no per-task CSpace, derivation tree, copy, mint, attenuation, transfer,
-revocation, or object-lifetime coupling yet. An internal/test-only slot deletion
-primitive exists solely to validate generation advancement and stale-handle
-rejection; it is not yet a public lifecycle syscall.
+Production authorization selects the current thread's capability space, so a local
+handle from one space does not resolve in another. Slots record object identity,
+rights, and an optional cross-space parent reference. Userspace may install an
+attenuated capability into a managed target space and later delete that target-local
+slot. Physical-memory revocation follows derivation references across spaces.
+Thread and capability-space objects are first-class capability targets with explicit
+configure, start, suspend, resume, terminate, and manage authority.
+
+This is still not a complete seL4 CSpace model: there are no addressable multi-level
+CSpace trees, badges, endpoint transfer, or general revocation semantics for every
+object type. The implemented bounded model is sufficient for U4.5 construction and
+least-authority delegation.
 
 ### Syscall policy
 
@@ -241,10 +253,12 @@ Architecture handlers extract register state and pass a canonical request to
 explicit result describing return values, debug writes, exit, unsupported calls,
 cooperative yield, or failures.
 
-This keeps ABI decoding and authorization testable on the host and minimizes
-policy duplicated across x86 targets. Production syscall authorization obtains
-the caller process identity from the current execution context; explicit caller
-injection remains available only to common-policy test doubles.
+This keeps ABI decoding and authorization testable on the host and minimizes policy
+duplicated across x86 targets. Production syscall authorization obtains the caller
+capability-space identity from the current execution context; explicit identity
+injection remains available only to common-policy test doubles. Thread configuration
+copies a fixed 32-byte ABI record through checked user-memory access before resolving
+the referenced thread, address-space, and capability-space capabilities.
 
 The ownership, lifetime, authorization, and initial uniprocessor concurrency
 contract for the planned object types is recorded in the [kernel object model](../kernel-object-model.md).
@@ -335,9 +349,9 @@ details.
 | Userspace | One bootstrapped root task | Isolated threads and protection domains |
 | Address spaces | Every registered object owns a hardware root and bounded VMA registry | Thread-driven activation and broader lifecycle integration |
 | Memory objects | Immutable delegated physical backing and transactional explicit-root mapping | Broader object attributes and sharing policy |
-| Capabilities | Global owner/type/rights table | Per-space derivation, transfer, and revocation |
-| Scheduling | Bounded FIFO cooperative scheduler, reserved idle continuation, and userspace `yield` | Child-thread integration, lifecycle containment, then timer preemption |
-| Fault handling | User faults can halt progress | Attribute and contain user faults |
+| Capabilities | Bounded generation-checked spaces, local handles, rights attenuation, cross-space install/delete, physical derivation tracking | Endpoint transfer and broader object revocation semantics |
+| Scheduling | Bounded FIFO cooperative scheduler, reserved idle continuation, userspace `yield`, and child-thread lifecycle control | Userspace process construction, then timer preemption |
+| Fault handling | User faults are attributed and contained | Process-manager consumption and richer reporting |
 | IPC | None | Synchronous endpoints, then notifications |
 | Memory policy | Bounded root-task physical-range allocator and capability-backed multi-extent userspace heap; no kernel PMM or heap | Capability-funded userspace services and broader reclamation policy |
 | Testing | Native, physical, coverage, and smoke layers | Cover threads, faults, IPC, and child processes |

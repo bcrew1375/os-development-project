@@ -921,7 +921,27 @@ start its initial thread, schedule it cooperatively, and contain its exit or fau
 - kernel faults remain fatal with useful diagnostics;
 - fault records identify the responsible thread and relevant architecture data.
 
-## [ ] U4.5 Add thread and capability-space configuration operations
+## [x] U4.5 Add thread and capability-space configuration operations
+
+- Completed: 2026-09-25
+- Result: 16 generation-checked capability-space objects with 128 local slots each;
+  current-thread namespace authorization; first-class thread and capability-space
+  capabilities; explicit configure, start, suspend, resume, terminate, and manage
+  rights; direct bounded-pool creation; a fixed 32-byte thread-configuration ABI
+  copied through checked user memory; transactional configuration and scheduler
+  queue mutation; cross-space rights attenuation, installation, target-space
+  deletion, and derivation tracking; stale-handle, in-use, non-empty, and runnable
+  object protection; and typed root-task process-management wrappers.
+- Validation: ABI layout and rights tests; capability-space exhaustion, reuse,
+  isolation, attenuation, derivation, and lifetime tests; scheduler removal and
+  lifecycle tests; production syscall tests with mapped and invalid user pointers;
+  root-task wrapper transport/error tests; real `int 0x80` creation, delegation,
+  deletion, and destruction on x86-32 and x86-64; `zig build tests`; 100% common
+  coverage (768/768 coverable lines, 166 tests); both production builds; both full
+  `architecture-tests`; both production `system-smoke` tests; `zig fmt`; and
+  `git diff --check`.
+- Limitation: userspace process records, ELF loading, child address-space population,
+  and construction rollback policy remain U4.6.
 
 **ABI work:**
 
@@ -935,7 +955,7 @@ start its initial thread, schedule it cooperatively, and contain its exit or fau
 **Acceptance criteria:**
 
 - the root task can configure a child without kernel-private knowledge;
-- configuration is rejected without management rights;
+- configuration is rejected without explicit configure authority;
 - start is atomic with the transition to the ready queue;
 - wrapper transport tests cover argument order and errors.
 

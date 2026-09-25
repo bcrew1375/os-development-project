@@ -255,6 +255,10 @@ pub fn MemoryManager(comptime Transport: type) type {
                 .mapping_not_found => Error.MappingNotFound,
                 .address_space_in_use => Error.AddressSpaceInUse,
                 .unsupported => Error.Unsupported,
+                .invalid_state,
+                .object_in_use,
+                .invalid_user_memory,
+                => Error.InternalFailure,
                 .internal_failure => Error.InternalFailure,
             };
         }

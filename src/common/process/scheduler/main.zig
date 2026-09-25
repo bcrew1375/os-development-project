@@ -39,6 +39,24 @@ const ReadyQueue = struct {
         self.length -= 1;
         return handle;
     }
+
+    fn remove(self: *ReadyQueue, handle: thread.Handle) bool {
+        var found_offset: ?usize = null;
+        for (0..self.length) |offset| {
+            if (self.handles[(self.head + offset) % self.handles.len] == handle) {
+                found_offset = offset;
+                break;
+            }
+        }
+        const offset = found_offset orelse return false;
+        var current = offset;
+        while (current + 1 < self.length) : (current += 1) {
+            self.handles[(self.head + current) % self.handles.len] =
+                self.handles[(self.head + current + 1) % self.handles.len];
+        }
+        self.length -= 1;
+        return true;
+    }
 };
 
 var ready_queue = ReadyQueue{};
@@ -65,6 +83,48 @@ pub fn makeReady(handle: thread.Handle) Error!void {
     if (ready_queue.length == ready_queue.handles.len) return error.ReadyQueueFull;
     try thread.makeReady(handle);
     try ready_queue.push(handle);
+}
+
+pub fn suspendThread(handle: thread.Handle) Error!void {
+    try requireInitialized();
+    const object = try thread.get(handle);
+    switch (object.state) {
+        .ready => {
+            if (!ready_queue.remove(handle)) return error.CurrentThreadMismatch;
+            try thread.suspendReady(handle);
+        },
+        .running => {
+            if (current_thread_handle != handle) return error.CurrentThreadMismatch;
+            try thread.suspendRunning(handle);
+            try scheduleAfterCurrentStops();
+        },
+        else => return error.InvalidStateTransition,
+    }
+}
+
+pub fn resumeThread(handle: thread.Handle) Error!void {
+    try requireInitialized();
+    const object = try thread.get(handle);
+    if (object.state != .blocked) return error.InvalidStateTransition;
+    try makeReady(handle);
+}
+
+pub fn terminate(handle: thread.Handle, status: u64) Error!void {
+    try requireInitialized();
+    const object = try thread.get(handle);
+    switch (object.state) {
+        .ready => {
+            if (!ready_queue.remove(handle)) return error.CurrentThreadMismatch;
+            try thread.exit(handle, status);
+        },
+        .running => {
+            if (current_thread_handle != handle) return error.CurrentThreadMismatch;
+            try thread.exit(handle, status);
+            try scheduleAfterCurrentStops();
+        },
+        .new, .blocked => try thread.exit(handle, status),
+        .faulted, .exited => return error.InvalidStateTransition,
+    }
 }
 
 pub fn start() noreturn {

@@ -1,5 +1,10 @@
 const abi = @import("abi");
 const startup = @import("startup.zig");
+const process_management = @import("process_management");
+
+comptime {
+    _ = process_management;
+}
 
 const NativeEnvironment = struct {
     pub const syscall3 = abi.syscall.syscall3;

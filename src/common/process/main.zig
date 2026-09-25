@@ -5,6 +5,7 @@ const arch = @import("arch");
 const std = @import("std");
 const vmm = @import("../memory_management/vmm.zig");
 const physical_memory_authority = @import("../memory_management/physical_memory_authority.zig");
+const capability_space = @import("../capability/space.zig");
 
 /// Errors produced by process and memory-object management operations.
 pub const ProcessError = error{
@@ -22,7 +23,7 @@ pub const ProcessError = error{
     AddressSpaceInUse,
     MemoryObjectInUse,
     ThreadOwnerMismatch,
-} || thread.Error || vmm.VMMError || arch.MmuError || arch.ThreadContextError || physical_memory_authority.Error;
+} || thread.Error || capability_space.Error || vmm.VMMError || arch.MmuError || arch.ThreadContextError || physical_memory_authority.Error;
 
 /// Opaque handle for a registered address space.
 pub const AddressSpaceHandle = u32;
@@ -40,6 +41,8 @@ pub const thread = @import("thread.zig");
 pub const lifecycle = @import("lifecycle.zig");
 /// Cooperative FIFO scheduling and current-thread ownership.
 pub const scheduler = @import("scheduler/main.zig");
+/// Bounded capability-space object identities used by threads.
+pub const capability_spaces = capability_space;
 
 const MAX_ADDRESS_SPACES = 16;
 const MAX_MEMORY_OBJECTS = 64;
@@ -213,6 +216,7 @@ pub fn configureThread(
     configuration: thread.Configuration,
 ) ProcessError!void {
     const thread_object = try thread.get(thread_handle);
+    try capability_space.validate(configuration.capability_space_handle);
     const address_space_owner = try getAddressSpaceOwner(configuration.address_space_handle);
     if (address_space_owner != thread_object.owner_process_handle) {
         return ProcessError.ThreadOwnerMismatch;
@@ -448,6 +452,7 @@ fn decrementMemoryObjectMapping(handle: MemoryObjectHandle) void {
 /// Resets all process registry state for unit tests.
 pub fn resetForTest() void {
     scheduler.resetForTest();
+    capability_space.resetForTest();
     nextAddressSpaceHandle = 1;
     nextMemoryObjectHandle = 1;
     for (&addressSpaceSlots) |*slot| {

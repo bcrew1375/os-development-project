@@ -126,4 +126,53 @@ pub fn interruptGatePreservesRegisterAbi() !void {
             object_virtual_start,
         ),
     );
+
+    const capability_space = abi.syscall.syscall3(
+        @intFromEnum(abi.syscall.SyscallNumber.create_capability_space),
+        0,
+        0,
+        0,
+    );
+    try framework.expect(capability_space != abi.capability.INVALID_CAPABILITY);
+    const thread = abi.syscall.syscall3(
+        @intFromEnum(abi.syscall.SyscallNumber.create_thread),
+        0,
+        0,
+        0,
+    );
+    try framework.expect(thread != abi.capability.INVALID_CAPABILITY);
+    const installed = abi.syscall.syscall3(
+        @intFromEnum(abi.syscall.SyscallNumber.install_capability),
+        capability_space,
+        thread,
+        abi.capability.rightsBits(.{ .terminate = true }),
+    );
+    try framework.expect(installed != abi.capability.INVALID_CAPABILITY);
+    try framework.expectEqual(
+        abi.syscall.SYSCALL_SUCCESS,
+        abi.syscall.syscall3(
+            @intFromEnum(abi.syscall.SyscallNumber.delete_capability),
+            capability_space,
+            installed,
+            0,
+        ),
+    );
+    try framework.expectEqual(
+        abi.syscall.SYSCALL_SUCCESS,
+        abi.syscall.syscall3(
+            @intFromEnum(abi.syscall.SyscallNumber.destroy_thread),
+            thread,
+            0,
+            0,
+        ),
+    );
+    try framework.expectEqual(
+        abi.syscall.SYSCALL_SUCCESS,
+        abi.syscall.syscall3(
+            @intFromEnum(abi.syscall.SyscallNumber.destroy_capability_space),
+            capability_space,
+            0,
+            0,
+        ),
+    );
 }

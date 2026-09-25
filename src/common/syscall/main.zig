@@ -3,6 +3,7 @@
 const abi = @import("abi");
 const capability = @import("../capability/main.zig");
 const process = @import("../process/main.zig");
+const user_memory = @import("../user_memory.zig");
 
 /// Canonical syscall input after architecture register extraction.
 pub const Request = struct {
@@ -28,6 +29,17 @@ pub const Operation = enum {
     delete_physical_memory,
     revoke_physical_memory,
     destroy_memory_object,
+    create_capability_space,
+    create_thread,
+    configure_thread,
+    start_thread,
+    suspend_thread,
+    resume_thread,
+    terminate_thread,
+    install_capability,
+    destroy_thread,
+    destroy_capability_space,
+    delete_capability,
     convert_argument,
 };
 
@@ -54,16 +66,16 @@ pub const Result = union(enum) {
 
 /// Dispatches a production syscall using the installed execution context.
 pub fn dispatchFromCurrentContext(request: Request) Result {
-    const caller_process_handle = process.execution_context.currentProcessHandle() catch |err| {
+    const caller_capability_space = process.execution_context.currentCapabilitySpaceHandle() catch |err| {
         return failure(.resolve_execution_context, err);
     };
-    return dispatchWithServices(ProductionServices, caller_process_handle, request);
+    return dispatchWithServices(ProductionServices, caller_capability_space, request);
 }
 
 /// Dispatches policy through a statically supplied service implementation.
 pub fn dispatchWithServices(
     comptime Services: type,
-    caller_process_handle: process.ProcessHandle,
+    caller_capability_space: process.thread.CapabilitySpaceHandle,
     request: Request,
 ) Result {
     const syscall_number: abi.syscall.SyscallNumber = @enumFromInt(request.number);
@@ -74,45 +86,196 @@ pub fn dispatchWithServices(
         } },
         .exit => .{ .exit = .{ .status = request.arguments[0] } },
         .yield => .yield,
-        .current_address_space => currentAddressSpace(Services, caller_process_handle),
-        .create_address_space => createAddressSpace(Services, caller_process_handle),
-        .map_memory => mapMemory(Services, caller_process_handle, request.arguments),
+        .current_address_space => currentAddressSpace(Services, caller_capability_space),
+        .create_address_space => createAddressSpace(Services, caller_capability_space),
+        .map_memory => mapMemory(Services, caller_capability_space, request.arguments),
         .create_memory_object => createMemoryObject(
             Services,
-            caller_process_handle,
+            caller_capability_space,
             request.arguments[0],
         ),
-        .map_memory_object => mapMemoryObject(Services, caller_process_handle, request.arguments),
-        .protect_address_space => protectAddressSpace(Services, caller_process_handle, request.arguments),
-        .query_address_space => queryAddressSpace(Services, caller_process_handle, request.arguments),
-        .unmap_address_space => unmapAddressSpace(Services, caller_process_handle, request.arguments),
+        .map_memory_object => mapMemoryObject(Services, caller_capability_space, request.arguments),
+        .protect_address_space => protectAddressSpace(Services, caller_capability_space, request.arguments),
+        .query_address_space => queryAddressSpace(Services, caller_capability_space, request.arguments),
+        .unmap_address_space => unmapAddressSpace(Services, caller_capability_space, request.arguments),
         .destroy_address_space => destroyAddressSpace(
             Services,
-            caller_process_handle,
+            caller_capability_space,
             request.arguments[0],
         ),
         .retype_untyped_memory => retypeUntypedMemory(
             Services,
-            caller_process_handle,
+            caller_capability_space,
             request.arguments,
         ),
         .delete_physical_memory => deletePhysicalMemory(
             Services,
-            caller_process_handle,
+            caller_capability_space,
             request.arguments[0],
         ),
         .revoke_physical_memory => revokePhysicalMemory(
             Services,
-            caller_process_handle,
+            caller_capability_space,
             request.arguments[0],
         ),
         .destroy_memory_object => destroyMemoryObject(
             Services,
-            caller_process_handle,
+            caller_capability_space,
             request.arguments[0],
+        ),
+        .create_capability_space => createCapabilitySpace(Services, caller_capability_space),
+        .create_thread => createThread(Services, caller_capability_space),
+        .configure_thread => configureThread(Services, caller_capability_space, request.arguments),
+        .start_thread => controlThread(Services, caller_capability_space, request.arguments[0], .start_thread),
+        .suspend_thread => controlThread(Services, caller_capability_space, request.arguments[0], .suspend_thread),
+        .resume_thread => controlThread(Services, caller_capability_space, request.arguments[0], .resume_thread),
+        .terminate_thread => terminateThread(Services, caller_capability_space, request.arguments),
+        .install_capability => installCapability(Services, caller_capability_space, request.arguments),
+        .destroy_thread => destroyObjectCapability(Services, caller_capability_space, request.arguments[0], .destroy_thread),
+        .destroy_capability_space => destroyObjectCapability(Services, caller_capability_space, request.arguments[0], .destroy_capability_space),
+        .delete_capability => deleteInstalledCapability(
+            Services,
+            caller_capability_space,
+            request.arguments,
         ),
         _ => .{ .returned = abi.syscall.errorResult(.unsupported) },
     };
+}
+
+fn createCapabilitySpace(comptime Services: type, caller_space: u32) Result {
+    if (!@hasDecl(Services, "createCapabilitySpaceCapability")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const handle = Services.createCapabilitySpaceCapability(caller_space) catch |err| {
+        return failure(.create_capability_space, err);
+    };
+    return .{ .returned = handle };
+}
+
+fn createThread(comptime Services: type, caller_space: u32) Result {
+    if (!@hasDecl(Services, "createThreadCapability")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const handle = Services.createThreadCapability(caller_space) catch |err| {
+        return failure(.create_thread, err);
+    };
+    return .{ .returned = handle };
+}
+
+fn configureThread(comptime Services: type, caller_space: u32, arguments: [5]u64) Result {
+    if (!@hasDecl(Services, "configureThreadFromUser")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const thread_capability = toU32(arguments[0]) catch |err| return failure(.convert_argument, err);
+    Services.configureThreadFromUser(caller_space, thread_capability, arguments[1]) catch |err| {
+        return failure(.configure_thread, err);
+    };
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
+fn controlThread(
+    comptime Services: type,
+    caller_space: u32,
+    capability_value: u64,
+    operation: Operation,
+) Result {
+    const thread_capability = toU32(capability_value) catch |err| return failure(.convert_argument, err);
+    switch (operation) {
+        .start_thread => {
+            if (!@hasDecl(Services, "startThreadCapability")) {
+                return .{ .returned = abi.syscall.errorResult(.unsupported) };
+            }
+            Services.startThreadCapability(caller_space, thread_capability) catch |err| {
+                return failure(operation, err);
+            };
+        },
+        .suspend_thread => {
+            if (!@hasDecl(Services, "suspendThreadCapability")) {
+                return .{ .returned = abi.syscall.errorResult(.unsupported) };
+            }
+            Services.suspendThreadCapability(caller_space, thread_capability) catch |err| {
+                return failure(operation, err);
+            };
+        },
+        .resume_thread => {
+            if (!@hasDecl(Services, "resumeThreadCapability")) {
+                return .{ .returned = abi.syscall.errorResult(.unsupported) };
+            }
+            Services.resumeThreadCapability(caller_space, thread_capability) catch |err| {
+                return failure(operation, err);
+            };
+        },
+        else => unreachable,
+    }
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
+fn terminateThread(comptime Services: type, caller_space: u32, arguments: [5]u64) Result {
+    if (!@hasDecl(Services, "terminateThreadCapability")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const thread_capability = toU32(arguments[0]) catch |err| return failure(.convert_argument, err);
+    Services.terminateThreadCapability(caller_space, thread_capability, arguments[1]) catch |err| {
+        return failure(.terminate_thread, err);
+    };
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
+fn installCapability(comptime Services: type, caller_space: u32, arguments: [5]u64) Result {
+    if (!@hasDecl(Services, "installCapability")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const target_space = toU32(arguments[0]) catch |err| return failure(.convert_argument, err);
+    const source = toU32(arguments[1]) catch |err| return failure(.convert_argument, err);
+    const rights_bits = toU32(arguments[2]) catch |err| return failure(.convert_argument, err);
+    const rights = abi.capability.rightsFromBits(rights_bits) orelse {
+        return failure(.install_capability, error.InvalidCapabilityRights);
+    };
+    const installed = Services.installCapability(caller_space, target_space, source, rights) catch |err| {
+        return failure(.install_capability, err);
+    };
+    return .{ .returned = installed };
+}
+
+fn destroyObjectCapability(
+    comptime Services: type,
+    caller_space: u32,
+    capability_value: u64,
+    operation: Operation,
+) Result {
+    const handle = toU32(capability_value) catch |err| return failure(.convert_argument, err);
+    switch (operation) {
+        .destroy_thread => {
+            if (!@hasDecl(Services, "destroyThreadCapability")) {
+                return .{ .returned = abi.syscall.errorResult(.unsupported) };
+            }
+            Services.destroyThreadCapability(caller_space, handle) catch |err| {
+                return failure(operation, err);
+            };
+        },
+        .destroy_capability_space => {
+            if (!@hasDecl(Services, "destroyCapabilitySpaceCapability")) {
+                return .{ .returned = abi.syscall.errorResult(.unsupported) };
+            }
+            Services.destroyCapabilitySpaceCapability(caller_space, handle) catch |err| {
+                return failure(operation, err);
+            };
+        },
+        else => unreachable,
+    }
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
+fn deleteInstalledCapability(comptime Services: type, caller_space: u32, arguments: [5]u64) Result {
+    if (!@hasDecl(Services, "deleteCapabilityFromSpace")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const target_space = toU32(arguments[0]) catch |err| return failure(.convert_argument, err);
+    const target_capability = toU32(arguments[1]) catch |err| return failure(.convert_argument, err);
+    Services.deleteCapabilityFromSpace(caller_space, target_space, target_capability) catch |err| {
+        return failure(.delete_capability, err);
+    };
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
 }
 
 fn currentAddressSpace(comptime Services: type, caller_process_handle: process.ProcessHandle) Result {
@@ -398,8 +561,11 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.InvalidCapability,
         error.CapabilityOwnerMismatch,
         error.InvalidCapabilityType,
+        error.InvalidCapabilitySpaceHandle,
+        error.InvalidThreadHandle,
         error.InvalidAddressSpaceHandle,
         error.InvalidMemoryObjectHandle,
+        error.ThreadOwnerMismatch,
         => .invalid_capability,
         error.InsufficientCapabilityRights => .insufficient_rights,
         error.InvalidCapabilityRights => .insufficient_rights,
@@ -407,6 +573,9 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.OutOfAuthorities,
         error.OutOfAddressSpaces,
         error.OutOfMemoryObjects,
+        error.OutOfThreads,
+        error.OutOfCapabilitySpaces,
+        error.OutOfThreadContexts,
         error.OutOfVirtualMemoryAreas,
         error.AddressSpaceRootAllocationFailed,
         error.PhysicalMemoryAllocationFailed,
@@ -439,6 +608,28 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.AddressSpaceInUse,
         error.MemoryObjectInUse,
         => .address_space_in_use,
+        error.InvalidStateTransition,
+        error.ThreadNotConfigured,
+        error.ThreadAlreadyConfigured,
+        error.SchedulerUninitialized,
+        error.SchedulerAlreadyInitialized,
+        error.NoCurrentThread,
+        error.CurrentThreadMismatch,
+        error.ThreadAlreadyQueued,
+        error.ReadyQueueFull,
+        => .invalid_state,
+        error.ThreadInUse,
+        error.CapabilitySpaceInUse,
+        error.CapabilitySpaceNotEmpty,
+        => .object_in_use,
+        error.UserPageNotMapped,
+        error.UserAccessDenied,
+        error.WriteAccessDenied,
+        error.CopyTooLarge,
+        error.AddressOutOfRange,
+        error.AddressRangeOverflow,
+        error.PhysicalAddressOverflow,
+        => .invalid_user_memory,
         else => .internal_failure,
     };
 }
@@ -458,6 +649,70 @@ fn rightsFromMapFlags(permission_flags: u32) abi.capability.Rights {
     };
 }
 
+fn productionConfigureThreadFromUser(
+    caller_space: u32,
+    thread_capability: abi.capability.CapabilityHandle,
+    configuration_address: u64,
+) !void {
+    var bytes: [@sizeOf(abi.process.ThreadConfiguration)]u8 = undefined;
+    try user_memory.copyFromUser(&bytes, configuration_address, bytes.len);
+    const configuration = @import("std").mem.bytesToValue(abi.process.ThreadConfiguration, &bytes);
+    const thread_handle = try capability.resolveThread(
+        caller_space,
+        thread_capability,
+        .{ .configure = true },
+    );
+    const capability_space_handle = try capability.resolveCapabilitySpace(
+        caller_space,
+        configuration.capability_space,
+        .{},
+    );
+    const address_space_handle = try capability.resolveAddressSpace(
+        caller_space,
+        configuration.address_space,
+        .{ .execute = true },
+    );
+    try process.configureThread(thread_handle, .{
+        .capability_space_handle = capability_space_handle,
+        .address_space_handle = address_space_handle,
+        .entry_point = configuration.entry_point,
+        .stack_pointer = configuration.stack_pointer,
+        .argument = configuration.argument,
+    });
+}
+
+fn productionStartThreadCapability(caller_space: u32, thread_capability: u32) !void {
+    const handle = try capability.resolveThread(caller_space, thread_capability, .{ .start = true });
+    try process.scheduler.makeReady(handle);
+}
+
+fn productionSuspendThreadCapability(caller_space: u32, thread_capability: u32) !void {
+    const handle = try capability.resolveThread(
+        caller_space,
+        thread_capability,
+        .{ .suspend_thread = true },
+    );
+    try process.scheduler.suspendThread(handle);
+}
+
+fn productionResumeThreadCapability(caller_space: u32, thread_capability: u32) !void {
+    const handle = try capability.resolveThread(
+        caller_space,
+        thread_capability,
+        .{ .resume_thread = true },
+    );
+    try process.scheduler.resumeThread(handle);
+}
+
+fn productionTerminateThreadCapability(caller_space: u32, thread_capability: u32, status: u64) !void {
+    const handle = try capability.resolveThread(
+        caller_space,
+        thread_capability,
+        .{ .terminate = true },
+    );
+    try process.scheduler.terminate(handle, status);
+}
+
 const ProductionServices = struct {
     pub const currentAddressSpaceHandle = process.execution_context.currentAddressSpaceHandle;
     pub const findAddressSpaceCapability = capability.findAddressSpaceCapability;
@@ -475,4 +730,15 @@ const ProductionServices = struct {
     pub const protectAddressSpace = process.protectAddressSpace;
     pub const queryAddressSpace = process.queryAddressSpace;
     pub const unmapAddressSpace = process.unmapAddressSpace;
+    pub const createCapabilitySpaceCapability = capability.createCapabilitySpaceCapability;
+    pub const createThreadCapability = capability.createThreadCapability;
+    pub const configureThreadFromUser = productionConfigureThreadFromUser;
+    pub const startThreadCapability = productionStartThreadCapability;
+    pub const suspendThreadCapability = productionSuspendThreadCapability;
+    pub const resumeThreadCapability = productionResumeThreadCapability;
+    pub const terminateThreadCapability = productionTerminateThreadCapability;
+    pub const installCapability = capability.installCapability;
+    pub const destroyThreadCapability = capability.destroyThreadCapability;
+    pub const destroyCapabilitySpaceCapability = capability.destroyCapabilitySpaceCapability;
+    pub const deleteCapabilityFromSpace = capability.deleteCapabilityFromSpace;
 };

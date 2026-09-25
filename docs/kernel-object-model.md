@@ -137,18 +137,28 @@ The kernel owns:
 - copy, mint, rights attenuation, transfer, deletion, and revocation semantics;
 - exhaustion and invalid-handle behavior.
 
-The current transitional ABI encodes each capability handle as a 32-bit value:
-the low 7 bits identify a capability-table slot and the high 25 bits identify a
-nonzero slot generation. Handle zero is reserved as invalid. Deleting a slot
-advances its generation before reuse, so a stale handle cannot resolve to the
-new occupant. The current global table is bounded to 16 live slots to match the
-existing address-space registry; exhaustion is reported explicitly.
+The current ABI encodes each local capability handle as a 32-bit value: the low
+7 bits identify one of 128 slots and the upper usable bits identify a nonzero slot
+generation while preserving the structured syscall-error bit. Handle zero is
+reserved as invalid. Deleting a slot advances its generation before reuse, so a
+stale handle cannot resolve to the new occupant.
+
+The kernel currently stores up to 16 generation-checked capability-space objects.
+Each space owns its own slot array; the active thread's capability-space handle
+selects the namespace for syscall lookup. A local handle from one space therefore
+has no authority in another space even when its numeric value is identical.
+
+Slots retain object identity, rights, and an optional derivation parent containing
+both capability-space and local-handle identity. Installation into another space
+requires manage authority over that target and may only attenuate rights. Target
+slots can be deleted through the target-space authority, and physical-memory
+revocation follows derivation references across spaces.
 
 Capability possession is not object ownership. A capability may grant restricted
 authority without transferring ownership of the referenced object.
 
-The current global owner/type/rights table is transitional enforcement scaffolding,
-not the target capability-space model.
+The bounded single-level spaces are an implemented intermediate model, not the
+final seL4-style multi-level CSpace and IPC-transfer design.
 
 ### Endpoint
 

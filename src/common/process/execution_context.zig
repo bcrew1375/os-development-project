@@ -8,7 +8,7 @@ pub const CapabilitySpaceHandle = thread.CapabilitySpaceHandle;
 
 /// Compatibility identity used only by isolated tests that do not construct a real thread.
 pub const ROOT_THREAD_HANDLE: ThreadHandle = 1;
-pub const ROOT_CAPABILITY_SPACE_HANDLE: CapabilitySpaceHandle = 1;
+pub const ROOT_CAPABILITY_SPACE_HANDLE = process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE;
 
 pub const ExecutionContext = struct {
     thread_handle: ThreadHandle,
@@ -46,6 +46,10 @@ pub fn current() error{ExecutionContextUninitialized}!ExecutionContext {
 
 pub fn currentProcessHandle() error{ExecutionContextUninitialized}!process.ProcessHandle {
     return (try current()).process_handle;
+}
+
+pub fn currentCapabilitySpaceHandle() error{ExecutionContextUninitialized}!CapabilitySpaceHandle {
+    return (try current()).capability_space_handle;
 }
 
 pub fn currentAddressSpaceHandle() error{ExecutionContextUninitialized}!process.AddressSpaceHandle {

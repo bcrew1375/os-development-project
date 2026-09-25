@@ -20,6 +20,17 @@ pub const SyscallNumber = enum(u32) {
     delete_physical_memory = 19,
     revoke_physical_memory = 20,
     destroy_memory_object = 21,
+    create_capability_space = 22,
+    create_thread = 23,
+    configure_thread = 24,
+    start_thread = 25,
+    suspend_thread = 26,
+    resume_thread = 27,
+    terminate_thread = 28,
+    install_capability = 29,
+    destroy_thread = 30,
+    destroy_capability_space = 31,
+    delete_capability = 32,
     _,
 };
 
@@ -47,6 +58,9 @@ pub const ErrorCode = enum(u32) {
     address_space_in_use = 7,
     unsupported = 8,
     internal_failure = 9,
+    invalid_state = 10,
+    object_in_use = 11,
+    invalid_user_memory = 12,
 };
 
 /// Encodes a recoverable ABI error in a syscall return value.
@@ -67,6 +81,9 @@ pub fn decodeError(value: u32) ?ErrorCode {
         @intFromEnum(ErrorCode.address_space_in_use) => .address_space_in_use,
         @intFromEnum(ErrorCode.unsupported) => .unsupported,
         @intFromEnum(ErrorCode.internal_failure) => .internal_failure,
+        @intFromEnum(ErrorCode.invalid_state) => .invalid_state,
+        @intFromEnum(ErrorCode.object_in_use) => .object_in_use,
+        @intFromEnum(ErrorCode.invalid_user_memory) => .invalid_user_memory,
         else => .internal_failure,
     };
 }

@@ -11,7 +11,7 @@ fn createConfiguredThread(owner: kernel.process.ProcessHandle) !kernel.process.t
     const address_space = try kernel.process.createAddressSpaceForOwner(owner);
     const handle = try kernel.process.createThread(owner);
     try kernel.process.configureThread(handle, .{
-        .capability_space_handle = owner,
+        .capability_space_handle = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE,
         .address_space_handle = address_space,
         .entry_point = 0x0040_0000 + owner * 0x1000,
         .stack_pointer = 0x0080_0000 + owner * 0x1000,
@@ -139,4 +139,46 @@ test "Scheduler: stopping the last thread selects idle and clears execution iden
         }),
         arch.thread_context.getLastSwitchForTest(),
     );
+}
+
+test "Scheduler: suspension removes ready threads and resume restores queue membership" {
+    try setup();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+
+    const handle = try createConfiguredThread(4);
+    const object = try kernel.process.thread.get(handle);
+    try kernel.process.scheduler.initialize(
+        try kernel.process.getAddressSpaceRoot(object.address_space_handle),
+    );
+    try kernel.process.scheduler.makeReady(handle);
+    try kernel.process.scheduler.suspendThread(handle);
+    try std.testing.expectEqual(@as(usize, 0), kernel.process.scheduler.readyCountForTest());
+    try std.testing.expectEqual(
+        kernel.process.thread.State.blocked,
+        (try kernel.process.thread.get(handle)).state,
+    );
+
+    try kernel.process.scheduler.resumeThread(handle);
+    try std.testing.expectEqual(@as(usize, 1), kernel.process.scheduler.readyCountForTest());
+    try std.testing.expectEqual(
+        kernel.process.thread.State.ready,
+        (try kernel.process.thread.get(handle)).state,
+    );
+}
+
+test "Scheduler: termination removes a ready thread transactionally" {
+    try setup();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+
+    const handle = try createConfiguredThread(5);
+    const object = try kernel.process.thread.get(handle);
+    try kernel.process.scheduler.initialize(
+        try kernel.process.getAddressSpaceRoot(object.address_space_handle),
+    );
+    try kernel.process.scheduler.makeReady(handle);
+    try kernel.process.scheduler.terminate(handle, 23);
+    try std.testing.expectEqual(@as(usize, 0), kernel.process.scheduler.readyCountForTest());
+    const terminated = try kernel.process.thread.get(handle);
+    try std.testing.expectEqual(kernel.process.thread.State.exited, terminated.state);
+    try std.testing.expectEqual(@as(?u64, 23), terminated.exit_status);
 }

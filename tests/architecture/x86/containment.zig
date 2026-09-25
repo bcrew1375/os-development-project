@@ -52,7 +52,7 @@ fn createThread(
 ) !kernel.process.thread.Handle {
     const handle = try kernel.process.createThread(owner);
     try kernel.process.configureThread(handle, .{
-        .capability_space_handle = owner,
+        .capability_space_handle = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE,
         .address_space_handle = address_space,
         .entry_point = entry_point,
         .stack_pointer = stack_pointer,

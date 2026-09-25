@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const arch = @import("arch");
+const capability_space = @import("../capability/space.zig");
 
 pub const MAX_THREADS: usize = 32;
 const HANDLE_SLOT_BITS: u32 = 5;
@@ -10,7 +11,7 @@ const MAX_GENERATION: u32 = (@as(u32, 1) << (31 - HANDLE_SLOT_BITS)) - 1;
 
 pub const Handle = u32;
 pub const INVALID_HANDLE: Handle = 0;
-pub const CapabilitySpaceHandle = u32;
+pub const CapabilitySpaceHandle = capability_space.Handle;
 pub const AddressSpaceHandle = u32;
 pub const ProcessHandle = u32;
 
@@ -155,6 +156,16 @@ pub fn block(handle: Handle) Error!void {
     slot.thread.state = .blocked;
 }
 
+pub fn suspendReady(handle: Handle) Error!void {
+    const slot = try resolveMutableSlot(handle);
+    if (slot.thread.state != .ready) return Error.InvalidStateTransition;
+    slot.thread.state = .blocked;
+}
+
+pub fn suspendRunning(handle: Handle) Error!void {
+    return block(handle);
+}
+
 pub fn exit(handle: Handle, status: u64) Error!void {
     const slot = try resolveMutableSlot(handle);
     switch (slot.thread.state) {
@@ -201,6 +212,16 @@ pub fn referencesAddressSpace(address_space_handle: AddressSpaceHandle) bool {
     if (address_space_handle == 0) return false;
     for (slots) |slot| {
         if (slot.used and slot.thread.address_space_handle == address_space_handle) {
+            return true;
+        }
+    }
+    return false;
+}
+
+pub fn referencesCapabilitySpace(capability_space_handle: CapabilitySpaceHandle) bool {
+    if (capability_space_handle == capability_space.INVALID_HANDLE) return false;
+    for (slots) |slot| {
+        if (slot.used and slot.thread.capability_space_handle == capability_space_handle) {
             return true;
         }
     }

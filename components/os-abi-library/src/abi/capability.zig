@@ -62,6 +62,10 @@ pub const ObjectType = enum(u32) {
     untyped_memory = 3,
     /// Typed authority over immutable physical frames.
     physical_frame = 4,
+    /// Schedulable userspace thread object.
+    thread = 5,
+    /// Bounded namespace containing capability slots.
+    capability_space = 6,
     _,
 };
 
@@ -75,19 +79,34 @@ pub const Rights = packed struct(u32) {
     execute: bool = false,
     /// Allows management operations such as deriving or mapping.
     manage: bool = false,
-    _reserved: u28 = 0,
+    /// Allows binding a thread to execution resources.
+    configure: bool = false,
+    /// Allows making a configured thread runnable for the first time.
+    start: bool = false,
+    /// Allows stopping a runnable thread without terminating it.
+    suspend_thread: bool = false,
+    /// Allows returning a suspended thread to the ready queue.
+    resume_thread: bool = false,
+    /// Allows recording normal termination for a thread.
+    terminate: bool = false,
+    _reserved: u23 = 0,
 
     /// Returns true when `self` grants every right requested by `required`.
     pub fn contains(self: Rights, required: Rights) bool {
         return (!required.read or self.read) and
             (!required.write or self.write) and
             (!required.execute or self.execute) and
-            (!required.manage or self.manage);
+            (!required.manage or self.manage) and
+            (!required.configure or self.configure) and
+            (!required.start or self.start) and
+            (!required.suspend_thread or self.suspend_thread) and
+            (!required.resume_thread or self.resume_thread) and
+            (!required.terminate or self.terminate);
     }
 };
 
 /// Rights bits accepted by capability-management ABI requests.
-pub const KNOWN_RIGHTS_MASK: u32 = 0x0f;
+pub const KNOWN_RIGHTS_MASK: u32 = 0x01ff;
 
 /// Encodes capability rights into their stable ABI representation.
 pub fn rightsBits(rights: Rights) u32 {

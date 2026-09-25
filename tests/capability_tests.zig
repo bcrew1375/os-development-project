@@ -220,15 +220,115 @@ test "Capability: object type mismatch is rejected" {
     );
 }
 
-test "Capability: owner mismatch is rejected" {
+test "Capability: local handles do not resolve in another capability space" {
     testSetup();
 
     const capability = try kernel.capability.createAddressSpaceCapability(kernel.process.ROOT_PROCESS_HANDLE);
+    const foreign_space = try kernel.process.capability_spaces.create();
 
     try std.testing.expectError(
-        error.CapabilityOwnerMismatch,
-        kernel.capability.resolveAddressSpace(kernel.process.ROOT_PROCESS_HANDLE + 1, capability, .{}),
+        error.InvalidCapability,
+        kernel.capability.resolveAddressSpace(foreign_space, capability, .{}),
     );
+}
+
+test "Capability: thread and capability-space objects are bounded authorities" {
+    testSetup();
+    const root_space = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE;
+    const space_capability = try kernel.capability.createCapabilitySpaceCapability(root_space);
+    const child_space = try kernel.capability.resolveCapabilitySpace(
+        root_space,
+        space_capability,
+        .{ .manage = true },
+    );
+    const thread_capability = try kernel.capability.createThreadCapability(root_space);
+    const thread_handle = try kernel.capability.resolveThread(
+        root_space,
+        thread_capability,
+        .{ .configure = true },
+    );
+    try std.testing.expect((try kernel.process.thread.get(thread_handle)).state == .new);
+
+    try kernel.capability.destroyThreadCapability(root_space, thread_capability);
+    try kernel.capability.destroyCapabilitySpaceCapability(root_space, space_capability);
+    try std.testing.expectError(
+        error.InvalidCapabilitySpaceHandle,
+        kernel.process.capability_spaces.validate(child_space),
+    );
+}
+
+test "Capability: installation attenuates rights and isolates local handles" {
+    testSetup();
+    const root_space = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE;
+    const target_capability = try kernel.capability.createCapabilitySpaceCapability(root_space);
+    const target_space = try kernel.capability.resolveCapabilitySpace(
+        root_space,
+        target_capability,
+        .{ .manage = true },
+    );
+    const thread_capability = try kernel.capability.createThreadCapability(root_space);
+    const installed = try kernel.capability.installCapability(
+        root_space,
+        target_capability,
+        thread_capability,
+        .{ .terminate = true },
+    );
+    _ = try kernel.capability.resolveThread(target_space, installed, .{ .terminate = true });
+    try std.testing.expectError(
+        error.InsufficientCapabilityRights,
+        kernel.capability.resolveThread(target_space, installed, .{ .configure = true }),
+    );
+    try std.testing.expectError(
+        error.InvalidCapabilityRights,
+        kernel.capability.installCapability(
+            root_space,
+            target_capability,
+            thread_capability,
+            .{ .execute = true },
+        ),
+    );
+    try std.testing.expectError(
+        error.CapabilityHasDescendants,
+        kernel.capability.destroyThreadCapability(root_space, thread_capability),
+    );
+    try std.testing.expectError(
+        error.CapabilitySpaceNotEmpty,
+        kernel.capability.destroyCapabilitySpaceCapability(root_space, target_capability),
+    );
+    try kernel.capability.deleteCapability(target_space, installed);
+    try kernel.capability.destroyThreadCapability(root_space, thread_capability);
+    try kernel.capability.destroyCapabilitySpaceCapability(root_space, target_capability);
+}
+
+test "Capability: derivation traversal follows reused capability-space generations" {
+    testSetup();
+    const root_space = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE;
+    const stale_capability = try kernel.capability.createCapabilitySpaceCapability(root_space);
+    const stale_space = try kernel.capability.resolveCapabilitySpace(
+        root_space,
+        stale_capability,
+        .{ .manage = true },
+    );
+    try kernel.capability.destroyCapabilitySpaceCapability(root_space, stale_capability);
+    const target_capability = try kernel.capability.createCapabilitySpaceCapability(root_space);
+    const target_space = try kernel.capability.resolveCapabilitySpace(
+        root_space,
+        target_capability,
+        .{ .manage = true },
+    );
+    try std.testing.expect(target_space != stale_space);
+    const thread_capability = try kernel.capability.createThreadCapability(root_space);
+    const installed = try kernel.capability.installCapability(
+        root_space,
+        target_capability,
+        thread_capability,
+        .{ .terminate = true },
+    );
+    try std.testing.expectError(
+        error.CapabilityHasDescendants,
+        kernel.capability.destroyThreadCapability(root_space, thread_capability),
+    );
+    try kernel.capability.deleteCapability(target_space, installed);
 }
 
 test "Capability: deleting and reusing a slot rejects the stale handle" {
@@ -322,7 +422,7 @@ test "Capability: missing rights are rejected" {
 
     try std.testing.expectError(
         error.InsufficientCapabilityRights,
-        kernel.capability.resolveAddressSpace(kernel.process.ROOT_PROCESS_HANDLE, capability, .{ .execute = true }),
+        kernel.capability.resolveAddressSpace(kernel.process.ROOT_PROCESS_HANDLE, capability, .{ .configure = true }),
     );
 }
 

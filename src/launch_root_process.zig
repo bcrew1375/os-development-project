@@ -91,7 +91,7 @@ pub fn prepareRootProcess() !PreparedRootProcess {
     );
     errdefer kernel_common.process.thread.destroy(thread_handle) catch {};
     try kernel_common.process.configureThread(thread_handle, .{
-        .capability_space_handle = kernel_common.process.ROOT_PROCESS_HANDLE,
+        .capability_space_handle = kernel_common.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE,
         .address_space_handle = address_space_handle,
         .entry_point = entry_point,
         .stack_pointer = initial_stack_pointer,

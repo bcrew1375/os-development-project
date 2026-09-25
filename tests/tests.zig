@@ -6,6 +6,7 @@ test {
     _ = @import("scheduler_tests.zig");
     _ = @import("lifecycle_tests.zig");
     _ = @import("capability_tests.zig");
+    _ = @import("capability_space_tests.zig");
     _ = @import("syscall_tests.zig");
     _ = @import("coverage_report_tests.zig");
     _ = @import("architecture_points_file_tests.zig");

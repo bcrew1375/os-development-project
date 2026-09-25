@@ -57,6 +57,31 @@ test "Capability object type values are stable" {
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum(abi.capability.ObjectType.memory_object));
     try std.testing.expectEqual(@as(u32, 3), @intFromEnum(abi.capability.ObjectType.untyped_memory));
     try std.testing.expectEqual(@as(u32, 4), @intFromEnum(abi.capability.ObjectType.physical_frame));
+    try std.testing.expectEqual(@as(u32, 5), @intFromEnum(abi.capability.ObjectType.thread));
+    try std.testing.expectEqual(@as(u32, 6), @intFromEnum(abi.capability.ObjectType.capability_space));
+}
+
+test "Thread configuration ABI layout is fixed width" {
+    const Configuration = abi.process.ThreadConfiguration;
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(Configuration));
+    try std.testing.expectEqual(@as(usize, 0), @offsetOf(Configuration, "capability_space"));
+    try std.testing.expectEqual(@as(usize, 4), @offsetOf(Configuration, "address_space"));
+    try std.testing.expectEqual(@as(usize, 8), @offsetOf(Configuration, "entry_point"));
+    try std.testing.expectEqual(@as(usize, 16), @offsetOf(Configuration, "stack_pointer"));
+    try std.testing.expectEqual(@as(usize, 24), @offsetOf(Configuration, "argument"));
+}
+
+test "Thread lifecycle rights are representable and attenuable" {
+    const all = abi.capability.Rights{
+        .configure = true,
+        .start = true,
+        .suspend_thread = true,
+        .resume_thread = true,
+        .terminate = true,
+    };
+    try std.testing.expect(all.contains(.{ .configure = true, .start = true }));
+    try std.testing.expect(!(abi.capability.Rights{ .start = true }).contains(.{ .terminate = true }));
+    try std.testing.expectEqual(@as(u32, 0x01ff), abi.capability.KNOWN_RIGHTS_MASK);
 }
 
 test "Retype ABI packing preserves target rights and 64-bit offsets" {

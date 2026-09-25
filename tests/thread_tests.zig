@@ -2,6 +2,8 @@ const std = @import("std");
 const arch = @import("arch");
 const kernel = @import("kernel_common");
 
+const root_capability_space = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE;
+
 fn testSetup() void {
     kernel.process.resetForTest();
     kernel.process.execution_context.resetForTest();
@@ -14,7 +16,7 @@ fn configureRunnableThread(
     const address_space = try kernel.process.createAddressSpaceForOwner(owner);
     const handle = try kernel.process.createThread(owner);
     try kernel.process.configureThread(handle, .{
-        .capability_space_handle = owner,
+        .capability_space_handle = root_capability_space,
         .address_space_handle = address_space,
         .entry_point = 0x0040_0000,
         .stack_pointer = 0x0080_0000,
@@ -45,7 +47,7 @@ test "Thread: readiness requires a configured architecture context" {
     try std.testing.expectError(error.ThreadNotConfigured, kernel.process.thread.makeReady(handle));
     const address_space = try kernel.process.createAddressSpaceForOwner(owner);
     try kernel.process.configureThread(handle, .{
-        .capability_space_handle = 7,
+        .capability_space_handle = root_capability_space,
         .address_space_handle = address_space,
         .entry_point = 0x0040_0000,
         .stack_pointer = 0x0080_0000,
@@ -65,7 +67,7 @@ test "Thread: configuration publishes architecture execution resources" {
     const handle = try kernel.process.createThread(owner);
 
     try kernel.process.configureThread(handle, .{
-        .capability_space_handle = owner,
+        .capability_space_handle = root_capability_space,
         .address_space_handle = address_space,
         .entry_point = 0x0040_0000,
         .stack_pointer = 0x0080_0000,
@@ -90,7 +92,7 @@ test "Thread: architecture allocation failure leaves configuration unpublished" 
     arch.thread_context.failNextCreateForTest();
 
     try std.testing.expectError(error.OutOfThreadContexts, kernel.process.configureThread(handle, .{
-        .capability_space_handle = owner,
+        .capability_space_handle = root_capability_space,
         .address_space_handle = address_space,
         .entry_point = 0x0040_0000,
         .stack_pointer = 0x0080_0000,
@@ -107,7 +109,7 @@ test "Thread: configuration validates handles and address-space ownership" {
     try std.testing.expectError(
         error.ThreadOwnerMismatch,
         kernel.process.configureThread(handle, .{
-            .capability_space_handle = 42,
+            .capability_space_handle = root_capability_space,
             .address_space_handle = foreign_address_space,
             .entry_point = 0x0040_0000,
             .stack_pointer = 0x0080_0000,
@@ -116,7 +118,7 @@ test "Thread: configuration validates handles and address-space ownership" {
     try std.testing.expectError(
         error.InvalidAddressSpaceHandle,
         kernel.process.configureThread(handle, .{
-            .capability_space_handle = 42,
+            .capability_space_handle = root_capability_space,
             .address_space_handle = 0,
             .entry_point = 0x0040_0000,
             .stack_pointer = 0x0080_0000,
@@ -182,7 +184,7 @@ test "Thread: live references prevent address-space destruction" {
     const address_space = try kernel.process.createAddressSpaceForOwner(owner);
     const handle = try kernel.process.createThread(owner);
     try kernel.process.configureThread(handle, .{
-        .capability_space_handle = owner,
+        .capability_space_handle = root_capability_space,
         .address_space_handle = address_space,
         .entry_point = 0x0040_0000,
         .stack_pointer = 0x0080_0000,
@@ -206,7 +208,7 @@ test "Thread: context handles become stale and storage is reused on destruction"
     const address_space = try kernel.process.createAddressSpaceForOwner(owner);
     const handle = try kernel.process.createThread(owner);
     try kernel.process.configureThread(handle, .{
-        .capability_space_handle = owner,
+        .capability_space_handle = root_capability_space,
         .address_space_handle = address_space,
         .entry_point = 0x0040_0000,
         .stack_pointer = 0x0080_0000,
@@ -220,7 +222,7 @@ test "Thread: context handles become stale and storage is reused on destruction"
 
     const replacement = try kernel.process.createThread(owner);
     try kernel.process.configureThread(replacement, .{
-        .capability_space_handle = owner,
+        .capability_space_handle = root_capability_space,
         .address_space_handle = address_space,
         .entry_point = 0x0040_1000,
         .stack_pointer = 0x0080_1000,
