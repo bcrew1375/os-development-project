@@ -120,7 +120,8 @@ fn addRootTaskComponentBuild(b: *std.Build, config: BuildConfig) std.Build.LazyP
         \\cd "$root_task_directory"
         \\"$zig_exe" build \
         \\    -Darch="$architecture" \
-        \\    -Dabi-path="$abi_directory/src/abi/main.zig"
+        \\    -Dabi-path="$abi_directory/src/abi/main.zig" \
+        \\    -Dshared-path="$abi_directory/src/main.zig"
         \\mkdir -p "$(dirname "$output")"
         \\cp "zig-out/$architecture/bin/root_process.elf" "$output"
     ;

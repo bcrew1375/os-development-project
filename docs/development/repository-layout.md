@@ -6,8 +6,8 @@ The project is a monorepo containing three independently scoped deliverables:
   kernel tests, and boot-image packaging.
 - `components/os-abi-library`: stable user/kernel ABI definitions and shared
   helpers usable across protection domains.
-- `components/os-root-task`: the initial userspace root task, built as an
-  independent freestanding ELF executable.
+- `components/os-root-task`: the initial userspace root task and smoke-child source,
+  built as independent freestanding ELF executables.
 
 The component directories are ordinary tracked source trees, so a clone
 contains everything needed to build and test the project. Each component is
@@ -41,9 +41,10 @@ The ABI library must not depend on kernel-private or root-task code. The root
 task must not import kernel-private modules and communicates with the kernel
 only through the ABI.
 
-The kernel consumes the root task as an ELF runtime artifact. It does not
-compile or link root-task source into the kernel. The root task remains
-independently buildable even while root-level orchestration invokes its build.
+The kernel consumes the root task and initial child executable as ELF runtime
+artifacts. It does not compile or link their source into the kernel. The root-task
+component remains independently buildable even while root-level orchestration
+invokes its build and packages both artifacts.
 
 ## Validation
 
@@ -172,10 +173,11 @@ zig build system-smoke -Darch=x86_32
 zig build system-smoke -Darch=x86_64
 ```
 
-The runner validates the ordered version-1 `SYSTEM-SMOKE` lifecycle protocol,
-requires root-task exit status zero, and terminates the halted guest through QMP
-`quit`. x86-32 supports both its default Limine image and the optional direct
-Multiboot path selected with `-Dbootloader=multiboot`. See
+The runner validates the ordered version-3 `SYSTEM-SMOKE` lifecycle protocol,
+including child yield, clean exit, contained invalid-opcode fault, root resumption,
+and final root exit. It requires root-task exit status zero and terminates the
+halted guest through QMP `quit`. x86-32 supports both its default Limine image and
+the optional direct Multiboot path selected with `-Dbootloader=multiboot`. See
 [Production System Smoke Tests](../testing/system-smoke.md) for protocol ownership, timeout
 configuration, failure behavior, CI integration, and trend reporting.
 

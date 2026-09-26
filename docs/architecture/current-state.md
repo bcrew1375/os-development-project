@@ -9,17 +9,17 @@ who need context before entering the source or the detailed roadmaps.
 ## Maturity in one sentence
 
 > The repository is a well-structured x86 kernel bring-up environment with a real
-> userspace transition, cooperative scheduling, and an initial capability-shaped
-> API, but it does not yet provide a complete microkernel execution or resource model.
+> userspace transition, cooperative scheduling, root-task child construction, and
+> an initial capability-shaped API, but it does not yet provide IPC or a complete
+> microkernel service model.
 
 The production system can boot on x86-32 and x86-64, load a freestanding root
 ELF, enter ring 3, service system calls, enforce capability-space-local rights,
-contain user faults, and observe a clean root-task exit. This is a real initial
-userspace process, and its thread is enrolled through the normal cooperative
-scheduler. Userspace can create, configure, control, and delegate authority to
-additional bounded thread and capability-space objects. The root task is still
-bootstrap-created, and reusable userspace process records, ELF construction, and
-IPC remain future work.
+contain user faults, construct isolated child processes from packaged ELF
+artifacts, and observe clean child/root exits. The root and child threads are
+enrolled through the normal cooperative scheduler. The root task remains
+bootstrap-created, while IPC and useful multi-service orchestration remain future
+work.
 
 ## System boundary
 
@@ -75,8 +75,11 @@ general-purpose userspace heap from capability-backed mapped extents. Heap growt
 suballocation, accounting, rollback, and optional empty-extent reclamation are
 root-task policy. Its `process_management` subsystem exposes typed wrappers for
 thread and capability-space creation, configuration, lifecycle control, authority
-attenuation, delegation, deletion, and destruction. Userspace process records and
-ELF-loading policy remain U4.6 work.
+attenuation, delegation, deletion, and destruction. Its `ChildProcess` policy
+record transactionally loads native ELF segments and a startup stack from a boot
+module, owns every created resource, and supports retryable destruction. The
+[root-created userspace process](userspace-processes.md) document describes the
+implemented construction and execution boundary in detail.
 
 ## Kernel source structure
 
@@ -144,12 +147,16 @@ The current production path is:
 11. architecture interrupt code converts registers into a common syscall request;
 12. common syscall policy performs capability and object-registry operations;
 13. the root task constructs and verifies its initial userspace heap extent;
-14. repeated yields resume the preserved syscall trap frame successfully;
-15. the root task exits and the production smoke protocol records success.
+14. the root task loads and starts a clean child ELF, alternates with it through
+    cooperative yield, observes its contained exit, and destroys its resources;
+15. the root task repeats construction with a child configured to execute `ud2`,
+    observes contained fault attribution, resumes, and destroys the child;
+16. the root task exits and the production smoke protocol records success.
 
-This path proves a real privilege transition and cross-domain ABI. It does not yet
-prove a reusable process model: the root task is still a privileged bootstrap
-special case in kernel policy and cannot create a runnable child.
+This path proves reusable userspace process construction without introducing a
+kernel process bundle. The root task remains a privileged bootstrap policy process,
+but children use ordinary public capabilities, address spaces, memory objects,
+threads, and scheduler transitions.
 
 ## Current common subsystems
 
@@ -198,9 +205,10 @@ without a physical switch. Ready threads may be removed transactionally for
 suspension or termination, and blocked threads may be resumed. Timer preemption
 remains disabled.
 
-There is still not yet a first-class kernel process object; process grouping remains
-intended userspace policy. Public child-thread and capability-space construction is
-exposed, while the userspace process record and ELF construction path remain U4.6.
+There is no first-class kernel process object; process grouping remains userspace
+policy. The root task's bounded `ChildProcess` record groups the public object
+capabilities and physical allocations required for one child and owns transactional
+construction/destruction.
 
 ## Bounded privileged allocation
 
@@ -220,6 +228,8 @@ mechanisms are bounded:
 - root ELF segments, the bounded 64 KiB initial stack, and the one-page
   boot-information blob are the only bootstrap-contiguous VMM allocations before
   userspace entry.
+- child ELF segments and stacks are funded from delegated userspace physical
+  authority and mapped through ordinary frame-backed memory objects.
 
 The early allocator remains a monotonic bootstrap reservation mechanism, not a
 runtime physical-memory policy service. Delegable RAM excludes every retained
@@ -314,7 +324,8 @@ remain for legacy VMAs until U3.7; they are not used by frame-backed memory obje
 
 The root `build.zig` is an orchestration layer, decomposed by build concern under
 `build/`. It creates shared modules once, builds the kernel for a selected target,
-invokes the root task's independent build, packages boot artifacts, and exposes
+invokes the root task's independent build, packages root and child ELF boot
+artifacts, and exposes
 separate steps for native tests, physical tests, coverage, smoke tests, generated
 documentation, and QEMU execution.
 
@@ -346,15 +357,15 @@ details.
 | Area | Current state | Intended direction |
 | --- | --- | --- |
 | Architectures | x86-32, x86-64, and native mock | More implementations behind the same interface |
-| Userspace | One bootstrapped root task | Isolated threads and protection domains |
+| Userspace | Bootstrapped root plus sequentially constructed isolated child processes | IPC-connected services and broader process policy |
 | Address spaces | Every registered object owns a hardware root and bounded VMA registry | Thread-driven activation and broader lifecycle integration |
 | Memory objects | Immutable delegated physical backing and transactional explicit-root mapping | Broader object attributes and sharing policy |
 | Capabilities | Bounded generation-checked spaces, local handles, rights attenuation, cross-space install/delete, physical derivation tracking | Endpoint transfer and broader object revocation semantics |
-| Scheduling | Bounded FIFO cooperative scheduler, reserved idle continuation, userspace `yield`, and child-thread lifecycle control | Userspace process construction, then timer preemption |
+| Scheduling | Bounded FIFO cooperative scheduler, reserved idle continuation, root/child yielding, and contained exit/fault handoff | Timer preemption and blocking IPC |
 | Fault handling | User faults are attributed and contained | Process-manager consumption and richer reporting |
 | IPC | None | Synchronous endpoints, then notifications |
 | Memory policy | Bounded root-task physical-range allocator and capability-backed multi-extent userspace heap; no kernel PMM or heap | Capability-funded userspace services and broader reclamation policy |
-| Testing | Native, physical, coverage, and smoke layers | Cover threads, faults, IPC, and child processes |
+| Testing | Native, physical, coverage, and protocol-v3 root/child smoke layers | Cover IPC and useful service processes |
 
 ## Why the repository is shaped this way
 

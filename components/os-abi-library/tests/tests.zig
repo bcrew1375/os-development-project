@@ -11,7 +11,8 @@ test "BootInfo ABI layout is stable" {
     try std.testing.expectEqual(@as(usize, 12), @offsetOf(abi.boot_info.BootInfo, "modules_address"));
     try std.testing.expectEqual(@as(usize, 16), @offsetOf(abi.boot_info.BootInfo, "physical_memory_count"));
     try std.testing.expectEqual(@as(usize, 20), @offsetOf(abi.boot_info.BootInfo, "physical_memory_address"));
-    try std.testing.expectEqual(@as(u32, 2), abi.boot_info.BOOT_INFO_VERSION);
+    try std.testing.expectEqual(@as(u32, 3), abi.boot_info.BOOT_INFO_VERSION);
+    try std.testing.expectEqual(@as(usize, 16), abi.boot_info.MAX_BOOT_MODULES);
 }
 
 test "PhysicalMemoryInfo ABI layout is stable and retains 64-bit addresses" {
@@ -32,10 +33,19 @@ test "PhysicalMemoryInfo ABI layout is stable and retains 64-bit addresses" {
 }
 
 test "BootModuleInfo ABI layout is stable" {
-    try std.testing.expectEqual(@as(usize, 16), @sizeOf(abi.boot_info.BootModuleInfo));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(abi.boot_info.BootModuleInfo));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(abi.boot_info.BootModuleInfo));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(abi.boot_info.BootModuleInfo, "physical_start"));
-    try std.testing.expectEqual(@as(usize, 8), @offsetOf(abi.boot_info.BootModuleInfo, "physical_end"));
+    try std.testing.expectEqual(@as(usize, 8), @offsetOf(abi.boot_info.BootModuleInfo, "virtual_start"));
+    try std.testing.expectEqual(@as(usize, 16), @offsetOf(abi.boot_info.BootModuleInfo, "size"));
+}
+
+test "ChildStartup ABI layout and values are stable" {
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(abi.process.ChildStartup));
+    try std.testing.expectEqual(@as(usize, 4), @alignOf(abi.process.ChildStartup));
+    try std.testing.expectEqual(@as(usize, 8), @offsetOf(abi.process.ChildStartup, "mode"));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(abi.process.ChildStartupMode.clean_exit));
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(abi.process.ChildStartupMode.invalid_opcode));
 }
 
 test "Capability rights containment is explicit" {
@@ -157,9 +167,9 @@ test "Syscall numbers and structured errors are stable" {
 }
 
 test "system smoke protocol records are complete ordered serial lines" {
-    try std.testing.expectEqual(@as(u32, 1), abi.system_smoke.PROTOCOL_VERSION);
+    try std.testing.expectEqual(@as(u32, 3), abi.system_smoke.PROTOCOL_VERSION);
     try std.testing.expectEqualStrings(
-        "SYSTEM-SMOKE protocol=1\n",
+        "SYSTEM-SMOKE protocol=3\n",
         abi.system_smoke.HEADER,
     );
 
@@ -168,12 +178,24 @@ test "system smoke protocol records are complete ordered serial lines" {
         "SYSTEM-SMOKE milestone=kernel_initialized\n",
         "SYSTEM-SMOKE milestone=userspace_entered\n",
         "SYSTEM-SMOKE milestone=boot_info_validated\n",
+        "SYSTEM-SMOKE milestone=boot_modules_validated\n",
         "SYSTEM-SMOKE milestone=physical_memory_allocated\n",
         "SYSTEM-SMOKE milestone=address_space_capability_acquired\n",
         "SYSTEM-SMOKE milestone=memory_object_capability_acquired\n",
         "SYSTEM-SMOKE milestone=memory_object_mapped\n",
         "SYSTEM-SMOKE milestone=userspace_heap_verified\n",
         "SYSTEM-SMOKE milestone=cooperative_yield_completed\n",
+        "SYSTEM-SMOKE milestone=clean_child_started\n",
+        "SYSTEM-SMOKE milestone=clean_child_yielding\n",
+        "SYSTEM-SMOKE milestone=root_resumed_after_clean_child_yield\n",
+        "SYSTEM-SMOKE milestone=clean_child_resumed\n",
+        "SYSTEM-SMOKE milestone=clean_child_destroyed\n",
+        "SYSTEM-SMOKE milestone=fault_child_started\n",
+        "SYSTEM-SMOKE milestone=fault_child_yielding\n",
+        "SYSTEM-SMOKE milestone=root_resumed_after_fault_child_yield\n",
+        "SYSTEM-SMOKE milestone=fault_child_resumed\n",
+        "SYSTEM-SMOKE milestone=fault_child_destroyed\n",
+        "SYSTEM-SMOKE milestone=root_resumed_after_children\n",
     };
     try std.testing.expectEqual(expected.len, abi.system_smoke.ordered_milestones.len);
     for (expected, abi.system_smoke.ordered_milestones) |expected_record, actual_record| {
@@ -184,6 +206,14 @@ test "system smoke protocol records are complete ordered serial lines" {
     try std.testing.expectEqualStrings(
         "SYSTEM-SMOKE EXIT status={d}\n",
         abi.system_smoke.EXIT_FORMAT,
+    );
+    try std.testing.expectEqualStrings(
+        "SYSTEM-SMOKE CHILD_EXIT status={d}\n",
+        abi.system_smoke.CHILD_EXIT_FORMAT,
+    );
+    try std.testing.expectEqualStrings(
+        "SYSTEM-SMOKE CHILD_FAULT kind={s}\n",
+        abi.system_smoke.CHILD_FAULT_FORMAT,
     );
 }
 
@@ -288,6 +318,7 @@ fn makeElf64() [0x240]u8 {
 test "ELF parser reads valid ELF32 loadable segments" {
     const image = makeElf32();
     const loadable = try shared.executable.elf.parseLoadableImage(&image, 4096);
+    try std.testing.expectEqual(shared.executable.elf.ElfClass.elf32, loadable.class);
     try std.testing.expectEqual(@as(u64, 0x1010), loadable.entry_point);
     try std.testing.expectEqual(@as(u64, 0x1000), loadable.virtual_start);
     try std.testing.expectEqual(@as(u64, 0x6000), loadable.virtual_end);
@@ -303,6 +334,7 @@ test "ELF parser reads valid ELF32 loadable segments" {
 test "ELF parser reads valid ELF64 loadable segments" {
     const image = makeElf64();
     const loadable = try shared.executable.elf.parseLoadableImage(&image, 4096);
+    try std.testing.expectEqual(shared.executable.elf.ElfClass.elf64, loadable.class);
     try std.testing.expectEqual(@as(u64, 0x400010), loadable.entry_point);
     try std.testing.expectEqual(@as(u64, 0x400000), loadable.virtual_start);
     try std.testing.expectEqual(@as(u64, 0x406000), loadable.virtual_end);

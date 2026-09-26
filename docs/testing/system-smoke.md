@@ -1,8 +1,8 @@
 # Production System Smoke Tests
 
-System smoke tests boot the packaged production kernel and independently built
-root-task ELF under headless QEMU. Unlike architecture tests, they do not use a
-test kernel, `isa-debug-exit`, or production test hooks.
+System smoke tests boot the packaged production kernel plus independently built
+root-task and child ELFs under headless QEMU. Unlike architecture tests, they do
+not use a test kernel, `isa-debug-exit`, or production test hooks.
 
 ## Commands
 
@@ -25,26 +25,46 @@ The default timeout is 60 seconds. Override it with
 ## Protocol
 
 Production components unconditionally emit complete serial lines using protocol
-version 1. The required order is:
+version 3. The required order is:
 
 ```text
-SYSTEM-SMOKE protocol=1
+SYSTEM-SMOKE protocol=3
 SYSTEM-SMOKE milestone=root_process_prepared
 SYSTEM-SMOKE milestone=kernel_initialized
 SYSTEM-SMOKE milestone=userspace_entered
 SYSTEM-SMOKE milestone=boot_info_validated
+SYSTEM-SMOKE milestone=boot_modules_validated
+SYSTEM-SMOKE milestone=physical_memory_allocated
 SYSTEM-SMOKE milestone=address_space_capability_acquired
 SYSTEM-SMOKE milestone=memory_object_capability_acquired
 SYSTEM-SMOKE milestone=memory_object_mapped
+SYSTEM-SMOKE milestone=userspace_heap_verified
+SYSTEM-SMOKE milestone=cooperative_yield_completed
+SYSTEM-SMOKE milestone=clean_child_started
+SYSTEM-SMOKE milestone=clean_child_yielding
+SYSTEM-SMOKE milestone=root_resumed_after_clean_child_yield
+SYSTEM-SMOKE milestone=clean_child_resumed
+SYSTEM-SMOKE CHILD_EXIT status=0
+SYSTEM-SMOKE milestone=clean_child_destroyed
+SYSTEM-SMOKE milestone=fault_child_started
+SYSTEM-SMOKE milestone=fault_child_yielding
+SYSTEM-SMOKE milestone=root_resumed_after_fault_child_yield
+SYSTEM-SMOKE milestone=fault_child_resumed
+SYSTEM-SMOKE CHILD_FAULT kind=invalid_opcode
+SYSTEM-SMOKE milestone=fault_child_destroyed
+SYSTEM-SMOKE milestone=root_resumed_after_children
 SYSTEM-SMOKE EXIT status=0
 ```
 
 The kernel emits the header after console initialization, records successful
 root-process preparation, and records completion of boot finalization and
 interrupt initialization. The root task records user-mode entry, valid boot
-information, capability acquisition, and capability-backed memory-object
-mapping. The kernel emits the terminal record only after accepting the root
-task's exit syscall.
+information, delegated boot-module validation, physical-memory allocation,
+capability acquisition, capability-backed memory-object mapping, userspace heap
+verification, cooperative yield completion, and child lifecycle milestones. Child
+exit and fault records are intermediate events: they prove scheduler handoff and
+containment but do not terminate host observation. The kernel emits the terminal
+record only after accepting the root task's exit syscall.
 
 `tools/system_smoke_runner.py` ignores ordinary diagnostics but strictly rejects
 missing, duplicate, malformed, unknown, or out-of-order protocol records. It

@@ -80,30 +80,37 @@ pub const Error = error{
 
 const MAX_INPUTS = 512;
 
+/// Caller-owned sorting storage keeps normalization off constrained kernel stacks.
+pub const Scratch = struct {
+    memory_map: [MAX_INPUTS]MemoryMapInput = undefined,
+    exclusions: [MAX_INPUTS]Exclusion = undefined,
+};
+
 pub fn normalize(
     memory_map: []const MemoryMapInput,
     exclusions: []const Exclusion,
     page_size: u64,
     allocatable_output: []Range,
     retained_output: []RetainedRange,
+    scratch: *Scratch,
 ) Error!Result {
     if (page_size == 0 or !std.math.isPowerOfTwo(page_size)) return Error.InvalidPageSize;
     if (memory_map.len > MAX_INPUTS or exclusions.len > MAX_INPUTS) return Error.TooManyInputs;
 
-    var sorted_memory: [MAX_INPUTS]MemoryMapInput = undefined;
-    @memcpy(sorted_memory[0..memory_map.len], memory_map);
-    insertionSortMemory(sorted_memory[0..memory_map.len]);
-    try validateMemoryMap(sorted_memory[0..memory_map.len]);
+    const sorted_memory = scratch.memory_map[0..memory_map.len];
+    @memcpy(sorted_memory, memory_map);
+    insertionSortMemory(sorted_memory);
+    try validateMemoryMap(sorted_memory);
 
-    var sorted_exclusions: [MAX_INPUTS]Exclusion = undefined;
-    @memcpy(sorted_exclusions[0..exclusions.len], exclusions);
-    insertionSortExclusions(sorted_exclusions[0..exclusions.len]);
-    for (sorted_exclusions[0..exclusions.len]) |exclusion| {
+    const sorted_exclusions = scratch.exclusions[0..exclusions.len];
+    @memcpy(sorted_exclusions, exclusions);
+    insertionSortExclusions(sorted_exclusions);
+    for (sorted_exclusions) |exclusion| {
         _ = try checkedRange(exclusion.start, exclusion.size);
     }
 
     var result = Result{ .allocatable_count = 0, .retained_count = 0 };
-    for (sorted_memory[0..memory_map.len]) |entry| {
+    for (sorted_memory) |entry| {
         const range = try checkedRange(entry.start, entry.size);
         if (entry.kind != .available) {
             try appendRetained(retained_output, &result.retained_count, .{
@@ -115,7 +122,7 @@ pub fn normalize(
 
         try normalizeAvailable(
             range,
-            sorted_exclusions[0..exclusions.len],
+            sorted_exclusions,
             page_size,
             allocatable_output,
             retained_output,

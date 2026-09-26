@@ -17,7 +17,6 @@ fn initializeLoaderTest() !void {
     kernel_common.process.execution_context.resetForTest();
     kernel_common.memory_management.physical_memory_authority.resetForTest();
 }
-
 fn makeTestElf() [0x240]u8 {
     var image: [0x240]u8 = undefined;
     elf_fixture.initializeElf32(&image, 0x0040_0ffe, &.{
@@ -159,7 +158,7 @@ test "Root process preparation loads segments boot info and ABI entry stack" {
     try std.testing.expectEqual(
         launch_root_process.RootProcessLayout.boot_info_start +
             @sizeOf(abi.boot_info.BootInfo) +
-            launch_root_process.MAX_BOOT_INFO_MODULES * @sizeOf(abi.boot_info.BootModuleInfo),
+            abi.boot_info.MAX_BOOT_MODULES * @sizeOf(abi.boot_info.BootModuleInfo),
         @as(u64, boot_info.physical_memory_address),
     );
     try std.testing.expectEqual(@as(u32, 1), boot_info.module_count);
@@ -179,13 +178,15 @@ test "Root process preparation loads segments boot info and ABI entry stack" {
         module_bytes[0..@sizeOf(abi.boot_info.BootModuleInfo)],
     );
     try std.testing.expectEqual(@as(u64, module_physical_start), root_module.physical_start);
-    try std.testing.expectEqual(@as(u64, module_physical_start + image.len), root_module.physical_end);
+    try std.testing.expectEqual(@as(u64, 0), root_module.virtual_start);
+    try std.testing.expectEqual(@as(u64, image.len), root_module.size);
     const unused_module = std.mem.bytesToValue(
         abi.boot_info.BootModuleInfo,
         module_bytes[@sizeOf(abi.boot_info.BootModuleInfo)..],
     );
     try std.testing.expectEqual(@as(u64, 0), unused_module.physical_start);
-    try std.testing.expectEqual(@as(u64, 0), unused_module.physical_end);
+    try std.testing.expectEqual(@as(u64, 0), unused_module.virtual_start);
+    try std.testing.expectEqual(@as(u64, 0), unused_module.size);
 
     var physical_memory_bytes: [3 * @sizeOf(abi.boot_info.PhysicalMemoryInfo)]u8 = undefined;
     try arch.mmu.readVirtualMemoryInAddressSpaceForTest(
@@ -279,7 +280,7 @@ test "Root process boot info truncates modules and zeroes unused entries" {
     const prepared = try launch_root_process.prepareRootProcess();
 
     const blob_size = @sizeOf(abi.boot_info.BootInfo) +
-        launch_root_process.MAX_BOOT_INFO_MODULES * @sizeOf(abi.boot_info.BootModuleInfo);
+        abi.boot_info.MAX_BOOT_MODULES * @sizeOf(abi.boot_info.BootModuleInfo);
     var blob_bytes: [blob_size]u8 = undefined;
     try arch.mmu.readVirtualMemoryInAddressSpaceForTest(
         prepared.address_space_root,
@@ -290,9 +291,9 @@ test "Root process boot info truncates modules and zeroes unused entries" {
         abi.boot_info.BootInfo,
         blob_bytes[0..@sizeOf(abi.boot_info.BootInfo)],
     );
-    try std.testing.expectEqual(@as(u32, launch_root_process.MAX_BOOT_INFO_MODULES), boot_info.module_count);
+    try std.testing.expectEqual(@as(u32, abi.boot_info.MAX_BOOT_MODULES), boot_info.module_count);
     const last_offset = @sizeOf(abi.boot_info.BootInfo) +
-        (launch_root_process.MAX_BOOT_INFO_MODULES - 1) * @sizeOf(abi.boot_info.BootModuleInfo);
+        (abi.boot_info.MAX_BOOT_MODULES - 1) * @sizeOf(abi.boot_info.BootModuleInfo);
     const last_module = std.mem.bytesToValue(
         abi.boot_info.BootModuleInfo,
         blob_bytes[last_offset..][0..@sizeOf(abi.boot_info.BootModuleInfo)],
@@ -362,5 +363,89 @@ test "Root process preparation preflights capability capacity without partial de
     try std.testing.expectEqual(
         kernel_common.capability.MAX_CAPABILITIES - 2,
         kernel_common.capability.activeCount(),
+    );
+}
+
+test "Root process preparation maps non-root boot modules read-only and preserves intra-page offset" {
+    try initializeLoaderTest();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+
+    const root_elf = makeTestElf();
+    _ = try arch.boot.configureModuleBytesAtIndexForTest(0, module_physical_start, &root_elf);
+
+    // Non-page-aligned physical start: 0x0200_0123.
+    const child_payload = "child_elf_boot_module_payload_data";
+    const child_phys_start = 0x0200_0123;
+    _ = try arch.boot.configureModuleBytesAtIndexForTest(1, child_phys_start, child_payload);
+
+    const prepared = try launch_root_process.prepareRootProcess();
+
+    // Query boot_info to find child module descriptor.
+    const blob_size = @sizeOf(abi.boot_info.BootInfo) + 2 * @sizeOf(abi.boot_info.BootModuleInfo);
+    var blob_bytes: [blob_size]u8 = undefined;
+    try arch.mmu.readVirtualMemoryInAddressSpaceForTest(
+        prepared.address_space_root,
+        @intCast(launch_root_process.RootProcessLayout.boot_info_start),
+        &blob_bytes,
+    );
+    const boot_info = std.mem.bytesToValue(abi.boot_info.BootInfo, blob_bytes[0..@sizeOf(abi.boot_info.BootInfo)]);
+    try std.testing.expectEqual(@as(u32, 2), boot_info.module_count);
+
+    const child_desc_offset = @sizeOf(abi.boot_info.BootInfo) + @sizeOf(abi.boot_info.BootModuleInfo);
+    const child_desc = std.mem.bytesToValue(
+        abi.boot_info.BootModuleInfo,
+        blob_bytes[child_desc_offset..][0..@sizeOf(abi.boot_info.BootModuleInfo)],
+    );
+
+    try std.testing.expectEqual(@as(u64, child_phys_start), child_desc.physical_start);
+    try std.testing.expectEqual(@as(u64, child_payload.len), child_desc.size);
+    // Virtual address must preserve 0x123 offset into the page.
+    try std.testing.expectEqual(@as(u64, launch_root_process.RootProcessLayout.boot_module_window_start + 0x123), child_desc.virtual_start);
+
+    // Check payload bytes can be read from virtual_start in root address space.
+    var read_back: [child_payload.len]u8 = undefined;
+    try arch.mmu.readVirtualMemoryInAddressSpaceForTest(
+        prepared.address_space_root,
+        @intCast(child_desc.virtual_start),
+        &read_back,
+    );
+    try std.testing.expectEqualStrings(child_payload, &read_back);
+
+    // Check page protections: readable, user-accessible, non-writable, non-executable.
+    const page_mapping = arch.mmu.getMappedPageInAddressSpaceForTest(
+        prepared.address_space_root,
+        @intCast(launch_root_process.RootProcessLayout.boot_module_window_start),
+    ).?;
+    try std.testing.expect(!page_mapping.protection.write);
+    try std.testing.expect(page_mapping.protection.user);
+    try std.testing.expect(!page_mapping.protection.execute);
+}
+
+test "Root process preparation rolls back mapped boot modules if subsequent setup fails" {
+    try initializeLoaderTest();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+
+    const root_elf = makeTestElf();
+    _ = try arch.boot.configureModuleBytesAtIndexForTest(0, module_physical_start, &root_elf);
+    _ = try arch.boot.configureModuleBytesAtIndexForTest(1, 0x0200_0000, "sample payload");
+
+    // Fail mapping call during boot info mapping (which happens after mapNonRootBootModules)
+    // 0: root elf PT_LOAD 1 (writeable for load)
+    // 1: root elf protect
+    // 2: root elf PT_LOAD 2 (writeable for load)
+    // 3: root elf protect
+    // 4: initial user stack
+    // 5: boot module 1
+    // 6: boot info page -> fail here!
+    arch.mmu.failPageMappingCallForTest(6);
+
+    try std.testing.expectError(error.MappingFailed, launch_root_process.prepareRootProcess());
+
+    // Boot module window should have been unmapped by rollback
+    try std.testing.expect(
+        arch.mmu.getMappedPageInAddressSpaceForTest(
+            arch.mmu.getCurrentAddressSpaceRootForTest(),
+            @intCast(launch_root_process.RootProcessLayout.boot_module_window_start),
+        ) == null,
     );
 }

@@ -69,6 +69,10 @@ const KernelInitializationServices = struct {
     }
 };
 
+pub fn isRootThreadForSmoke() bool {
+    return launch_root_process.isRootThreadForSmoke();
+}
+
 pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, number: ?usize) noreturn {
     arch.interrupts.disableInterrupts();
     arch.platform.setColor(TextColor.RED);

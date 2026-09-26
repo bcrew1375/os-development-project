@@ -173,7 +173,11 @@ fn handleSyscallResult(trap_frame: *TrapFrame, result: kernel_common.syscall.Res
             trap_frame.rax = abi.syscall.SYSCALL_SUCCESS;
         },
         .exit => |exit| {
-            arch.platform.writer().print(abi.system_smoke.EXIT_FORMAT, .{exit.status}) catch {};
+            if (@hasDecl(root, "isRootThreadForSmoke") and root.isRootThreadForSmoke()) {
+                arch.platform.writer().print(abi.system_smoke.EXIT_FORMAT, .{exit.status}) catch {};
+            } else {
+                arch.platform.writer().print(abi.system_smoke.CHILD_EXIT_FORMAT, .{exit.status}) catch {};
+            }
             arch.platform.writer().print("User process exited with status {d}.\n", .{exit.status}) catch {};
             kernel_common.process.lifecycle.exitCurrent(exit.status) catch |err| {
                 arch.platform.writer().print("thread exit failed: {s}\n", .{@errorName(err)}) catch {};
@@ -207,6 +211,7 @@ fn handleException(
 }
 
 fn containUserFault(fault: kernel_common.process.thread.UserFault) void {
+    arch.platform.writer().print(abi.system_smoke.CHILD_FAULT_FORMAT, .{@tagName(fault.kind)}) catch {};
     kernel_common.process.lifecycle.faultCurrent(fault) catch |err| {
         arch.platform.writer().print("user fault containment failed: {s}\n", .{@errorName(err)}) catch {};
         @panic("user fault containment failed");

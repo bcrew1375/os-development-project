@@ -3,9 +3,11 @@
 /// Sentinel used to validate that a `BootInfo` pointer came from this kernel.
 pub const BOOT_INFO_MAGIC: u32 = 0xB007_1F00;
 /// Version of the boot information ABI.
-pub const BOOT_INFO_VERSION: u32 = 2;
+pub const BOOT_INFO_VERSION: u32 = 3;
 /// Maximum number of physical-memory descriptors supplied during bootstrap.
 pub const MAX_PHYSICAL_MEMORY_DESCRIPTORS: usize = 64;
+/// Maximum number of boot modules retained and described during bootstrap.
+pub const MAX_BOOT_MODULES: usize = 16;
 
 /// Descriptor identifies ordinary allocatable RAM.
 pub const PHYSICAL_MEMORY_NORMAL_RAM: u32 = 1 << 0;
@@ -32,8 +34,10 @@ pub const BootInfo = extern struct {
 pub const BootModuleInfo = extern struct {
     /// Inclusive physical start address of the module.
     physical_start: u64,
-    /// Exclusive physical end address of the module.
-    physical_end: u64,
+    /// Root-task userspace address of the first exact module byte.
+    virtual_start: u64,
+    /// Exact module size in bytes.
+    size: u64,
 };
 
 /// Fixed-layout physical-memory descriptor paired with authority when delegated.

@@ -27,6 +27,12 @@ pub const SegmentPermissions = struct {
     executable: bool,
 };
 
+/// ELF word size retained in validated image metadata.
+pub const ElfClass = enum(u8) {
+    elf32 = std.elf.ELFCLASS32,
+    elf64 = std.elf.ELFCLASS64,
+};
+
 /// Description of a single validated `PT_LOAD` segment.
 pub const LoadableSegment = struct {
     virtual_address: u64,
@@ -38,6 +44,7 @@ pub const LoadableSegment = struct {
 
 /// Summary of the loadable portion of an executable image.
 pub const LoadableImage = struct {
+    class: ElfClass,
     entry_point: u64,
     virtual_start: u64,
     virtual_end: u64,
@@ -98,6 +105,11 @@ pub fn parseLoadableImage(image: []const u8, page_size: u64) ElfLoadError!Loadab
     if (image_start >= image_end) return ElfLoadError.InvalidLoadSegment;
 
     return .{
+        .class = switch (elf_header.class) {
+            std.elf.ELFCLASS32 => .elf32,
+            std.elf.ELFCLASS64 => .elf64,
+            else => unreachable,
+        },
         .entry_point = elf_header.entry_point,
         .virtual_start = image_start,
         .virtual_end = image_end,

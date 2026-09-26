@@ -26,7 +26,13 @@ RUNNER = load_runner()
 
 def valid_transcript(exit_status: int = 0) -> str:
     records = [RUNNER.HEADER]
-    records.extend(f"{RUNNER.PREFIX} milestone={name}" for name in RUNNER.MILESTONES)
+    for event in RUNNER.EXPECTED_EVENTS[:-1]:
+        if event.startswith("milestone="):
+            records.append(f"{RUNNER.PREFIX} {event}")
+        elif event.startswith("child_exit="):
+            records.append(f"{RUNNER.PREFIX} CHILD_EXIT status={event.removeprefix('child_exit=')}")
+        elif event.startswith("child_fault="):
+            records.append(f"{RUNNER.PREFIX} CHILD_FAULT kind={event.removeprefix('child_fault=')}")
     records.append(f"{RUNNER.PREFIX} EXIT status={exit_status}")
     return "ordinary diagnostic\n" + "\n".join(records) + "\n"
 
@@ -56,7 +62,7 @@ class SystemSmokeRunnerTests(unittest.TestCase):
     def test_protocol_rejects_duplicate_milestone(self) -> None:
         record = f"{RUNNER.PREFIX} milestone={RUNNER.MILESTONES[0]}"
         transcript = valid_transcript().replace(record, f"{record}\n{record}", 1)
-        with self.assertRaisesRegex(ValueError, "duplicate"):
+        with self.assertRaisesRegex(ValueError, "out-of-order"):
             RUNNER.validate_protocol(transcript)
 
     def test_protocol_rejects_out_of_order_milestone(self) -> None:
@@ -77,12 +83,26 @@ class SystemSmokeRunnerTests(unittest.TestCase):
     def test_protocol_rejects_exit_before_completion(self) -> None:
         lines = valid_transcript().splitlines()
         lines.pop(-2)
-        with self.assertRaisesRegex(ValueError, "before milestone"):
+        with self.assertRaisesRegex(ValueError, "out-of-order"):
             RUNNER.validate_protocol("\n".join(lines) + "\n")
 
     def test_protocol_rejects_record_after_exit(self) -> None:
         transcript = valid_transcript() + f"{RUNNER.PREFIX} milestone=userspace_entered\n"
         with self.assertRaisesRegex(ValueError, "after EXIT"):
+            RUNNER.validate_protocol(transcript)
+
+    def test_protocol_rejects_child_exit_as_terminal(self) -> None:
+        transcript = valid_transcript().split(f"{RUNNER.PREFIX} CHILD_EXIT status=0\n", 1)[0]
+        transcript += f"{RUNNER.PREFIX} CHILD_EXIT status=0\n"
+        with self.assertRaisesRegex(ValueError, "missing SYSTEM-SMOKE record"):
+            RUNNER.validate_protocol(transcript)
+
+    def test_protocol_rejects_wrong_contained_fault_kind(self) -> None:
+        transcript = valid_transcript().replace(
+            "CHILD_FAULT kind=invalid_opcode",
+            "CHILD_FAULT kind=page_fault",
+        )
+        with self.assertRaisesRegex(ValueError, "out-of-order"):
             RUNNER.validate_protocol(transcript)
 
     def test_command_builds_limine_cdrom_run_with_qmp(self) -> None:
@@ -106,7 +126,7 @@ class SystemSmokeRunnerTests(unittest.TestCase):
             architecture="x86_32",
             image_kind="kernel",
             image=pathlib.Path("kernel.elf"),
-            boot_module=pathlib.Path("root_process.elf"),
+            boot_module=[pathlib.Path("root_process.elf"), pathlib.Path("child_process.elf")],
         )
         command = RUNNER.build_command(
             arguments,
@@ -115,7 +135,7 @@ class SystemSmokeRunnerTests(unittest.TestCase):
         )
         self.assertEqual("qemu-system-i386", command[0])
         self.assertEqual(
-            ["-kernel", "kernel.elf", "-initrd", "root_process.elf"],
+            ["-kernel", "kernel.elf", "-initrd", "root_process.elf,child_process.elf"],
             command[-4:],
         )
 
@@ -124,7 +144,7 @@ class SystemSmokeRunnerTests(unittest.TestCase):
             architecture="x86_32",
             image_kind="cdrom",
             image=pathlib.Path("kernel.iso"),
-            boot_module=pathlib.Path("root_process.elf"),
+            boot_module=[pathlib.Path("root_process.elf")],
         )
         with self.assertRaisesRegex(ValueError, "direct kernel"):
             RUNNER.build_command(

@@ -2,6 +2,7 @@ const std = @import("std");
 
 const configuration = @import("configuration.zig");
 const limine = @import("limine.zig");
+const production_boot_modules = @import("production_boot_modules.zig");
 
 pub fn addStep(
     build: *std.Build,
@@ -13,6 +14,10 @@ pub fn addStep(
     const system_smoke = build.step(
         "system-smoke",
         "Boot the production kernel and root task under QEMU",
+    );
+    const child_module = production_boot_modules.createChildModule(
+        build,
+        build_configuration.architecture,
     );
     const command = build.addSystemCommand(&.{"python3"});
     command.addFileArg(build.path("tools/system_smoke_runner.py"));
@@ -29,16 +34,24 @@ pub fn addStep(
             command.addFileArg(kernel.getEmittedBin());
             command.addArg("--boot-module");
             command.addFileArg(root_task.path);
+            command.addArg("--boot-module");
+            command.addFileArg(child_module);
         },
         .limine => {
             const iso = limine.createIso(
                 build,
                 kernel.getEmittedBin(),
                 build.path(configuration.limineConfigPath(build_configuration.architecture)),
-                &.{.{
-                    .source = root_task.path,
-                    .iso_name = "root_process.elf",
-                }},
+                &.{
+                    .{
+                        .source = root_task.path,
+                        .iso_name = "root_process.elf",
+                    },
+                    .{
+                        .source = child_module,
+                        .iso_name = production_boot_modules.child_module_name,
+                    },
+                },
                 build.fmt(
                     "system-smoke-{s}.iso",
                     .{@tagName(build_configuration.architecture)},

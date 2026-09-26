@@ -1,4 +1,5 @@
 const abi = @import("abi");
+const boot_modules = @import("boot_modules");
 const memory_management = @import("memory_management");
 const process_management = @import("process_management");
 const startup = @import("startup");
@@ -74,6 +75,12 @@ const RecordingEnvironment = struct {
         return &valid_physical_memory;
     }
 
+    pub fn bootModuleDescriptors(
+        boot_info: *const abi.boot_info.BootInfo,
+    ) error{}![]const abi.boot_info.BootModuleInfo {
+        return valid_boot_modules[0..boot_info.module_count];
+    }
+
     pub fn rootHeapBounds() struct { start: usize, end: usize } {
         return .{ .start = 0x0100_0000, .end = 0x0101_0000 };
     }
@@ -92,8 +99,97 @@ const RecordingEnvironment = struct {
     }
 };
 
+const ChildRollbackEnvironment = struct {
+    var syscall_numbers: [32]u32 = undefined;
+    var syscall_count: usize = 0;
+    var next_capability: u32 = 100;
+    var loader_memory: [child_process.STACK_SIZE + 0x4000]u8 align(4096) = undefined;
+
+    fn reset() void {
+        syscall_count = 0;
+        next_capability = 100;
+        @memset(&loader_memory, 0);
+    }
+
+    pub fn syscall3(number: u32, _: usize, _: usize, _: usize) callconv(.c) u32 {
+        record(number);
+        const syscall_number: abi.syscall.SyscallNumber = @enumFromInt(number);
+        return switch (syscall_number) {
+            .create_capability_space,
+            .create_address_space,
+            .create_thread,
+            => nextCapability(),
+            .create_memory_object => nextCapability(),
+            .start_thread => abi.syscall.errorResult(.invalid_state),
+            else => abi.syscall.SYSCALL_SUCCESS,
+        };
+    }
+
+    pub fn syscall5(number: u32, _: usize, _: usize, _: usize, _: usize, _: usize) callconv(.c) u32 {
+        record(number);
+        const syscall_number: abi.syscall.SyscallNumber = @enumFromInt(number);
+        return switch (syscall_number) {
+            .retype_untyped_memory => nextCapability(),
+            else => abi.syscall.SYSCALL_SUCCESS,
+        };
+    }
+
+    pub fn mappedMemoryAddress(virtual_start: usize, size: usize) ?usize {
+        if (virtual_start < child_process.LOADER_WINDOW_START) return null;
+        const offset = virtual_start - child_process.LOADER_WINDOW_START;
+        if (offset > loader_memory.len or size > loader_memory.len - offset) return null;
+        return @intFromPtr(&loader_memory) + offset;
+    }
+
+    fn record(number: u32) void {
+        syscall_numbers[syscall_count] = number;
+        syscall_count += 1;
+    }
+
+    fn nextCapability() u32 {
+        defer next_capability += 1;
+        return next_capability;
+    }
+};
+
+const MemoryObjectFailureEnvironment = struct {
+    var syscall_numbers: [16]u32 = undefined;
+    var syscall_count: usize = 0;
+    var next_capability: u32 = 200;
+
+    fn reset() void {
+        syscall_count = 0;
+        next_capability = 200;
+    }
+
+    pub fn syscall3(number: u32, _: usize, _: usize, _: usize) callconv(.c) u32 {
+        syscall_numbers[syscall_count] = number;
+        syscall_count += 1;
+        return switch (@as(abi.syscall.SyscallNumber, @enumFromInt(number))) {
+            .create_capability_space, .create_address_space => nextCapability(),
+            .create_memory_object => abi.syscall.errorResult(.out_of_resources),
+            else => abi.syscall.SYSCALL_SUCCESS,
+        };
+    }
+
+    pub fn syscall5(number: u32, _: usize, _: usize, _: usize, _: usize, _: usize) callconv(.c) u32 {
+        syscall_numbers[syscall_count] = number;
+        syscall_count += 1;
+        return switch (@as(abi.syscall.SyscallNumber, @enumFromInt(number))) {
+            .retype_untyped_memory => nextCapability(),
+            else => abi.syscall.SYSCALL_SUCCESS,
+        };
+    }
+
+    fn nextCapability() u32 {
+        defer next_capability += 1;
+        return next_capability;
+    }
+};
+
 const manager = memory_manager.MemoryManager(RecordingEnvironment);
 const process_manager = process_management.ProcessManager(RecordingEnvironment);
+const child_process = process_management.child_process;
 
 var valid_physical_memory = [_]abi.boot_info.PhysicalMemoryInfo{.{
     .physical_start = 0x1000,
@@ -102,11 +198,24 @@ var valid_physical_memory = [_]abi.boot_info.PhysicalMemoryInfo{.{
     .capability = abi.capability.makeCapabilityHandle(1, 1),
 }};
 
+var valid_boot_modules = [_]abi.boot_info.BootModuleInfo{
+    .{
+        .physical_start = 0x20_0000,
+        .virtual_start = 0,
+        .size = 0x1000,
+    },
+    .{
+        .physical_start = 0x30_0000,
+        .virtual_start = 0x0400_0000,
+        .size = 0x1000,
+    },
+};
+
 fn validBootInfo() abi.boot_info.BootInfo {
     return .{
         .magic = abi.boot_info.BOOT_INFO_MAGIC,
         .version = abi.boot_info.BOOT_INFO_VERSION,
-        .module_count = 0,
+        .module_count = valid_boot_modules.len,
         .modules_address = 0,
         .physical_memory_count = valid_physical_memory.len,
         .physical_memory_address = 0,
@@ -128,6 +237,220 @@ fn physicalDescriptor(
         .attributes = abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM,
         .capability = abi.capability.makeCapabilityHandle(capability_slot, 1),
     };
+}
+
+const ChildElfSegment = struct {
+    file_offset: u64,
+    virtual_address: u64,
+    file_size: u64,
+    memory_size: u64,
+    flags: u32,
+};
+
+fn initializeChildElf64(
+    image: []u8,
+    entry_point: u64,
+    segments: []const ChildElfSegment,
+) void {
+    @memset(image, 0);
+    @memcpy(image[0..4], std.elf.MAGIC);
+    image[std.elf.EI_CLASS] = std.elf.ELFCLASS64;
+    image[std.elf.EI_DATA] = std.elf.ELFDATA2LSB;
+    image[std.elf.EI_VERSION] = 1;
+    writeTestInteger(u16, image, 16, @intFromEnum(std.elf.ET.EXEC));
+    writeTestInteger(u16, image, 18, @intFromEnum(std.elf.EM.X86_64));
+    writeTestInteger(u32, image, 20, 1);
+    writeTestInteger(u64, image, 24, entry_point);
+    writeTestInteger(u64, image, 32, @sizeOf(std.elf.Elf64_Ehdr));
+    writeTestInteger(u16, image, 52, @sizeOf(std.elf.Elf64_Ehdr));
+    writeTestInteger(u16, image, 54, @sizeOf(std.elf.Elf64_Phdr));
+    writeTestInteger(u16, image, 56, @intCast(segments.len));
+    for (segments, 0..) |segment, index| {
+        const offset = @sizeOf(std.elf.Elf64_Ehdr) + index * @sizeOf(std.elf.Elf64_Phdr);
+        writeTestInteger(u32, image, offset, std.elf.PT_LOAD);
+        writeTestInteger(u32, image, offset + 4, segment.flags);
+        writeTestInteger(u64, image, offset + 8, segment.file_offset);
+        writeTestInteger(u64, image, offset + 16, segment.virtual_address);
+        writeTestInteger(u64, image, offset + 32, segment.file_size);
+        writeTestInteger(u64, image, offset + 40, segment.memory_size);
+    }
+}
+
+fn initializeChildElf32(image: []u8) void {
+    @memset(image, 0);
+    @memcpy(image[0..4], std.elf.MAGIC);
+    image[std.elf.EI_CLASS] = std.elf.ELFCLASS32;
+    image[std.elf.EI_DATA] = std.elf.ELFDATA2LSB;
+    image[std.elf.EI_VERSION] = 1;
+    writeTestInteger(u16, image, 16, @intFromEnum(std.elf.ET.EXEC));
+    writeTestInteger(u16, image, 18, @intFromEnum(std.elf.EM.@"386"));
+    writeTestInteger(u32, image, 20, 1);
+    writeTestInteger(u32, image, 24, 0x0040_0000);
+    writeTestInteger(u32, image, 28, @sizeOf(std.elf.Elf32_Ehdr));
+    writeTestInteger(u16, image, 40, @sizeOf(std.elf.Elf32_Ehdr));
+    writeTestInteger(u16, image, 42, @sizeOf(std.elf.Elf32_Phdr));
+    writeTestInteger(u16, image, 44, 1);
+    const offset = @sizeOf(std.elf.Elf32_Ehdr);
+    writeTestInteger(u32, image, offset, std.elf.PT_LOAD);
+    writeTestInteger(u32, image, offset + 4, 0x100);
+    writeTestInteger(u32, image, offset + 8, 0x0040_0000);
+    writeTestInteger(u32, image, offset + 16, 1);
+    writeTestInteger(u32, image, offset + 20, 0x1000);
+    writeTestInteger(u32, image, offset + 24, 5);
+}
+
+fn writeTestInteger(comptime T: type, bytes: []u8, offset: usize, value: T) void {
+    std.mem.writeInt(T, bytes[offset..][0..@sizeOf(T)], value, .little);
+}
+
+test "child ELF planner accepts page-disjoint native executable segments" {
+    var image = [_]u8{0} ** 0x300;
+    const segments = [_]ChildElfSegment{
+        .{ .file_offset = 0x200, .virtual_address = 0x0040_0000, .file_size = 4, .memory_size = 0x1000, .flags = 5 },
+        .{ .file_offset = 0x210, .virtual_address = 0x0040_2000, .file_size = 4, .memory_size = 0x1000, .flags = 6 },
+    };
+    initializeChildElf64(&image, 0x0040_0010, &segments);
+    const load_plan = try child_process.plan(&image);
+    try std.testing.expectEqual(@as(usize, 2), load_plan.segment_count);
+    try std.testing.expectEqual(@as(usize, 0x0040_0010), load_plan.entry_point);
+    try std.testing.expectEqual(@as(usize, 0x1000), load_plan.segments[0].mapping_size);
+}
+
+test "child ELF planner rejects non-native class" {
+    var image = [_]u8{0} ** 0x200;
+    initializeChildElf32(&image);
+    try std.testing.expectError(error.WrongElfClass, child_process.plan(&image));
+}
+
+test "child ELF planner rejects aligned segment overlap" {
+    var image = [_]u8{0} ** 0x300;
+    const segments = [_]ChildElfSegment{
+        .{ .file_offset = 0x200, .virtual_address = 0x0040_0000, .file_size = 4, .memory_size = 0x900, .flags = 5 },
+        .{ .file_offset = 0x210, .virtual_address = 0x0040_0800, .file_size = 4, .memory_size = 0x800, .flags = 6 },
+    };
+    initializeChildElf64(&image, 0x0040_0010, &segments);
+    try std.testing.expectError(error.PageAlignedSegmentOverlap, child_process.plan(&image));
+}
+
+test "child ELF planner rejects stack collision and non-executable entry" {
+    var image = [_]u8{0} ** 0x300;
+    var segments = [_]ChildElfSegment{.{
+        .file_offset = 0x200,
+        .virtual_address = child_process.STACK_START,
+        .file_size = 4,
+        .memory_size = 0x1000,
+        .flags = 5,
+    }};
+    initializeChildElf64(&image, child_process.STACK_START, &segments);
+    try std.testing.expectError(error.SegmentOverlapsStack, child_process.plan(&image));
+
+    segments[0].virtual_address = 0x0040_0000;
+    segments[0].flags = 6;
+    initializeChildElf64(&image, 0x0040_0000, &segments);
+    try std.testing.expectError(error.EntryPointNotExecutable, child_process.plan(&image));
+}
+
+test "child ELF planner enforces bounded segment metadata" {
+    var image = [_]u8{0} ** 0x500;
+    var segments: [child_process.MAX_LOAD_SEGMENTS + 1]ChildElfSegment = undefined;
+    for (&segments, 0..) |*segment, index| {
+        segment.* = .{
+            .file_offset = 0x400 + index,
+            .virtual_address = 0x0040_0000 + index * 0x2000,
+            .file_size = 1,
+            .memory_size = 0x1000,
+            .flags = 5,
+        };
+    }
+    initializeChildElf64(&image, 0x0040_0000, &segments);
+    try std.testing.expectError(error.TooManyLoadSegments, child_process.plan(&image));
+}
+
+test "child construction rolls back every resource when final start fails" {
+    var image = [_]u8{0} ** 0x300;
+    const segments = [_]ChildElfSegment{.{
+        .file_offset = 0x200,
+        .virtual_address = 0x0040_0000,
+        .file_size = 4,
+        .memory_size = 0x1000,
+        .flags = 5,
+    }};
+    initializeChildElf64(&image, 0x0040_0000, &segments);
+    @memcpy(image[0x200..0x204], "code");
+
+    const descriptors = [_]abi.boot_info.PhysicalMemoryInfo{physicalDescriptor(
+        0x1000,
+        child_process.STACK_SIZE + 0x4000,
+        1,
+    )};
+    var allocator: PhysicalRangeAllocator = undefined;
+    try allocator.initialize(&descriptors);
+    ChildRollbackEnvironment.reset();
+
+    try std.testing.expectError(
+        error.InvalidState,
+        child_process.createAndStart(
+            ChildRollbackEnvironment,
+            &allocator,
+            .{ .capability = 77 },
+            &image,
+            .{ .mode = .clean_exit },
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 0), allocator.statistics().allocation_count);
+    try std.testing.expectEqual(@as(u64, child_process.STACK_SIZE + 0x4000), allocator.statistics().free_bytes);
+
+    const expected_tail = [_]abi.syscall.SyscallNumber{
+        .destroy_thread,
+        .unmap_address_space,
+        .destroy_memory_object,
+        .unmap_address_space,
+        .destroy_memory_object,
+        .destroy_address_space,
+        .destroy_capability_space,
+    };
+    try std.testing.expect(ChildRollbackEnvironment.syscall_count >= expected_tail.len);
+    const tail_start = ChildRollbackEnvironment.syscall_count - expected_tail.len;
+    for (expected_tail, 0..) |expected, index| {
+        try std.testing.expectEqual(
+            @intFromEnum(expected),
+            ChildRollbackEnvironment.syscall_numbers[tail_start + index],
+        );
+    }
+}
+
+test "child construction deletes a derived frame when memory-object creation fails" {
+    var image = [_]u8{0} ** 0x300;
+    const segments = [_]ChildElfSegment{.{
+        .file_offset = 0x200,
+        .virtual_address = 0x0040_0000,
+        .file_size = 4,
+        .memory_size = 0x1000,
+        .flags = 5,
+    }};
+    initializeChildElf64(&image, 0x0040_0000, &segments);
+
+    const descriptors = [_]abi.boot_info.PhysicalMemoryInfo{physicalDescriptor(0x1000, 0x4000, 1)};
+    var allocator: PhysicalRangeAllocator = undefined;
+    try allocator.initialize(&descriptors);
+    MemoryObjectFailureEnvironment.reset();
+
+    try std.testing.expectError(
+        error.OutOfResources,
+        child_process.createAndStart(
+            MemoryObjectFailureEnvironment,
+            &allocator,
+            .{ .capability = 77 },
+            &image,
+            .{ .mode = .clean_exit },
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 0), allocator.statistics().allocation_count);
+    try std.testing.expectEqual(@as(u64, 0x4000), allocator.statistics().free_bytes);
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.delete_physical_memory),
+        MemoryObjectFailureEnvironment.syscall_numbers[4],
+    );
 }
 
 test "physical allocator splits aligned first-fit ranges and preserves accounting" {
@@ -770,6 +1093,20 @@ test "startup rejects invalid boot information before capability syscalls" {
     try std.testing.expectEqual(@as(usize, 0), RecordingEnvironment.syscall_count);
 
     boot_info = validBootInfo();
+    boot_info.module_count = 1;
+    RecordingEnvironment.reset(&.{});
+    try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
+    try std.testing.expectEqual(@as(usize, 0), RecordingEnvironment.syscall_count);
+    try expectDiagnostic(2, "root: missing delegated boot module\n");
+
+    boot_info = validBootInfo();
+    boot_info.module_count = abi.boot_info.MAX_BOOT_MODULES + 1;
+    RecordingEnvironment.reset(&.{});
+    try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
+    try std.testing.expectEqual(@as(usize, 0), RecordingEnvironment.syscall_count);
+    try expectDiagnostic(2, "root: invalid boot modules\n");
+
+    boot_info = validBootInfo();
     boot_info.physical_memory_count = abi.boot_info.MAX_PHYSICAL_MEMORY_DESCRIPTORS + 1;
     RecordingEnvironment.reset(&.{});
     try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
@@ -812,18 +1149,48 @@ test "bootstrap memory validates capabilities ordering overlap and bounds" {
     try std.testing.expectError(error.UnalignedRange, bootstrap_memory.validate(&invalid));
 }
 
+test "boot module validation rejects missing malformed and overlapping mappings" {
+    try boot_modules.validate(&valid_boot_modules);
+
+    try std.testing.expectError(error.MissingRootModule, boot_modules.validate(&.{}));
+
+    var invalid = valid_boot_modules;
+    invalid[0].size = 0;
+    try std.testing.expectError(error.EmptyModule, boot_modules.validate(&invalid));
+
+    invalid = valid_boot_modules;
+    invalid[0].physical_start = std.math.maxInt(u64);
+    invalid[0].size = 2;
+    try std.testing.expectError(error.PhysicalRangeOverflow, boot_modules.validate(&invalid));
+
+    invalid = valid_boot_modules;
+    invalid[1].virtual_start = 0;
+    try std.testing.expectError(error.MissingVirtualMapping, boot_modules.validate(&invalid));
+
+    const overlapping = [_]abi.boot_info.BootModuleInfo{
+        valid_boot_modules[0],
+        valid_boot_modules[1],
+        .{
+            .physical_start = 0x40_0000,
+            .virtual_start = valid_boot_modules[1].virtual_start + 0x800,
+            .size = 0x1000,
+        },
+    };
+    try std.testing.expectError(error.OverlappingVirtualRange, boot_modules.validate(&overlapping));
+}
+
 test "startup stops after each capability or mapping failure" {
     const boot_info = validBootInfo();
 
     RecordingEnvironment.reset(&.{abi.syscall.errorResult(.out_of_resources)});
     try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 1), RecordingEnvironment.syscall_count);
-    try expectDiagnostic(4, "root: failed to acquire address-space capability\n");
+    try expectDiagnostic(6, "root: failed to acquire address-space capability\n");
 
     RecordingEnvironment.reset(&.{ 11, abi.syscall.errorResult(.out_of_resources) });
     try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 2), RecordingEnvironment.syscall_count);
-    try expectDiagnostic(4, "root: failed to initialize userspace heap\n");
+    try expectDiagnostic(6, "root: failed to initialize userspace heap\n");
 
     RecordingEnvironment.reset(&.{
         11,
@@ -838,7 +1205,7 @@ test "startup stops after each capability or mapping failure" {
         RecordingEnvironment.syscalls[3].three.number,
     );
     try std.testing.expectEqual([_]usize{ 21, 0, 0 }, RecordingEnvironment.syscalls[3].three.arguments);
-    try expectDiagnostic(4, "root: failed to initialize userspace heap\n");
+    try expectDiagnostic(6, "root: failed to initialize userspace heap\n");
 
     RecordingEnvironment.reset(&.{
         11,
@@ -854,7 +1221,7 @@ test "startup stops after each capability or mapping failure" {
         RecordingEnvironment.syscalls[4].three.number,
     );
     try std.testing.expectEqual([_]usize{ 21, 0, 0 }, RecordingEnvironment.syscalls[4].three.arguments);
-    try expectDiagnostic(4, "root: failed to initialize userspace heap\n");
+    try expectDiagnostic(6, "root: failed to initialize userspace heap\n");
 }
 
 test "startup retains allocator ownership when kernel cleanup fails" {
@@ -868,7 +1235,7 @@ test "startup retains allocator ownership when kernel cleanup fails" {
     });
     try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 4), RecordingEnvironment.syscall_count);
-    try expectDiagnostic(4, "root: failed to initialize userspace heap\n");
+    try expectDiagnostic(6, "root: failed to initialize userspace heap\n");
 
     RecordingEnvironment.reset(&.{
         11,
@@ -879,7 +1246,7 @@ test "startup retains allocator ownership when kernel cleanup fails" {
     });
     try std.testing.expectEqual(abi.syscall.EXIT_FAILURE, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 5), RecordingEnvironment.syscall_count);
-    try expectDiagnostic(4, "root: failed to initialize userspace heap\n");
+    try expectDiagnostic(6, "root: failed to initialize userspace heap\n");
 }
 
 test "startup completes capability-based memory setup in order" {
@@ -896,23 +1263,25 @@ test "startup completes capability-based memory setup in order" {
 
     try std.testing.expectEqual(abi.syscall.EXIT_SUCCESS, startup.run(RecordingEnvironment, &boot_info));
     try std.testing.expectEqual(@as(usize, 7), RecordingEnvironment.syscall_count);
-    try std.testing.expectEqual(@as(usize, 16), RecordingEnvironment.diagnostic_count);
+    try std.testing.expectEqual(@as(usize, 18), RecordingEnvironment.diagnostic_count);
     try expectDiagnostic(0, abi.system_smoke.USERSPACE_ENTERED);
     try expectDiagnostic(1, "root: started\n");
     try expectDiagnostic(2, abi.system_smoke.BOOT_INFO_VALIDATED);
     try expectDiagnostic(3, "root: boot info received\n");
-    try expectDiagnostic(4, abi.system_smoke.PHYSICAL_MEMORY_ALLOCATED);
-    try expectDiagnostic(5, "root: allocated heap physical memory\n");
-    try expectDiagnostic(6, abi.system_smoke.ADDRESS_SPACE_CAPABILITY_ACQUIRED);
-    try expectDiagnostic(7, "root: acquired address-space capability\n");
-    try expectDiagnostic(8, abi.system_smoke.MEMORY_OBJECT_CAPABILITY_ACQUIRED);
-    try expectDiagnostic(9, "root: acquired heap memory-object capability\n");
-    try expectDiagnostic(10, abi.system_smoke.MEMORY_OBJECT_MAPPED);
-    try expectDiagnostic(11, "root: mapped initial userspace heap extent\n");
-    try expectDiagnostic(12, abi.system_smoke.USERSPACE_HEAP_VERIFIED);
-    try expectDiagnostic(13, "root: userspace heap verified\n");
-    try expectDiagnostic(14, abi.system_smoke.COOPERATIVE_YIELD_COMPLETED);
-    try expectDiagnostic(15, "root: cooperative yield completed\n");
+    try expectDiagnostic(4, abi.system_smoke.BOOT_MODULES_VALIDATED);
+    try expectDiagnostic(5, "root: boot modules validated\n");
+    try expectDiagnostic(6, abi.system_smoke.PHYSICAL_MEMORY_ALLOCATED);
+    try expectDiagnostic(7, "root: allocated heap physical memory\n");
+    try expectDiagnostic(8, abi.system_smoke.ADDRESS_SPACE_CAPABILITY_ACQUIRED);
+    try expectDiagnostic(9, "root: acquired address-space capability\n");
+    try expectDiagnostic(10, abi.system_smoke.MEMORY_OBJECT_CAPABILITY_ACQUIRED);
+    try expectDiagnostic(11, "root: acquired heap memory-object capability\n");
+    try expectDiagnostic(12, abi.system_smoke.MEMORY_OBJECT_MAPPED);
+    try expectDiagnostic(13, "root: mapped initial userspace heap extent\n");
+    try expectDiagnostic(14, abi.system_smoke.USERSPACE_HEAP_VERIFIED);
+    try expectDiagnostic(15, "root: userspace heap verified\n");
+    try expectDiagnostic(16, abi.system_smoke.COOPERATIVE_YIELD_COMPLETED);
+    try expectDiagnostic(17, "root: cooperative yield completed\n");
 
     const current_call = RecordingEnvironment.syscalls[0].three;
     try std.testing.expectEqual(

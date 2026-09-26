@@ -25,6 +25,7 @@ const Workspace = struct {
     exclusions: [MAX_EXCLUSIONS]physical_ranges.Exclusion = undefined,
     allocatable: [MAX_ALLOCATABLE_RANGES]physical_ranges.Range = undefined,
     retained: [MAX_RETAINED_RANGES]physical_ranges.RetainedRange = undefined,
+    normalization_scratch: physical_ranges.Scratch = .{},
 };
 
 // Boot normalization runs before concurrency is enabled. Static workspace avoids
@@ -52,6 +53,7 @@ pub fn normalizeArchitectureMemory() Error!struct {
         @intCast(arch.mmu.getPageSize()),
         workspace.allocatable[0..],
         workspace.retained[0..],
+        &workspace.normalization_scratch,
     );
     return .{
         .allocatable = workspace.allocatable[0..normalized.allocatable_count],

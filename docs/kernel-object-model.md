@@ -1,6 +1,6 @@
 # Kernel Object Model
 
-Status date: 2026-09-24
+Status date: 2026-09-25
 
 This document is the design contract for kernel objects that will support the
 transition from the bootstrapped root task to multiple isolated userspace
@@ -57,6 +57,12 @@ A first-class kernel `Process` object is not required for the first child-proces
 milestone. The kernel must nevertheless retain enough execution-context state to
 attribute every syscall, fault, and scheduling decision to a thread, address
 space, and capability space.
+
+The implemented root-task `ChildProcess` record follows this model. It owns the
+root-held capabilities for one child capability space, address space, thread,
+segment/stack memory objects, and the delegated physical-allocation handles that
+fund them. The child capability space is empty unless root explicitly installs an
+attenuated grant.
 
 ## Object contracts
 
@@ -285,6 +291,27 @@ all published extents report exhaustion. Empty non-initial extents may be reclai
 through an explicit fallible operation. Partial cleanup progress is recorded so a
 later retry cannot double-unmap or double-destroy. Reclaimed virtual holes are
 eligible for deterministic reuse.
+
+### Root-task child construction
+
+The root task validates a packaged native-class ELF before creating kernel
+objects. Planning is bounded to eight page-disjoint `PT_LOAD` segments and rejects
+address overflow, empty permissions, non-executable entry points, stack collision,
+and page-aligned overlap. Overlap is deliberately unsupported because the current
+public mapping ABI maps only memory-object offset zero.
+
+Each segment and the initial stack receive one delegated physical allocation and
+one frame-backed memory object. The root maps the object into the child with final
+permissions and into its own reserved loader window with temporary read/write
+permissions. Physical memory is zeroed by object creation, file bytes are copied
+through the alias, fixed-layout startup data is written into the stack, and all
+loader aliases are removed before the thread starts.
+
+Construction publishes ownership incrementally, configures the thread only after
+all mappings and startup state exist, and performs `start_thread` as the final
+fallible operation. Failure unwinds in strict reverse order. Destruction records
+each successful unmap/destroy/free operation so a cleanup failure can be retried
+without double release.
 
 ## Ownership and lifetime rules
 

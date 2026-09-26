@@ -2,6 +2,7 @@ const std = @import("std");
 
 const configuration = @import("configuration.zig");
 const limine = @import("limine.zig");
+const production_boot_modules = @import("production_boot_modules.zig");
 
 pub fn addStep(
     b: *std.Build,
@@ -9,10 +10,11 @@ pub fn addStep(
     kernel: *std.Build.Step.Compile,
     root_task: configuration.RootTaskArtifact,
 ) void {
+    const child_module = production_boot_modules.createChildModule(b, config.architecture);
     const run_step = b.step("run", "Run kernel with qemu");
     const run_command = switch (config.bootloader) {
-        .multiboot => createDirectKernelRunStep(b, kernel, root_task),
-        .limine => createLimineRunStep(b, config, kernel, root_task),
+        .multiboot => createDirectKernelRunStep(b, kernel, root_task, child_module),
+        .limine => createLimineRunStep(b, config, kernel, root_task, child_module),
     };
 
     run_command.step.dependOn(b.getInstallStep());
@@ -23,14 +25,22 @@ fn createDirectKernelRunStep(
     b: *std.Build,
     kernel: *std.Build.Step.Compile,
     root_task: configuration.RootTaskArtifact,
+    child_module: std.Build.LazyPath,
 ) *std.Build.Step.Run {
-    const qemu_cmd = b.addSystemCommand(&direct_qemu_args);
+    const script =
+        \\set -eu
+        \\kernel="$1"
+        \\root_task="$2"
+        \\child_module="$3"
+        \\shift 3
+        \\exec qemu-system-i386 "$@" -kernel "$kernel" -initrd "$root_task,$child_module"
+    ;
+    const qemu_cmd = b.addSystemCommand(&.{ "bash", "-c", script, "run-multiboot" });
 
-    qemu_cmd.addArg("-kernel");
     qemu_cmd.addFileArg(kernel.getEmittedBin());
-
-    qemu_cmd.addArg("-initrd");
     qemu_cmd.addFileArg(root_task.path);
+    qemu_cmd.addFileArg(child_module);
+    qemu_cmd.addArgs(direct_qemu_args[1..]);
 
     return qemu_cmd;
 }
@@ -40,15 +50,22 @@ fn createLimineRunStep(
     config: configuration.BuildConfig,
     kernel: *std.Build.Step.Compile,
     root_task: configuration.RootTaskArtifact,
+    child_module: std.Build.LazyPath,
 ) *std.Build.Step.Run {
     const iso = limine.createIso(
         b,
         kernel.getEmittedBin(),
         b.path(configuration.limineConfigPath(config.architecture)),
-        &.{.{
-            .source = root_task.path,
-            .iso_name = "root_process.elf",
-        }},
+        &.{
+            .{
+                .source = root_task.path,
+                .iso_name = "root_process.elf",
+            },
+            .{
+                .source = child_module,
+                .iso_name = production_boot_modules.child_module_name,
+            },
+        },
         b.fmt("kernel-{s}.iso", .{@tagName(config.architecture)}),
     );
 

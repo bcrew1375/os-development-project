@@ -43,6 +43,29 @@ pub fn configureModuleBytesForTest(physical_start: usize, bytes: []const u8) !ar
     return module;
 }
 
+pub fn configureModuleBytesAtIndexForTest(
+    index: usize,
+    physical_start: usize,
+    bytes: []const u8,
+) !arch.BootModule {
+    if (index >= modules.len) return error.TooManyBootModules;
+    const physical_end = std.math.add(usize, physical_start, bytes.len) catch {
+        return error.InvalidBootModuleRange;
+    };
+    if (bytes.len == 0 or physical_end > arch.mmu.getDirectMapMaxSize()) {
+        return error.InvalidBootModuleRange;
+    }
+
+    try arch.mmu.writePhysicalMemoryForTest(physical_start, bytes);
+    const module = arch.BootModule{
+        .physical_start = physical_start,
+        .physical_end = physical_end,
+    };
+    modules[index] = module;
+    moduleCount = @max(moduleCount, index + 1);
+    return module;
+}
+
 pub fn isBootFinishedForTest() bool {
     return bootFinished;
 }

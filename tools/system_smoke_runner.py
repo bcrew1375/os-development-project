@@ -12,7 +12,7 @@ import tempfile
 import time
 
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 3
 PREFIX = "SYSTEM-SMOKE"
 HEADER = f"{PREFIX} protocol={PROTOCOL_VERSION}"
 MILESTONES = (
@@ -20,15 +20,39 @@ MILESTONES = (
     "kernel_initialized",
     "userspace_entered",
     "boot_info_validated",
+    "boot_modules_validated",
     "physical_memory_allocated",
     "address_space_capability_acquired",
     "memory_object_capability_acquired",
     "memory_object_mapped",
     "userspace_heap_verified",
     "cooperative_yield_completed",
+    "clean_child_started",
+    "clean_child_yielding",
+    "root_resumed_after_clean_child_yield",
+    "clean_child_resumed",
+    "clean_child_destroyed",
+    "fault_child_started",
+    "fault_child_yielding",
+    "root_resumed_after_fault_child_yield",
+    "fault_child_resumed",
+    "fault_child_destroyed",
+    "root_resumed_after_children",
 )
 MILESTONE_PATTERN = re.compile(r"^SYSTEM-SMOKE milestone=(?P<name>[a-z0-9_]+)$")
+CHILD_EXIT_PATTERN = re.compile(r"^SYSTEM-SMOKE CHILD_EXIT status=(?P<status>\d+)$")
+CHILD_FAULT_PATTERN = re.compile(r"^SYSTEM-SMOKE CHILD_FAULT kind=(?P<kind>[a-z0-9_]+)$")
 EXIT_PATTERN = re.compile(r"^SYSTEM-SMOKE EXIT status=(?P<status>\d+)$")
+
+EXPECTED_EVENTS = (
+    *(f"milestone={milestone}" for milestone in MILESTONES[:15]),
+    "child_exit=0",
+    f"milestone={MILESTONES[15]}",
+    *(f"milestone={milestone}" for milestone in MILESTONES[16:20]),
+    "child_fault=invalid_opcode",
+    *(f"milestone={milestone}" for milestone in MILESTONES[20:]),
+    "root_exit",
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -47,42 +71,44 @@ def validate_protocol(transcript: str) -> ProtocolResult:
 
     expected_index = 0
     exit_status = None
-    seen_milestones: set[str] = set()
     for line in protocol_lines[1:]:
         if line == HEADER:
             raise ValueError("duplicate SYSTEM-SMOKE protocol header")
         if exit_status is not None:
             raise ValueError("SYSTEM-SMOKE record appears after EXIT")
 
-        if match := MILESTONE_PATTERN.fullmatch(line):
-            milestone = match.group("name")
-            if milestone not in MILESTONES:
-                raise ValueError(f"unknown SYSTEM-SMOKE milestone: {milestone}")
-            if milestone in seen_milestones:
-                raise ValueError(f"duplicate SYSTEM-SMOKE milestone: {milestone}")
-            expected = MILESTONES[expected_index]
-            if milestone != expected:
-                raise ValueError(
-                    f"out-of-order SYSTEM-SMOKE milestone: expected {expected}, observed {milestone}"
-                )
-            seen_milestones.add(milestone)
-            expected_index += 1
-            continue
+        observed, root_status = parse_event(line)
+        if expected_index >= len(EXPECTED_EVENTS):
+            raise ValueError(f"unexpected SYSTEM-SMOKE record: {line}")
+        expected = EXPECTED_EVENTS[expected_index]
+        if observed != expected:
+            raise ValueError(
+                f"out-of-order SYSTEM-SMOKE record: expected {expected}, observed {observed}"
+            )
+        expected_index += 1
+        if root_status is not None:
+            exit_status = root_status
 
-        if match := EXIT_PATTERN.fullmatch(line):
-            if expected_index != len(MILESTONES):
-                missing = MILESTONES[expected_index]
-                raise ValueError(f"SYSTEM-SMOKE EXIT appears before milestone: {missing}")
-            exit_status = int(match.group("status"))
-            continue
-
-        raise ValueError(f"malformed SYSTEM-SMOKE record: {line}")
-
-    if expected_index != len(MILESTONES):
-        raise ValueError(f"missing SYSTEM-SMOKE milestone: {MILESTONES[expected_index]}")
+    if expected_index != len(EXPECTED_EVENTS):
+        raise ValueError(f"missing SYSTEM-SMOKE record: {EXPECTED_EVENTS[expected_index]}")
     if exit_status is None:
         raise ValueError("missing SYSTEM-SMOKE EXIT record")
     return ProtocolResult(exit_status=exit_status)
+
+
+def parse_event(line: str) -> tuple[str, int | None]:
+    if match := MILESTONE_PATTERN.fullmatch(line):
+        milestone = match.group("name")
+        if milestone not in MILESTONES:
+            raise ValueError(f"unknown SYSTEM-SMOKE milestone: {milestone}")
+        return f"milestone={milestone}", None
+    if match := CHILD_EXIT_PATTERN.fullmatch(line):
+        return f"child_exit={int(match.group('status'))}", None
+    if match := CHILD_FAULT_PATTERN.fullmatch(line):
+        return f"child_fault={match.group('kind')}", None
+    if match := EXIT_PATTERN.fullmatch(line):
+        return "root_exit", int(match.group("status"))
+    raise ValueError(f"malformed SYSTEM-SMOKE record: {line}")
 
 
 def qemu_executable(architecture: str) -> str:
@@ -121,16 +147,17 @@ def build_command(
             raise ValueError("boot modules are only valid with direct kernel images")
         command.extend(["-boot", "d", "-cdrom", str(arguments.image)])
     else:
-        if arguments.boot_module is None:
+        if not arguments.boot_module:
             raise ValueError("direct kernel images require a root-task boot module")
-        if "," in str(arguments.boot_module):
-            raise ValueError("boot module paths must not contain commas")
+        for boot_module in arguments.boot_module:
+            if "," in str(boot_module):
+                raise ValueError("boot module paths must not contain commas")
         command.extend(
             [
                 "-kernel",
                 str(arguments.image),
                 "-initrd",
-                str(arguments.boot_module),
+                ",".join(str(module) for module in arguments.boot_module),
             ]
         )
     return command
@@ -317,6 +344,10 @@ def last_completed_stage(transcript: str) -> str:
         elif match := MILESTONE_PATTERN.fullmatch(line):
             if match.group("name") in MILESTONES:
                 completed = match.group("name")
+        elif CHILD_EXIT_PATTERN.fullmatch(line):
+            completed = "child_exit"
+        elif CHILD_FAULT_PATTERN.fullmatch(line):
+            completed = "child_fault"
         elif EXIT_PATTERN.fullmatch(line):
             completed = "exit"
     return completed
@@ -327,7 +358,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--architecture", choices=("x86_32", "x86_64"), required=True)
     parser.add_argument("--image-kind", choices=("kernel", "cdrom"), required=True)
     parser.add_argument("--image", type=pathlib.Path, required=True)
-    parser.add_argument("--boot-module", type=pathlib.Path)
+    parser.add_argument("--boot-module", type=pathlib.Path, action="append")
     parser.add_argument("--timeout-seconds", type=int, required=True)
     parser.add_argument("--transcript-output", type=pathlib.Path, required=True)
     arguments = parser.parse_args()

@@ -1,5 +1,8 @@
 const abi = @import("abi");
+const boot_modules = @import("boot_modules");
 const memory_management = @import("memory_management");
+const process_management = @import("process_management");
+const std = @import("std");
 
 const bootstrap_memory = memory_management.bootstrap;
 const memory_manager = memory_management.operations;
@@ -24,6 +27,18 @@ pub fn run(comptime Environment: type, boot_info: *const abi.boot_info.BootInfo)
         Environment.debugWrite("root: invalid boot info\n");
         return abi.syscall.EXIT_FAILURE;
     }
+    const modules = bootModuleDescriptors(Environment, boot_info) catch {
+        Environment.debugWrite("root: invalid boot modules\n");
+        return abi.syscall.EXIT_FAILURE;
+    };
+    if (modules.len < 2) {
+        Environment.debugWrite("root: missing delegated boot module\n");
+        return abi.syscall.EXIT_FAILURE;
+    }
+    boot_modules.validate(modules) catch {
+        Environment.debugWrite("root: invalid boot modules\n");
+        return abi.syscall.EXIT_FAILURE;
+    };
     const physical_memory = physicalMemoryDescriptors(Environment, boot_info) catch {
         Environment.debugWrite("root: invalid physical memory descriptors\n");
         return abi.syscall.EXIT_FAILURE;
@@ -34,6 +49,8 @@ pub fn run(comptime Environment: type, boot_info: *const abi.boot_info.BootInfo)
     };
     Environment.debugWrite(abi.system_smoke.BOOT_INFO_VALIDATED);
     Environment.debugWrite("root: boot info received\n");
+    Environment.debugWrite(abi.system_smoke.BOOT_MODULES_VALIDATED);
+    Environment.debugWrite("root: boot modules validated\n");
 
     physical_allocator.initialize(physical_memory) catch {
         Environment.debugWrite("root: failed to initialize physical memory allocator\n");
@@ -101,7 +118,83 @@ pub fn run(comptime Environment: type, boot_info: *const abi.boot_info.BootInfo)
     }
     Environment.debugWrite(abi.system_smoke.COOPERATIVE_YIELD_COMPLETED);
     Environment.debugWrite("root: cooperative yield completed\n");
+    if (comptime @hasDecl(Environment, "enableChildProcesses")) {
+        runChildSmoke(Environment, &physical_allocator, address_space, modules[1]) catch {
+            Environment.debugWrite("root: child process smoke sequence failed\n");
+            return abi.syscall.EXIT_FAILURE;
+        };
+    }
     return abi.syscall.EXIT_SUCCESS;
+}
+
+fn runChildSmoke(
+    comptime Environment: type,
+    allocator: *PhysicalRangeAllocator,
+    root_address_space: memory_manager.AddressSpace,
+    module: abi.boot_info.BootModuleInfo,
+) !void {
+    const image = bootModuleBytes(Environment, module) orelse return error.InvalidBootModule;
+    const child_process = process_management.child_process;
+
+    var clean_child = try child_process.createAndStart(
+        Environment,
+        allocator,
+        root_address_space,
+        image,
+        .{ .mode = .clean_exit },
+    );
+    Environment.debugWrite(abi.system_smoke.CLEAN_CHILD_STARTED);
+    try yieldSuccessfully(Environment);
+    Environment.debugWrite(abi.system_smoke.ROOT_RESUMED_AFTER_CLEAN_CHILD_YIELD);
+    try yieldSuccessfully(Environment);
+    try clean_child.destroy(Environment, allocator, root_address_space);
+    Environment.debugWrite(abi.system_smoke.CLEAN_CHILD_DESTROYED);
+
+    var fault_child = try child_process.createAndStart(
+        Environment,
+        allocator,
+        root_address_space,
+        image,
+        .{ .mode = .invalid_opcode },
+    );
+    Environment.debugWrite(abi.system_smoke.FAULT_CHILD_STARTED);
+    try yieldSuccessfully(Environment);
+    Environment.debugWrite(abi.system_smoke.ROOT_RESUMED_AFTER_FAULT_CHILD_YIELD);
+    try yieldSuccessfully(Environment);
+    try fault_child.destroy(Environment, allocator, root_address_space);
+    Environment.debugWrite(abi.system_smoke.FAULT_CHILD_DESTROYED);
+    Environment.debugWrite(abi.system_smoke.ROOT_RESUMED_AFTER_CHILDREN);
+}
+
+fn yieldSuccessfully(comptime Environment: type) !void {
+    if (Environment.yield() != abi.syscall.SYSCALL_SUCCESS) return error.YieldFailed;
+}
+
+fn bootModuleBytes(
+    comptime Environment: type,
+    module: abi.boot_info.BootModuleInfo,
+) ?[]const u8 {
+    const size = std.math.cast(usize, module.size) orelse return null;
+    const virtual_start = std.math.cast(usize, module.virtual_start) orelse return null;
+    const address = if (@hasDecl(Environment, "mappedMemoryAddress"))
+        Environment.mappedMemoryAddress(virtual_start, size) orelse return null
+    else
+        virtual_start;
+    const pointer: [*]const u8 = @ptrFromInt(address);
+    return pointer[0..size];
+}
+
+fn bootModuleDescriptors(
+    comptime Environment: type,
+    boot_info: *const abi.boot_info.BootInfo,
+) boot_modules.Error![]const abi.boot_info.BootModuleInfo {
+    if (boot_info.module_count > abi.boot_info.MAX_BOOT_MODULES) {
+        return boot_modules.Error.TooManyModules;
+    }
+    if (@hasDecl(Environment, "bootModuleDescriptors")) {
+        return Environment.bootModuleDescriptors(boot_info);
+    }
+    return boot_modules.descriptors(boot_info);
 }
 
 const HeapBounds = struct {

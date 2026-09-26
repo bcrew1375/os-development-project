@@ -29,9 +29,9 @@ any deliberate limitation.
 
 ## Current baseline
 
-The current system already provides several foundations. The root task is a
-real initial userspace process and normal schedulable thread, but it is not yet
-a userspace-created child process constructed through the public runtime object model.
+The current system provides the first complete child-process vertical slice. The
+root task is a real initial userspace process and normal schedulable thread, and
+it constructs child protection domains through the public runtime object model.
 
 - the kernel loads and enters one freestanding root-task ELF;
 - x86-32 and x86-64 have separate hardware page-table roots for the root task;
@@ -49,7 +49,8 @@ The current objects are not sufficient for multiple processes:
 - capability slots are global and cannot yet be copied, attenuated, or revoked;
 - architecture-neutral threads own bounded architecture contexts and are selected
   through a fixed-capacity cooperative FIFO scheduler; there are no IPC objects;
-- user faults and process exit can still halt the system.
+- child exit and attributed user faults stop only the responsible thread; root
+  exit selects the reserved idle continuation.
 
 ## Target process model
 
@@ -959,7 +960,27 @@ start its initial thread, schedule it cooperatively, and contain its exit or fau
 - start is atomic with the transition to the ready queue;
 - wrapper transport tests cover argument order and errors.
 
-## [ ] U4.6 Implement a userspace process manager and ELF loader
+## [x] U4.6 Implement a userspace process manager and ELF loader
+
+- Completed: 2026-09-25
+- Result: the root-task `ChildProcess` record owns a child capability space,
+  address space, initial thread, segment/stack memory objects, and delegated
+  physical allocations. A bounded planner validates native ELF class, address
+  width and overflow, nonempty permissions, executable entry containment, stack
+  collision, segment count, and page-aligned overlap. Construction uses one
+  memory object per page-disjoint `PT_LOAD` segment plus one stack object, maps
+  temporary writable aliases through `0x0200_0000..0x0400_0000`, writes file/BSS
+  and fixed-layout startup data, removes aliases, and makes `start_thread` the
+  final fallible commit operation. Destruction records partial cleanup progress
+  and is retryable.
+- Validation: shared ABI and root-task tests; planner rejection tests; injected
+  final-start rollback with syscall-order and physical-reclamation assertions;
+  both production builds; both architecture suites; x86-32 Limine and Multiboot
+  smoke; x86-64 Limine smoke.
+- Limitation: the mapping syscall always maps memory-object offset zero, so this
+  first loader deliberately rejects `PT_LOAD` segments whose page-aligned ranges
+  overlap. Child capability spaces start empty; service-specific grants remain
+  later process-manager policy.
 
 **Root-task work:**
 
@@ -982,7 +1003,19 @@ start its initial thread, schedule it cooperatively, and contain its exit or fau
 - partial failure leaves no runnable thread and no untracked authority;
 - process metadata remains root-task policy rather than kernel-global state.
 
-## [ ] U4.7 Convert the root task to the normal thread path
+## [x] U4.7 Convert the root task to the normal thread path
+
+- Completed: 2026-09-25
+- Result: bootstrap creates and configures the root as a normal generation-checked
+  thread, initializes the scheduler, enqueues root through the same ready path as
+  children, and enters it through normal context activation. Production smoke
+  alternates root with a clean child and a deliberately faulting child, observes
+  contained child exit/fault, resumes root, destroys both children, and records a
+  final normal root exit.
+- Validation: native scheduler/lifecycle tests; both architecture suites; all
+  three production packaging smoke variants; strict protocol-v3 host tests.
+- Limitation: isolated subsystem tests still retain a clearly named synthetic-root
+  compatibility initializer. Production startup and scheduler paths do not use it.
 
 **Work:**
 
@@ -1021,12 +1054,12 @@ start its initial thread, schedule it cooperatively, and contain its exit or fau
 
 ## Phase 4 exit gate
 
-- [ ] The root task is represented as a normal thread.
-- [ ] A root-task process manager constructs a child from an ELF artifact.
-- [ ] Root and child have separate address and capability spaces.
-- [ ] Cooperative switching preserves context and isolation.
-- [ ] Child exit and user faults do not halt the kernel.
-- [ ] The process-construction path is transactional and tested.
+- [x] The root task is represented as a normal thread.
+- [x] A root-task process manager constructs a child from an ELF artifact.
+- [x] Root and child have separate address and capability spaces.
+- [x] Cooperative switching preserves context and isolation.
+- [x] Child exit and user faults do not halt the kernel.
+- [x] The process-construction path is transactional and tested.
 
 # Phase 5 — Add IPC and useful process services
 

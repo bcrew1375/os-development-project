@@ -22,6 +22,8 @@ research are not confused with one another.
 
 - [Current Kernel Structure and Rationale](architecture/current-state.md) — the
   canonical overview of the implemented system and its architectural intent.
+- [Root-Created Userspace Processes](architecture/userspace-processes.md) — the
+  implemented child-process loader, isolation, execution, lifecycle, and limits.
 - [Kernel Object Model](kernel-object-model.md) — the contract that must guide
   new threads, address spaces, memory objects, capability spaces, and IPC objects.
 
