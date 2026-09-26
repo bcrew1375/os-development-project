@@ -100,6 +100,16 @@ pub const KernelContinuationConfiguration = struct {
     entry: *const fn () callconv(.c) noreturn,
 };
 
+/// Architecture-neutral register values returned by a completed syscall.
+pub const SyscallResultRegisters = struct {
+    status: u32,
+    words: [3]u64 = .{ 0, 0, 0 },
+
+    pub fn fromStatus(status: u32) SyscallResultRegisters {
+        return .{ .status = status };
+    }
+};
+
 /// Errors exposed by architecture thread-context implementations.
 pub const ThreadContextError = error{
     OutOfThreadContexts,
@@ -109,6 +119,9 @@ pub const ThreadContextError = error{
     InvalidAddressSpaceRoot,
     ThreadContextInUse,
     KernelContinuationAlreadyExists,
+    SyscallAlreadyPending,
+    NoPendingSyscall,
+    InvalidSyscallFrame,
 };
 
 /// Boot-time physical memory map.
@@ -216,6 +229,8 @@ pub fn validateImpl(comptime T: type) void {
             destroy: fn (handle: ThreadContextHandle) ThreadContextError!void,
             activate: fn (handle: ThreadContextHandle) noreturn,
             switchContext: fn (current: ThreadContextHandle, next: ThreadContextHandle) ThreadContextError!void,
+            beginSyscall: fn (handle: ThreadContextHandle, trap_frame_address: usize) ThreadContextError!void,
+            completeSyscall: fn (handle: ThreadContextHandle, result: SyscallResultRegisters) ThreadContextError!void,
             availableCount: fn () usize,
         });
 

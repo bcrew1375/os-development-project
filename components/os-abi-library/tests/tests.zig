@@ -41,10 +41,13 @@ test "BootModuleInfo ABI layout is stable" {
 }
 
 test "ChildStartup ABI layout and values are stable" {
-    try std.testing.expectEqual(@as(usize, 16), @sizeOf(abi.process.ChildStartup));
+    try std.testing.expectEqual(@as(u32, 2), abi.process.CHILD_STARTUP_VERSION);
+    try std.testing.expectEqual(@as(usize, 20), @sizeOf(abi.process.ChildStartup));
     try std.testing.expectEqual(@as(usize, 4), @alignOf(abi.process.ChildStartup));
     try std.testing.expectEqual(@as(usize, 8), @offsetOf(abi.process.ChildStartup, "mode"));
-    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(abi.process.ChildStartupMode.clean_exit));
+    try std.testing.expectEqual(@as(usize, 12), @offsetOf(abi.process.ChildStartup, "endpoint_capability"));
+    try std.testing.expectEqual(@as(usize, 16), @offsetOf(abi.process.ChildStartup, "reserved"));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(abi.process.ChildStartupMode.ipc_receive));
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum(abi.process.ChildStartupMode.invalid_opcode));
 }
 
@@ -69,6 +72,7 @@ test "Capability object type values are stable" {
     try std.testing.expectEqual(@as(u32, 4), @intFromEnum(abi.capability.ObjectType.physical_frame));
     try std.testing.expectEqual(@as(u32, 5), @intFromEnum(abi.capability.ObjectType.thread));
     try std.testing.expectEqual(@as(u32, 6), @intFromEnum(abi.capability.ObjectType.capability_space));
+    try std.testing.expectEqual(@as(u32, 7), @intFromEnum(abi.capability.ObjectType.endpoint));
 }
 
 test "Thread configuration ABI layout is fixed width" {
@@ -91,7 +95,29 @@ test "Thread lifecycle rights are representable and attenuable" {
     };
     try std.testing.expect(all.contains(.{ .configure = true, .start = true }));
     try std.testing.expect(!(abi.capability.Rights{ .start = true }).contains(.{ .terminate = true }));
-    try std.testing.expectEqual(@as(u32, 0x01ff), abi.capability.KNOWN_RIGHTS_MASK);
+    try std.testing.expect(all.contains(.{ .send = true, .receive = true }) == false);
+    const endpoint = abi.capability.Rights{ .manage = true, .send = true, .receive = true };
+    try std.testing.expect(endpoint.contains(.{ .send = true }));
+    try std.testing.expect(endpoint.contains(.{ .receive = true }));
+    try std.testing.expect(!endpoint.contains(.{ .write = true }));
+    try std.testing.expectEqual(@as(u32, 0x07ff), abi.capability.KNOWN_RIGHTS_MASK);
+}
+
+test "Endpoint IPC ABI uses three fixed words and stable syscall values" {
+    try std.testing.expectEqual(@as(usize, 3), abi.ipc.MESSAGE_REGISTER_COUNT);
+    try std.testing.expectEqual(@as(usize, 12), @sizeOf(abi.ipc.Message));
+    try std.testing.expectEqual(@as(u32, 33), @intFromEnum(abi.syscall.SyscallNumber.create_endpoint));
+    try std.testing.expectEqual(@as(u32, 34), @intFromEnum(abi.syscall.SyscallNumber.destroy_endpoint));
+    try std.testing.expectEqual(@as(u32, 35), @intFromEnum(abi.syscall.SyscallNumber.endpoint_send));
+    try std.testing.expectEqual(@as(u32, 36), @intFromEnum(abi.syscall.SyscallNumber.endpoint_receive));
+    try std.testing.expectEqual(
+        abi.syscall.ErrorCode.endpoint_empty,
+        abi.syscall.decodeError(abi.syscall.errorResult(.endpoint_empty)).?,
+    );
+    try std.testing.expectEqual(
+        abi.syscall.ErrorCode.endpoint_full,
+        abi.syscall.decodeError(abi.syscall.errorResult(.endpoint_full)).?,
+    );
 }
 
 test "Retype ABI packing preserves target rights and 64-bit offsets" {
@@ -152,6 +178,8 @@ test "Syscall numbers and structured errors are stable" {
         .address_space_in_use,
         .unsupported,
         .internal_failure,
+        .endpoint_empty,
+        .endpoint_full,
     };
     for (codes) |code| {
         const encoded = abi.syscall.errorResult(code);
@@ -167,10 +195,14 @@ test "Syscall numbers and structured errors are stable" {
 }
 
 test "system smoke protocol records are complete ordered serial lines" {
-    try std.testing.expectEqual(@as(u32, 3), abi.system_smoke.PROTOCOL_VERSION);
+    try std.testing.expectEqual(@as(u32, 4), abi.system_smoke.PROTOCOL_VERSION);
     try std.testing.expectEqualStrings(
-        "SYSTEM-SMOKE protocol=3\n",
+        "SYSTEM-SMOKE protocol=4\n",
         abi.system_smoke.HEADER,
+    );
+    try std.testing.expectEqual(
+        abi.ipc.Message{ .words = .{ 0x4950_4331, 0x1234_5678, 0xCAFE_BABE } },
+        abi.system_smoke.IPC_MESSAGE,
     );
 
     const expected = [_][]const u8{
@@ -185,11 +217,13 @@ test "system smoke protocol records are complete ordered serial lines" {
         "SYSTEM-SMOKE milestone=memory_object_mapped\n",
         "SYSTEM-SMOKE milestone=userspace_heap_verified\n",
         "SYSTEM-SMOKE milestone=cooperative_yield_completed\n",
-        "SYSTEM-SMOKE milestone=clean_child_started\n",
-        "SYSTEM-SMOKE milestone=clean_child_yielding\n",
-        "SYSTEM-SMOKE milestone=root_resumed_after_clean_child_yield\n",
-        "SYSTEM-SMOKE milestone=clean_child_resumed\n",
-        "SYSTEM-SMOKE milestone=clean_child_destroyed\n",
+        "SYSTEM-SMOKE milestone=ipc_child_started\n",
+        "SYSTEM-SMOKE milestone=ipc_message_sent\n",
+        "SYSTEM-SMOKE milestone=ipc_message_verified\n",
+        "SYSTEM-SMOKE milestone=root_resumed_after_ipc_child_yield\n",
+        "SYSTEM-SMOKE milestone=ipc_child_resumed\n",
+        "SYSTEM-SMOKE milestone=ipc_child_destroyed\n",
+        "SYSTEM-SMOKE milestone=ipc_endpoint_destroyed\n",
         "SYSTEM-SMOKE milestone=fault_child_started\n",
         "SYSTEM-SMOKE milestone=fault_child_yielding\n",
         "SYSTEM-SMOKE milestone=root_resumed_after_fault_child_yield\n",

@@ -1,9 +1,11 @@
 //! Versioned production lifecycle records consumed by full-system smoke tests.
 
-pub const PROTOCOL_VERSION: u32 = 3;
+const ipc = @import("ipc.zig");
+
+pub const PROTOCOL_VERSION: u32 = 4;
 pub const PREFIX = "SYSTEM-SMOKE";
 
-pub const HEADER = PREFIX ++ " protocol=3\n";
+pub const HEADER = PREFIX ++ " protocol=4\n";
 pub const ROOT_PROCESS_PREPARED = PREFIX ++ " milestone=root_process_prepared\n";
 pub const KERNEL_INITIALIZED = PREFIX ++ " milestone=kernel_initialized\n";
 pub const USERSPACE_ENTERED = PREFIX ++ " milestone=userspace_entered\n";
@@ -17,13 +19,16 @@ pub const MEMORY_OBJECT_CAPABILITY_ACQUIRED =
 pub const MEMORY_OBJECT_MAPPED = PREFIX ++ " milestone=memory_object_mapped\n";
 pub const USERSPACE_HEAP_VERIFIED = PREFIX ++ " milestone=userspace_heap_verified\n";
 pub const COOPERATIVE_YIELD_COMPLETED = PREFIX ++ " milestone=cooperative_yield_completed\n";
-pub const CLEAN_CHILD_STARTED = PREFIX ++ " milestone=clean_child_started\n";
-pub const CLEAN_CHILD_YIELDING = PREFIX ++ " milestone=clean_child_yielding\n";
-pub const ROOT_RESUMED_AFTER_CLEAN_CHILD_YIELD =
-    PREFIX ++ " milestone=root_resumed_after_clean_child_yield\n";
-pub const CLEAN_CHILD_RESUMED = PREFIX ++ " milestone=clean_child_resumed\n";
+pub const IPC_MESSAGE = ipc.Message{ .words = .{ 0x4950_4331, 0x1234_5678, 0xCAFE_BABE } };
+pub const IPC_CHILD_STARTED = PREFIX ++ " milestone=ipc_child_started\n";
+pub const IPC_MESSAGE_SENT = PREFIX ++ " milestone=ipc_message_sent\n";
+pub const IPC_MESSAGE_VERIFIED = PREFIX ++ " milestone=ipc_message_verified\n";
+pub const ROOT_RESUMED_AFTER_IPC_CHILD_YIELD =
+    PREFIX ++ " milestone=root_resumed_after_ipc_child_yield\n";
+pub const IPC_CHILD_RESUMED = PREFIX ++ " milestone=ipc_child_resumed\n";
 pub const CHILD_EXIT_FORMAT = PREFIX ++ " CHILD_EXIT status={d}\n";
-pub const CLEAN_CHILD_DESTROYED = PREFIX ++ " milestone=clean_child_destroyed\n";
+pub const IPC_CHILD_DESTROYED = PREFIX ++ " milestone=ipc_child_destroyed\n";
+pub const IPC_ENDPOINT_DESTROYED = PREFIX ++ " milestone=ipc_endpoint_destroyed\n";
 pub const FAULT_CHILD_STARTED = PREFIX ++ " milestone=fault_child_started\n";
 pub const FAULT_CHILD_YIELDING = PREFIX ++ " milestone=fault_child_yielding\n";
 pub const ROOT_RESUMED_AFTER_FAULT_CHILD_YIELD =
@@ -46,11 +51,13 @@ pub const ordered_milestones = [_][]const u8{
     MEMORY_OBJECT_MAPPED,
     USERSPACE_HEAP_VERIFIED,
     COOPERATIVE_YIELD_COMPLETED,
-    CLEAN_CHILD_STARTED,
-    CLEAN_CHILD_YIELDING,
-    ROOT_RESUMED_AFTER_CLEAN_CHILD_YIELD,
-    CLEAN_CHILD_RESUMED,
-    CLEAN_CHILD_DESTROYED,
+    IPC_CHILD_STARTED,
+    IPC_MESSAGE_SENT,
+    IPC_MESSAGE_VERIFIED,
+    ROOT_RESUMED_AFTER_IPC_CHILD_YIELD,
+    IPC_CHILD_RESUMED,
+    IPC_CHILD_DESTROYED,
+    IPC_ENDPOINT_DESTROYED,
     FAULT_CHILD_STARTED,
     FAULT_CHILD_YIELDING,
     ROOT_RESUMED_AFTER_FAULT_CHILD_YIELD,

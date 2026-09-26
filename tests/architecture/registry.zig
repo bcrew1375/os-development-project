@@ -100,5 +100,6 @@ fn testFunction(id: manifest.TestId) framework.TestFunction {
         .thread_context_initial_state_uses_bounded_kernel_stack => thread_context.initialStateUsesBoundedKernelStack,
         .thread_context_switch_round_trip_restores_architecture_state => thread_context.switchRoundTripRestoresAddressSpaceAndPrivilegeStack,
         .kernel_continuation_switch_round_trip_restores_architecture_state => thread_context.kernelContinuationRoundTripRestoresAddressSpaceAndPrivilegeStack,
+        .syscall_continuation_supports_deferred_multi_register_writeback => thread_context.syscallContinuationSupportsDeferredMultiRegisterWriteback,
     };
 }

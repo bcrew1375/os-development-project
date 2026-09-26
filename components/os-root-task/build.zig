@@ -89,6 +89,12 @@ fn addRootTask(
     process_management.addImport("shared", shared);
     process_management.addImport("memory_management", memory_management);
     process_management.addImport("process_management", process_management);
+    const ipc = b.createModule(.{
+        .root_source_file = b.path("src/ipc/main.zig"),
+        .target = config.target,
+        .optimize = optimize,
+    });
+    ipc.addImport("abi", abi);
     const boot_modules = b.createModule(.{
         .root_source_file = b.path("src/boot_modules.zig"),
         .target = config.target,
@@ -111,6 +117,7 @@ fn addRootTask(
     root_task.root_module.addImport("abi", abi);
     root_task.root_module.addImport("memory_management", memory_management);
     root_task.root_module.addImport("process_management", process_management);
+    root_task.root_module.addImport("ipc", ipc);
     root_task.root_module.addImport("boot_modules", boot_modules);
     root_task.setLinkerScript(b.path(config.linker_script));
 
@@ -171,6 +178,12 @@ fn addTests(
     process_management.addImport("shared", shared);
     process_management.addImport("memory_management", memory_management);
     process_management.addImport("process_management", process_management);
+    const ipc = b.createModule(.{
+        .root_source_file = b.path("src/ipc/main.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    });
+    ipc.addImport("abi", abi);
     const boot_modules = b.createModule(.{
         .root_source_file = b.path("src/boot_modules.zig"),
         .target = b.graph.host,
@@ -179,6 +192,7 @@ fn addTests(
     boot_modules.addImport("abi", abi);
     tests.root_module.addImport("boot_modules", boot_modules);
     tests.root_module.addImport("process_management", process_management);
+    tests.root_module.addImport("ipc", ipc);
     const startup = b.createModule(.{
         .root_source_file = b.path("src/startup.zig"),
         .target = b.graph.host,
@@ -188,6 +202,7 @@ fn addTests(
     startup.addImport("boot_modules", boot_modules);
     startup.addImport("memory_management", memory_management);
     startup.addImport("process_management", process_management);
+    startup.addImport("ipc", ipc);
     tests.root_module.addImport("startup", startup);
 
     const run_tests = b.addRunArtifact(tests);

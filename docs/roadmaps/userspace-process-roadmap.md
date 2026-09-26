@@ -1069,7 +1069,26 @@ authority so drivers and services can move out of the root task.
 A second runnable process proves execution. IPC and capability transfer make that
 process useful in a microkernel system.
 
-## [ ] U5.1 Define the IPC ABI and endpoint object
+## [x] U5.1 Define the IPC ABI and endpoint object
+
+- Started: 2026-09-26
+- Completed: 2026-09-26
+- Implemented: three-word fixed-register messages; dedicated endpoint send and
+  receive rights; generation-checked endpoint identities; a fixed registry of 32
+  endpoints with eight-message FIFO queues; capability-authorized create,
+  destroy, non-blocking send, and non-blocking receive syscalls; userspace wrappers;
+  explicit empty, full, exhaustion, stale-handle, and in-use destruction behavior;
+  and a production exchange in which the root task delegates a receive-only
+  endpoint capability, queues a known message, and a child verifies all three
+  words before clean exit.
+- Validation: ABI and root-task component tests; `zig build tests`; `zig build
+  coverage` at 100% common-code line coverage; freestanding x86-32 and x86-64
+  root-task builds; architecture tests and architecture coverage on x86-32 and
+  x86-64; both production system-smoke tests with protocol-4 message verification;
+  `zig fmt --check`; `git diff --check`.
+- Limitation: send and receive remain non-blocking and the acceptance exchange
+  queues the message before scheduling the receiver; blocking wait queues and
+  scheduler integration remain U5.2.
 
 **Related assessment:** P4.1.
 

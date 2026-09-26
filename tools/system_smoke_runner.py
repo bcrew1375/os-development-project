@@ -12,7 +12,7 @@ import tempfile
 import time
 
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 PREFIX = "SYSTEM-SMOKE"
 HEADER = f"{PREFIX} protocol={PROTOCOL_VERSION}"
 MILESTONES = (
@@ -27,11 +27,13 @@ MILESTONES = (
     "memory_object_mapped",
     "userspace_heap_verified",
     "cooperative_yield_completed",
-    "clean_child_started",
-    "clean_child_yielding",
-    "root_resumed_after_clean_child_yield",
-    "clean_child_resumed",
-    "clean_child_destroyed",
+    "ipc_child_started",
+    "ipc_message_sent",
+    "ipc_message_verified",
+    "root_resumed_after_ipc_child_yield",
+    "ipc_child_resumed",
+    "ipc_child_destroyed",
+    "ipc_endpoint_destroyed",
     "fault_child_started",
     "fault_child_yielding",
     "root_resumed_after_fault_child_yield",
@@ -45,12 +47,11 @@ CHILD_FAULT_PATTERN = re.compile(r"^SYSTEM-SMOKE CHILD_FAULT kind=(?P<kind>[a-z0
 EXIT_PATTERN = re.compile(r"^SYSTEM-SMOKE EXIT status=(?P<status>\d+)$")
 
 EXPECTED_EVENTS = (
-    *(f"milestone={milestone}" for milestone in MILESTONES[:15]),
+    *(f"milestone={milestone}" for milestone in MILESTONES[:16]),
     "child_exit=0",
-    f"milestone={MILESTONES[15]}",
-    *(f"milestone={milestone}" for milestone in MILESTONES[16:20]),
+    *(f"milestone={milestone}" for milestone in MILESTONES[16:22]),
     "child_fault=invalid_opcode",
-    *(f"milestone={milestone}" for milestone in MILESTONES[20:]),
+    *(f"milestone={milestone}" for milestone in MILESTONES[22:]),
     "root_exit",
 )
 

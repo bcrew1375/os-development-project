@@ -173,11 +173,12 @@ zig build system-smoke -Darch=x86_32
 zig build system-smoke -Darch=x86_64
 ```
 
-The runner validates the ordered version-3 `SYSTEM-SMOKE` lifecycle protocol,
-including child yield, clean exit, contained invalid-opcode fault, root resumption,
-and final root exit. It requires root-task exit status zero and terminates the
-halted guest through QMP `quit`. x86-32 supports both its default Limine image and
-the optional direct Multiboot path selected with `-Dbootloader=multiboot`. See
+The runner validates the ordered version-4 `SYSTEM-SMOKE` lifecycle protocol,
+including a three-word endpoint exchange through a receive-only delegated child
+capability, child exit, contained invalid-opcode fault, root resumption, and final
+root exit. It requires root-task exit status zero and terminates the halted guest
+through QMP `quit`. x86-32 supports both its default Limine image and the optional
+direct Multiboot path selected with `-Dbootloader=multiboot`. See
 [Production System Smoke Tests](../testing/system-smoke.md) for protocol ownership, timeout
 configuration, failure behavior, CI integration, and trend reporting.
 

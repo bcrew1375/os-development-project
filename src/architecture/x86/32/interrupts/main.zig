@@ -136,6 +136,7 @@ fn handlePageFault(trap_frame: *const TrapFrame, diagnostic: diagnostics.Decisio
 }
 
 fn handleSyscall(trap_frame: *TrapFrame) void {
+    const context_handle = beginSyscall(trap_frame);
     const result = kernel_common.syscall.dispatchFromCurrentContext(
         .{
             .number = trap_frame.eax,
@@ -148,28 +149,48 @@ fn handleSyscall(trap_frame: *TrapFrame) void {
             },
         },
     );
-    handleSyscallResult(trap_frame, result);
+    handleSyscallResult(context_handle, trap_frame, result);
 }
 
-fn handleSyscallResult(trap_frame: *TrapFrame, result: kernel_common.syscall.Result) void {
+fn beginSyscall(trap_frame: *TrapFrame) ?arch.ThreadContextHandle {
+    const context_handle = kernel_common.process.scheduler.currentArchitectureContextHandle() catch |err| {
+        if (@hasDecl(root, "architectureTestObserveException") and err == error.SchedulerUninitialized) {
+            return null;
+        }
+        arch.platform.writer().print("resolve syscall context failed: {s}\n", .{@errorName(err)}) catch {};
+        @panic("syscall has no current architecture context");
+    };
+    arch.thread_context.beginSyscall(context_handle, @intFromPtr(trap_frame)) catch |err| {
+        arch.platform.writer().print("begin syscall failed: {s}\n", .{@errorName(err)}) catch {};
+        @panic("failed to retain syscall trap frame");
+    };
+    return context_handle;
+}
+
+fn handleSyscallResult(
+    context_handle: ?arch.ThreadContextHandle,
+    trap_frame: *TrapFrame,
+    result: kernel_common.syscall.Result,
+) void {
     switch (result) {
-        .returned => |value| trap_frame.eax = value,
+        .returned => |status| completeSyscall(context_handle, trap_frame, .fromStatus(status)),
+        .returned_registers => |registers| completeSyscall(context_handle, trap_frame, registers),
         .yield => {
             kernel_common.process.scheduler.yieldCurrent() catch |err| {
                 arch.platform.writer().print("yield failed: {s}\n", .{@errorName(err)}) catch {};
                 @panic("cooperative scheduler yield failed");
             };
-            trap_frame.eax = abi.syscall.SYSCALL_SUCCESS;
+            completeSyscall(context_handle, trap_frame, .fromStatus(abi.syscall.SYSCALL_SUCCESS));
         },
         .debug_write => |write| {
             var message: [kernel_common.user_memory.MAX_COPY_BYTES]u8 = undefined;
             kernel_common.user_memory.copyFromUser(&message, write.address, write.length) catch |err| {
                 arch.platform.writer().print("debug_write failed: {s}\n", .{@errorName(err)}) catch {};
-                trap_frame.eax = abi.syscall.SYSCALL_FAILURE;
+                completeSyscall(context_handle, trap_frame, .fromStatus(abi.syscall.SYSCALL_FAILURE));
                 return;
             };
             arch.platform.writer().writeAll(message[0..@intCast(write.length)]) catch {};
-            trap_frame.eax = abi.syscall.SYSCALL_SUCCESS;
+            completeSyscall(context_handle, trap_frame, .fromStatus(abi.syscall.SYSCALL_SUCCESS));
         },
         .exit => |exit| {
             if (@hasDecl(root, "isRootThreadForSmoke") and root.isRootThreadForSmoke()) {
@@ -188,9 +209,27 @@ fn handleSyscallResult(trap_frame: *TrapFrame, result: kernel_common.syscall.Res
                 @tagName(failure_result.operation),
                 @errorName(failure_result.err),
             }) catch {};
-            trap_frame.eax = failure_result.return_value;
+            completeSyscall(context_handle, trap_frame, .fromStatus(failure_result.return_value));
         },
     }
+}
+
+fn completeSyscall(
+    context_handle: ?arch.ThreadContextHandle,
+    trap_frame: *TrapFrame,
+    result: arch.SyscallResultRegisters,
+) void {
+    if (context_handle == null) {
+        trap_frame.eax = result.status;
+        trap_frame.ebx = @truncate(result.words[0]);
+        trap_frame.ecx = @truncate(result.words[1]);
+        trap_frame.edx = @truncate(result.words[2]);
+        return;
+    }
+    arch.thread_context.completeSyscall(context_handle.?, result) catch |err| {
+        arch.platform.writer().print("complete syscall failed: {s}\n", .{@errorName(err)}) catch {};
+        @panic("failed to write syscall result");
+    };
 }
 
 fn handleException(

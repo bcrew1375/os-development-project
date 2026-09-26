@@ -205,6 +205,15 @@ pub fn currentThreadForTest() ?thread.Handle {
     return current_thread_handle;
 }
 
+pub fn currentArchitectureContextHandle() Error!arch.ThreadContextHandle {
+    try requireInitialized();
+    _ = current_thread_handle orelse return error.NoCurrentThread;
+    if (current_architecture_context == arch.INVALID_THREAD_CONTEXT_HANDLE) {
+        return error.CurrentThreadMismatch;
+    }
+    return current_architecture_context;
+}
+
 pub fn idleContextForTest() arch.ThreadContextHandle {
     return idle_context_handle;
 }

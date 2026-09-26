@@ -1,15 +1,18 @@
 const abi = @import("abi");
 const startup = @import("startup.zig");
 const process_management = @import("process_management");
+const ipc = @import("ipc");
 
 comptime {
     _ = process_management;
+    _ = ipc;
 }
 
 const NativeEnvironment = struct {
     pub const enableChildProcesses = true;
     pub const syscall3 = abi.syscall.syscall3;
     pub const syscall5 = abi.syscall.syscall5;
+    pub const syscallReceive = abi.syscall.syscallReceive;
 
     pub fn debugWrite(message: []const u8) void {
         _ = syscall3(

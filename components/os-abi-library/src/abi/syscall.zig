@@ -1,6 +1,7 @@
 //! User/kernel syscall ABI numbers and low-level trap helpers.
 
 const capability = @import("capability.zig");
+const ipc = @import("ipc.zig");
 
 /// Numeric syscall identifiers placed in the syscall number register.
 pub const SyscallNumber = enum(u32) {
@@ -31,6 +32,10 @@ pub const SyscallNumber = enum(u32) {
     destroy_thread = 30,
     destroy_capability_space = 31,
     delete_capability = 32,
+    create_endpoint = 33,
+    destroy_endpoint = 34,
+    endpoint_send = 35,
+    endpoint_receive = 36,
     _,
 };
 
@@ -61,6 +66,8 @@ pub const ErrorCode = enum(u32) {
     invalid_state = 10,
     object_in_use = 11,
     invalid_user_memory = 12,
+    endpoint_empty = 13,
+    endpoint_full = 14,
 };
 
 /// Encodes a recoverable ABI error in a syscall return value.
@@ -84,6 +91,8 @@ pub fn decodeError(value: u32) ?ErrorCode {
         @intFromEnum(ErrorCode.invalid_state) => .invalid_state,
         @intFromEnum(ErrorCode.object_in_use) => .object_in_use,
         @intFromEnum(ErrorCode.invalid_user_memory) => .invalid_user_memory,
+        @intFromEnum(ErrorCode.endpoint_empty) => .endpoint_empty,
+        @intFromEnum(ErrorCode.endpoint_full) => .endpoint_full,
         else => .internal_failure,
     };
 }
@@ -154,4 +163,25 @@ pub fn syscall5(number: u32, argument0: usize, argument1: usize, argument2: usiz
           [argument3] "{esi}" (argument3),
           [argument4] "{edi}" (argument4),
         : .{ .memory = true });
+}
+
+/// Performs a receive syscall returning status plus three message registers.
+pub fn syscallReceive(number: u32, endpoint: capability.CapabilityHandle) ipc.ReceiveResult {
+    var status: u32 = undefined;
+    var word0: usize = undefined;
+    var word1: usize = undefined;
+    var word2: usize = undefined;
+    asm volatile (
+        \\int $0x80
+        : [status] "={eax}" (status),
+          [word0] "={ebx}" (word0),
+          [word1] "={ecx}" (word1),
+          [word2] "={edx}" (word2),
+        : [number] "{eax}" (number),
+          [endpoint] "{ebx}" (endpoint),
+        : .{ .memory = true });
+    return .{
+        .status = status,
+        .message = .{ .words = .{ @truncate(word0), @truncate(word1), @truncate(word2) } },
+    };
 }

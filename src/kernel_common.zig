@@ -13,6 +13,8 @@ pub const vmm = memory_management.virtual_memory;
 pub const process = @import("common/process/main.zig");
 /// Kernel capability table implementation.
 pub const capability = @import("common/capability/main.zig");
+/// Architecture-independent inter-process communication objects.
+pub const ipc = @import("common/ipc/main.zig");
 /// Architecture-independent syscall policy dispatcher.
 pub const syscall = @import("common/syscall/main.zig");
 /// Checked access helpers for userspace memory.

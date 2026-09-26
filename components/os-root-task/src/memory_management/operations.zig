@@ -258,6 +258,8 @@ pub fn MemoryManager(comptime Transport: type) type {
                 .invalid_state,
                 .object_in_use,
                 .invalid_user_memory,
+                .endpoint_empty,
+                .endpoint_full,
                 => Error.InternalFailure,
                 .internal_failure => Error.InternalFailure,
             };

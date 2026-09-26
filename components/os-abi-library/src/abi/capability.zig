@@ -66,6 +66,8 @@ pub const ObjectType = enum(u32) {
     thread = 5,
     /// Bounded namespace containing capability slots.
     capability_space = 6,
+    /// Synchronous inter-process communication endpoint.
+    endpoint = 7,
     _,
 };
 
@@ -89,7 +91,11 @@ pub const Rights = packed struct(u32) {
     resume_thread: bool = false,
     /// Allows recording normal termination for a thread.
     terminate: bool = false,
-    _reserved: u23 = 0,
+    /// Allows sending messages through an endpoint.
+    send: bool = false,
+    /// Allows receiving messages from an endpoint.
+    receive: bool = false,
+    _reserved: u21 = 0,
 
     /// Returns true when `self` grants every right requested by `required`.
     pub fn contains(self: Rights, required: Rights) bool {
@@ -101,12 +107,14 @@ pub const Rights = packed struct(u32) {
             (!required.start or self.start) and
             (!required.suspend_thread or self.suspend_thread) and
             (!required.resume_thread or self.resume_thread) and
-            (!required.terminate or self.terminate);
+            (!required.terminate or self.terminate) and
+            (!required.send or self.send) and
+            (!required.receive or self.receive);
     }
 };
 
 /// Rights bits accepted by capability-management ABI requests.
-pub const KNOWN_RIGHTS_MASK: u32 = 0x01ff;
+pub const KNOWN_RIGHTS_MASK: u32 = 0x07ff;
 
 /// Encodes capability rights into their stable ABI representation.
 pub fn rightsBits(rights: Rights) u32 {

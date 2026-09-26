@@ -6,6 +6,8 @@ pub const syscall = @import("syscall.zig");
 pub const boot_info = @import("boot_info.zig");
 /// Capability handle, object type, and rights definitions.
 pub const capability = @import("capability.zig");
+/// Fixed-register inter-process communication types.
+pub const ipc = @import("ipc.zig");
 /// Fixed-layout process and thread management request structures.
 pub const process = @import("process.zig");
 /// Versioned full-system lifecycle records emitted by production components.

@@ -13,10 +13,10 @@ pub const ThreadConfiguration = extern struct {
 };
 
 pub const CHILD_STARTUP_MAGIC: u32 = 0x4348_4C44;
-pub const CHILD_STARTUP_VERSION: u32 = 1;
+pub const CHILD_STARTUP_VERSION: u32 = 2;
 
 pub const ChildStartupMode = enum(u32) {
-    clean_exit = 1,
+    ipc_receive = 1,
     invalid_opcode = 2,
 };
 
@@ -25,6 +25,7 @@ pub const ChildStartup = extern struct {
     magic: u32 = CHILD_STARTUP_MAGIC,
     version: u32 = CHILD_STARTUP_VERSION,
     mode: ChildStartupMode,
+    endpoint_capability: capability.CapabilityHandle = capability.INVALID_CAPABILITY,
     reserved: u32 = 0,
 };
 
@@ -35,7 +36,9 @@ comptime {
     std.debug.assert(@offsetOf(ThreadConfiguration, "entry_point") == 8);
     std.debug.assert(@offsetOf(ThreadConfiguration, "stack_pointer") == 16);
     std.debug.assert(@offsetOf(ThreadConfiguration, "argument") == 24);
-    std.debug.assert(@sizeOf(ChildStartup) == 16);
+    std.debug.assert(@sizeOf(ChildStartup) == 20);
     std.debug.assert(@alignOf(ChildStartup) == 4);
     std.debug.assert(@offsetOf(ChildStartup, "mode") == 8);
+    std.debug.assert(@offsetOf(ChildStartup, "endpoint_capability") == 12);
+    std.debug.assert(@offsetOf(ChildStartup, "reserved") == 16);
 }

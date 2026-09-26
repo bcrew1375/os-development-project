@@ -44,6 +44,7 @@ pub const TestId = enum {
     thread_context_initial_state_uses_bounded_kernel_stack,
     thread_context_switch_round_trip_restores_architecture_state,
     kernel_continuation_switch_round_trip_restores_architecture_state,
+    syscall_continuation_supports_deferred_multi_register_writeback,
 };
 
 pub const ExpectedFault = struct {
@@ -107,6 +108,7 @@ pub const tests = [_]Test{
     .{ .id = .user_invalid_opcode_fault_is_contained, .name = "user invalid opcode faults only the responsible thread", .mode = .isolated_machine, .architectures = all_x86 },
     .{ .id = .thread_context_switch_round_trip_restores_architecture_state, .name = "thread context switch round trip restores architecture state", .mode = .isolated_machine, .architectures = all_x86 },
     .{ .id = .kernel_continuation_switch_round_trip_restores_architecture_state, .name = "kernel continuation switch round trip restores architecture state", .mode = .isolated_machine, .architectures = all_x86 },
+    .{ .id = .syscall_continuation_supports_deferred_multi_register_writeback, .name = "syscall continuation supports deferred multi-register writeback", .mode = .isolated_machine, .architectures = all_x86 },
 };
 
 pub fn find(id: TestId) Test {

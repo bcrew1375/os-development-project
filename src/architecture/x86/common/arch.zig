@@ -72,8 +72,11 @@ pub fn makeArchitecture(comptime implementation: anytype) type {
             pub const destroy = implementation.thread_context.destroy;
             pub const activate = implementation.thread_context.activate;
             pub const switchContext = implementation.thread_context.switchContext;
+            pub const beginSyscall = implementation.thread_context.beginSyscall;
+            pub const completeSyscall = implementation.thread_context.completeSyscall;
             pub const availableCount = implementation.thread_context.availableCount;
             pub const getInitialStateForTest = implementation.thread_context.getInitialStateForTest;
+            pub const getSyscallResultForTest = implementation.thread_context.getSyscallResultForTest;
             pub const getKernelStackBoundsForTest = implementation.thread_context.getKernelStackBoundsForTest;
             pub const prepareKernelContinuationForTest = implementation.thread_context.prepareKernelContinuationForTest;
             pub const bindCurrentForTest = implementation.thread_context.bindCurrentForTest;

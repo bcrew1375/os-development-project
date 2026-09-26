@@ -11,6 +11,12 @@ var kernel_continuation_current: arch.ThreadContextHandle = arch.INVALID_THREAD_
 var kernel_continuation_next: arch.ThreadContextHandle = arch.INVALID_THREAD_CONTEXT_HANDLE;
 var observed_kernel_root: arch.AddressSpaceRoot = .{ .value = 0 };
 var observed_kernel_privilege_stack: usize = 0;
+var syscall_current: arch.ThreadContextHandle = arch.INVALID_THREAD_CONTEXT_HANDLE;
+var syscall_next: arch.ThreadContextHandle = arch.INVALID_THREAD_CONTEXT_HANDLE;
+const deferred_syscall_result = arch.SyscallResultRegisters{
+    .status = 0x1234_5678,
+    .words = .{ 0x1111_2222, 0x3333_4444, 0x5555_6666 },
+};
 
 pub fn initialStateUsesBoundedKernelStack() !void {
     const root = currentAddressSpaceRoot();
@@ -150,6 +156,49 @@ fn kernelContinuation() callconv(.c) noreturn {
         kernel_continuation_next,
         kernel_continuation_current,
     ) catch @panic("kernel continuation round-trip failed");
+    unreachable;
+}
+
+pub fn syscallContinuationSupportsDeferredMultiRegisterWriteback() !void {
+    @call(.never_inline, arch.boot.finishBoot, .{});
+
+    const root = currentAddressSpaceRoot();
+    const current = try arch.thread_context.create(.{
+        .address_space_root = root,
+        .entry_point = 0x0040_0000,
+        .stack_pointer = validUserStackPointer(0x0080_0000),
+        .argument = 0,
+    });
+    const next = try arch.thread_context.create(.{
+        .address_space_root = root,
+        .entry_point = 0x0040_1000,
+        .stack_pointer = validUserStackPointer(0x0081_0000),
+        .argument = 0,
+    });
+    syscall_current = current;
+    syscall_next = next;
+
+    const bounds = try arch.thread_context.getKernelStackBoundsForTest(current);
+    const trap_frame_address = bounds.start;
+    try arch.thread_context.beginSyscall(current, trap_frame_address);
+    try arch.thread_context.prepareKernelContinuationForTest(next, &deferredSyscallContinuation);
+    try arch.thread_context.bindCurrentForTest(current);
+    try arch.thread_context.switchContext(current, next);
+
+    const actual = try arch.thread_context.getSyscallResultForTest(current, trap_frame_address);
+    try framework.expectEqual(deferred_syscall_result.status, actual.status);
+    for (deferred_syscall_result.words, actual.words) |expected, observed| {
+        try framework.expectEqual(expected, observed);
+    }
+}
+
+fn deferredSyscallContinuation() callconv(.c) noreturn {
+    arch.thread_context.completeSyscall(syscall_current, deferred_syscall_result) catch {
+        @panic("deferred syscall completion failed");
+    };
+    arch.thread_context.switchContext(syscall_next, syscall_current) catch {
+        @panic("deferred syscall continuation failed to resume caller");
+    };
     unreachable;
 }
 

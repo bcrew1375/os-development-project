@@ -2,6 +2,7 @@ const abi = @import("abi");
 const boot_modules = @import("boot_modules");
 const memory_management = @import("memory_management");
 const process_management = @import("process_management");
+const ipc = @import("ipc");
 const std = @import("std");
 
 const bootstrap_memory = memory_management.bootstrap;
@@ -136,19 +137,30 @@ fn runChildSmoke(
     const image = bootModuleBytes(Environment, module) orelse return error.InvalidBootModule;
     const child_process = process_management.child_process;
 
-    var clean_child = try child_process.createAndStart(
+    const endpoint_manager = ipc.EndpointManager(Environment);
+    const endpoint = try endpoint_manager.createEndpoint();
+    var endpoint_owned = true;
+    errdefer if (endpoint_owned) endpoint_manager.destroyEndpoint(endpoint) catch {};
+    var ipc_child = try child_process.createAndStart(
         Environment,
         allocator,
         root_address_space,
         image,
-        .{ .mode = .clean_exit },
+        .{ .mode = .ipc_receive },
+        endpoint.capability,
     );
-    Environment.debugWrite(abi.system_smoke.CLEAN_CHILD_STARTED);
+    errdefer ipc_child.destroy(Environment, allocator, root_address_space) catch {};
+    Environment.debugWrite(abi.system_smoke.IPC_CHILD_STARTED);
+    try endpoint_manager.send(endpoint, abi.system_smoke.IPC_MESSAGE);
+    Environment.debugWrite(abi.system_smoke.IPC_MESSAGE_SENT);
     try yieldSuccessfully(Environment);
-    Environment.debugWrite(abi.system_smoke.ROOT_RESUMED_AFTER_CLEAN_CHILD_YIELD);
+    Environment.debugWrite(abi.system_smoke.ROOT_RESUMED_AFTER_IPC_CHILD_YIELD);
     try yieldSuccessfully(Environment);
-    try clean_child.destroy(Environment, allocator, root_address_space);
-    Environment.debugWrite(abi.system_smoke.CLEAN_CHILD_DESTROYED);
+    try ipc_child.destroy(Environment, allocator, root_address_space);
+    Environment.debugWrite(abi.system_smoke.IPC_CHILD_DESTROYED);
+    try endpoint_manager.destroyEndpoint(endpoint);
+    endpoint_owned = false;
+    Environment.debugWrite(abi.system_smoke.IPC_ENDPOINT_DESTROYED);
 
     var fault_child = try child_process.createAndStart(
         Environment,
@@ -156,6 +168,7 @@ fn runChildSmoke(
         root_address_space,
         image,
         .{ .mode = .invalid_opcode },
+        null,
     );
     Environment.debugWrite(abi.system_smoke.FAULT_CHILD_STARTED);
     try yieldSuccessfully(Environment);

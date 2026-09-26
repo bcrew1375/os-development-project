@@ -25,10 +25,10 @@ The default timeout is 60 seconds. Override it with
 ## Protocol
 
 Production components unconditionally emit complete serial lines using protocol
-version 3. The required order is:
+version 4. The required order is:
 
 ```text
-SYSTEM-SMOKE protocol=3
+SYSTEM-SMOKE protocol=4
 SYSTEM-SMOKE milestone=root_process_prepared
 SYSTEM-SMOKE milestone=kernel_initialized
 SYSTEM-SMOKE milestone=userspace_entered
@@ -40,12 +40,14 @@ SYSTEM-SMOKE milestone=memory_object_capability_acquired
 SYSTEM-SMOKE milestone=memory_object_mapped
 SYSTEM-SMOKE milestone=userspace_heap_verified
 SYSTEM-SMOKE milestone=cooperative_yield_completed
-SYSTEM-SMOKE milestone=clean_child_started
-SYSTEM-SMOKE milestone=clean_child_yielding
-SYSTEM-SMOKE milestone=root_resumed_after_clean_child_yield
-SYSTEM-SMOKE milestone=clean_child_resumed
+SYSTEM-SMOKE milestone=ipc_child_started
+SYSTEM-SMOKE milestone=ipc_message_sent
+SYSTEM-SMOKE milestone=ipc_message_verified
+SYSTEM-SMOKE milestone=root_resumed_after_ipc_child_yield
+SYSTEM-SMOKE milestone=ipc_child_resumed
 SYSTEM-SMOKE CHILD_EXIT status=0
-SYSTEM-SMOKE milestone=clean_child_destroyed
+SYSTEM-SMOKE milestone=ipc_child_destroyed
+SYSTEM-SMOKE milestone=ipc_endpoint_destroyed
 SYSTEM-SMOKE milestone=fault_child_started
 SYSTEM-SMOKE milestone=fault_child_yielding
 SYSTEM-SMOKE milestone=root_resumed_after_fault_child_yield
@@ -61,10 +63,12 @@ root-process preparation, and records completion of boot finalization and
 interrupt initialization. The root task records user-mode entry, valid boot
 information, delegated boot-module validation, physical-memory allocation,
 capability acquisition, capability-backed memory-object mapping, userspace heap
-verification, cooperative yield completion, and child lifecycle milestones. Child
-exit and fault records are intermediate events: they prove scheduler handoff and
-containment but do not terminate host observation. The kernel emits the terminal
-record only after accepting the root task's exit syscall.
+verification, cooperative yield completion, a queued three-word endpoint message,
+receive-only child capability delegation, child-side message verification, and
+child lifecycle milestones. Child exit and fault records are intermediate events:
+they prove scheduler handoff and containment but do not terminate host observation.
+The kernel emits the terminal record only after accepting the root task's exit
+syscall.
 
 `tools/system_smoke_runner.py` ignores ordinary diagnostics but strictly rejects
 missing, duplicate, malformed, unknown, or out-of-order protocol records. It

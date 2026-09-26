@@ -1,6 +1,7 @@
 //! Architecture-independent syscall decoding and kernel policy dispatch.
 
 const abi = @import("abi");
+const arch = @import("arch");
 const capability = @import("../capability/main.zig");
 const process = @import("../process/main.zig");
 const user_memory = @import("../user_memory.zig");
@@ -40,6 +41,10 @@ pub const Operation = enum {
     destroy_thread,
     destroy_capability_space,
     delete_capability,
+    create_endpoint,
+    destroy_endpoint,
+    endpoint_send,
+    endpoint_receive,
     convert_argument,
 };
 
@@ -53,6 +58,7 @@ pub const Failure = struct {
 /// Result of common syscall policy before architecture-specific side effects.
 pub const Result = union(enum) {
     returned: u32,
+    returned_registers: arch.SyscallResultRegisters,
     yield,
     debug_write: struct {
         address: u64,
@@ -138,8 +144,83 @@ pub fn dispatchWithServices(
             caller_capability_space,
             request.arguments,
         ),
+        .create_endpoint => createEndpoint(Services, caller_capability_space),
+        .destroy_endpoint => destroyEndpoint(
+            Services,
+            caller_capability_space,
+            request.arguments[0],
+        ),
+        .endpoint_send => sendEndpoint(
+            Services,
+            caller_capability_space,
+            request.arguments,
+        ),
+        .endpoint_receive => receiveEndpoint(
+            Services,
+            caller_capability_space,
+            request.arguments[0],
+        ),
         _ => .{ .returned = abi.syscall.errorResult(.unsupported) },
     };
+}
+
+fn createEndpoint(comptime Services: type, caller_space: u32) Result {
+    if (!@hasDecl(Services, "createEndpointCapability")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const handle = Services.createEndpointCapability(caller_space) catch |err| {
+        return failure(.create_endpoint, err);
+    };
+    return .{ .returned = handle };
+}
+
+fn destroyEndpoint(
+    comptime Services: type,
+    caller_space: u32,
+    capability_value: u64,
+) Result {
+    if (!@hasDecl(Services, "destroyEndpointCapability")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const handle = toU32(capability_value) catch |err| return failure(.convert_argument, err);
+    Services.destroyEndpointCapability(caller_space, handle) catch |err| {
+        return failure(.destroy_endpoint, err);
+    };
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
+fn sendEndpoint(comptime Services: type, caller_space: u32, arguments: [5]u64) Result {
+    if (!@hasDecl(Services, "sendEndpointMessage")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const handle = toU32(arguments[0]) catch |err| return failure(.convert_argument, err);
+    const message = abi.ipc.Message{ .words = .{
+        toU32(arguments[1]) catch |err| return failure(.convert_argument, err),
+        toU32(arguments[2]) catch |err| return failure(.convert_argument, err),
+        toU32(arguments[3]) catch |err| return failure(.convert_argument, err),
+    } };
+    Services.sendEndpointMessage(caller_space, handle, message) catch |err| {
+        return failure(.endpoint_send, err);
+    };
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
+fn receiveEndpoint(
+    comptime Services: type,
+    caller_space: u32,
+    capability_value: u64,
+) Result {
+    if (!@hasDecl(Services, "receiveEndpointMessage")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const handle = toU32(capability_value) catch |err| return failure(.convert_argument, err);
+    const message = Services.receiveEndpointMessage(caller_space, handle) catch |err| {
+        return failure(.endpoint_receive, err);
+    };
+    return .{ .returned_registers = .{
+        .status = abi.syscall.SYSCALL_SUCCESS,
+        .words = .{ message.words[0], message.words[1], message.words[2] },
+    } };
 }
 
 fn createCapabilitySpace(comptime Services: type, caller_space: u32) Result {
@@ -565,6 +646,7 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.InvalidThreadHandle,
         error.InvalidAddressSpaceHandle,
         error.InvalidMemoryObjectHandle,
+        error.InvalidEndpointHandle,
         error.ThreadOwnerMismatch,
         => .invalid_capability,
         error.InsufficientCapabilityRights => .insufficient_rights,
@@ -576,6 +658,7 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.OutOfThreads,
         error.OutOfCapabilitySpaces,
         error.OutOfThreadContexts,
+        error.OutOfEndpoints,
         error.OutOfVirtualMemoryAreas,
         error.AddressSpaceRootAllocationFailed,
         error.PhysicalMemoryAllocationFailed,
@@ -621,7 +704,10 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.ThreadInUse,
         error.CapabilitySpaceInUse,
         error.CapabilitySpaceNotEmpty,
+        error.EndpointInUse,
         => .object_in_use,
+        error.EndpointEmpty => .endpoint_empty,
+        error.EndpointFull => .endpoint_full,
         error.UserPageNotMapped,
         error.UserAccessDenied,
         error.WriteAccessDenied,
@@ -732,6 +818,7 @@ const ProductionServices = struct {
     pub const unmapAddressSpace = process.unmapAddressSpace;
     pub const createCapabilitySpaceCapability = capability.createCapabilitySpaceCapability;
     pub const createThreadCapability = capability.createThreadCapability;
+    pub const createEndpointCapability = capability.createEndpointCapability;
     pub const configureThreadFromUser = productionConfigureThreadFromUser;
     pub const startThreadCapability = productionStartThreadCapability;
     pub const suspendThreadCapability = productionSuspendThreadCapability;
@@ -741,4 +828,7 @@ const ProductionServices = struct {
     pub const destroyThreadCapability = capability.destroyThreadCapability;
     pub const destroyCapabilitySpaceCapability = capability.destroyCapabilitySpaceCapability;
     pub const deleteCapabilityFromSpace = capability.deleteCapabilityFromSpace;
+    pub const destroyEndpointCapability = capability.destroyEndpointCapability;
+    pub const sendEndpointMessage = capability.sendEndpointMessage;
+    pub const receiveEndpointMessage = capability.receiveEndpointMessage;
 };

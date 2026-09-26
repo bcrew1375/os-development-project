@@ -19,6 +19,7 @@ pub const LOADER_WINDOW_END: usize = 0x0400_0000;
 pub const STACK_TOP: usize = 0x00C0_0000;
 pub const STACK_SIZE: usize = 0x0001_0000;
 pub const STACK_START: usize = STACK_TOP - STACK_SIZE;
+pub const MAX_STARTUP_CAPABILITIES: usize = 1;
 
 pub const Error = elf.ElfLoadError || memory_management.PhysicalRangeAllocator.Error ||
     memory_management.operations.Error || process_management.Error || error{
@@ -66,6 +67,8 @@ pub const ChildProcess = struct {
     thread: ?process_management.Thread = null,
     mappings: [MAX_LOAD_SEGMENTS + 1]OwnedMapping = undefined,
     mapping_count: usize = 0,
+    startup_capabilities: [MAX_STARTUP_CAPABILITIES]abi.capability.CapabilityHandle = undefined,
+    startup_capability_count: usize = 0,
     started: bool = false,
 
     pub fn destroy(
@@ -133,6 +136,17 @@ pub const ChildProcess = struct {
         if (self.address_space) |address_space| {
             manager.destroyAddressSpace(address_space) catch return Error.CleanupFailed;
             self.address_space = null;
+        }
+        if (self.capability_space) |capability_space| {
+            var capability_index = self.startup_capability_count;
+            while (capability_index > 0) {
+                capability_index -= 1;
+                process_manager.deleteCapability(
+                    capability_space,
+                    self.startup_capabilities[capability_index],
+                ) catch return Error.CleanupFailed;
+                self.startup_capability_count -= 1;
+            }
         }
         if (self.capability_space) |capability_space| {
             process_manager.destroyCapabilitySpace(capability_space) catch return Error.CleanupFailed;
@@ -206,6 +220,7 @@ pub fn createAndStart(
     root_address_space: AddressSpace,
     image: []const u8,
     startup: abi.process.ChildStartup,
+    receive_endpoint: ?abi.capability.CapabilityHandle,
 ) Error!ChildProcess {
     const manager = memory_management.operations.MemoryManager(Environment);
     const process_manager = process_management.ProcessManager(Environment);
@@ -215,6 +230,17 @@ pub fn createAndStart(
 
     child.capability_space = try process_manager.createCapabilitySpace();
     child.address_space = try manager.createAddressSpace();
+    var child_startup = startup;
+    if (receive_endpoint) |endpoint_capability| {
+        const child_capability = try process_manager.installCapability(
+            child.capability_space.?,
+            endpoint_capability,
+            .{ .receive = true },
+        );
+        child.startup_capabilities[0] = child_capability;
+        child.startup_capability_count = 1;
+        child_startup.endpoint_capability = child_capability;
+    }
 
     var loader_cursor = LOADER_WINDOW_START;
     for (load_plan.segments[0..load_plan.segment_count]) |segment| {
@@ -250,7 +276,7 @@ pub fn createAndStart(
         memory_management.operations.MAP_READ | memory_management.operations.MAP_WRITE,
     );
     const stack_mapping = child.mappings[child.mapping_count - 1];
-    const initial_stack_pointer = try writeInitialStack(Environment, stack_mapping, startup);
+    const initial_stack_pointer = try writeInitialStack(Environment, stack_mapping, child_startup);
     try unmapLoaderAliases(Environment, &child, root_address_space);
 
     child.thread = try process_manager.createThread();

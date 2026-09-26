@@ -3,6 +3,7 @@
 const abi = @import("abi");
 const arch = @import("arch");
 const std = @import("std");
+const endpoint = @import("../ipc/endpoint.zig");
 const authority = @import("../memory_management/physical_memory_authority.zig");
 const process = @import("../process/main.zig");
 pub const space = @import("space.zig");
@@ -16,7 +17,7 @@ pub const CapabilityError = error{
     CapabilityHasDescendants,
     InvalidCapabilityRights,
     CapabilitySpaceNotEmpty,
-} || process.ProcessError || space.Error || authority.Error;
+} || process.ProcessError || space.Error || authority.Error || endpoint.Error;
 
 pub const MAX_CAPABILITIES: usize = abi.capability.MAX_CAPABILITY_SLOT_INDEX + 1;
 
@@ -27,6 +28,7 @@ const CapabilityObject = union(enum) {
     physical_frame: authority.Handle,
     thread: process.thread.Handle,
     capability_space: space.Handle,
+    endpoint: endpoint.Handle,
 };
 
 const Reference = struct {
@@ -124,6 +126,20 @@ pub fn createThreadCapability(
     }, null, .{ .thread = object_handle });
 }
 
+pub fn createEndpointCapability(
+    space_handle: space.Handle,
+) CapabilityError!abi.capability.CapabilityHandle {
+    const table = try tableFor(space_handle);
+    const index = freeSlot(table) orelse return error.OutOfCapabilities;
+    const object_handle = try endpoint.create();
+    errdefer endpoint.destroy(object_handle) catch {};
+    return initialize(index, &table[index], .{
+        .manage = true,
+        .send = true,
+        .receive = true,
+    }, null, .{ .endpoint = object_handle });
+}
+
 pub fn installCapability(
     source_space: space.Handle,
     target_space_capability: abi.capability.CapabilityHandle,
@@ -181,6 +197,55 @@ pub fn resolveThread(
         .thread => |handle| handle,
         else => error.InvalidCapabilityType,
     };
+}
+
+pub fn resolveEndpoint(
+    space_handle: space.Handle,
+    capability_handle: abi.capability.CapabilityHandle,
+    required: abi.capability.Rights,
+) CapabilityError!endpoint.Handle {
+    return switch ((try resolve(space_handle, capability_handle, required)).object.?) {
+        .endpoint => |handle| handle,
+        else => error.InvalidCapabilityType,
+    };
+}
+
+pub fn sendEndpointMessage(
+    space_handle: space.Handle,
+    capability_handle: abi.capability.CapabilityHandle,
+    message: abi.ipc.Message,
+) CapabilityError!void {
+    try endpoint.send(try resolveEndpoint(
+        space_handle,
+        capability_handle,
+        .{ .send = true },
+    ), message);
+}
+
+pub fn receiveEndpointMessage(
+    space_handle: space.Handle,
+    capability_handle: abi.capability.CapabilityHandle,
+) CapabilityError!abi.ipc.Message {
+    return endpoint.receive(try resolveEndpoint(
+        space_handle,
+        capability_handle,
+        .{ .receive = true },
+    ));
+}
+
+pub fn destroyEndpointCapability(
+    space_handle: space.Handle,
+    capability_handle: abi.capability.CapabilityHandle,
+) CapabilityError!void {
+    const reference = ref(space_handle, capability_handle);
+    const object_handle = try resolveEndpoint(
+        space_handle,
+        capability_handle,
+        .{ .manage = true },
+    );
+    if (hasChild(reference)) return error.CapabilityHasDescendants;
+    try endpoint.destroy(object_handle);
+    try clear(reference);
 }
 
 pub fn destroyThreadCapability(
@@ -430,6 +495,7 @@ pub fn activeCountIn(space_handle: space.Handle) CapabilityError!usize {
 
 pub fn resetForTest() void {
     tables = [_]Table{[_]Slot{.{}} ** MAX_CAPABILITIES} ** space.MAX_CAPABILITY_SPACES;
+    endpoint.resetForTest();
 }
 
 fn initialize(index: usize, slot: *Slot, rights: abi.capability.Rights, parent: ?Reference, object: CapabilityObject) abi.capability.CapabilityHandle {

@@ -21,6 +21,8 @@ pub const SwitchOperation = struct {
 const Slot = struct {
     generation: u32 = 1,
     configuration: arch.ThreadContextConfiguration = undefined,
+    pending_syscall_frame: ?usize = null,
+    completed_syscall: ?arch.SyscallResultRegisters = null,
     used: bool = false,
     retired: bool = false,
 };
@@ -112,6 +114,27 @@ pub fn switchContext(
     arch.mmu.switchAddressSpaceRoot(next_root);
 }
 
+pub fn beginSyscall(
+    handle: arch.ThreadContextHandle,
+    trap_frame_address: usize,
+) arch.ThreadContextError!void {
+    if (trap_frame_address == 0) return error.InvalidSyscallFrame;
+    const slot = try resolveMutableSlot(handle);
+    if (slot.pending_syscall_frame != null) return error.SyscallAlreadyPending;
+    slot.pending_syscall_frame = trap_frame_address;
+    slot.completed_syscall = null;
+}
+
+pub fn completeSyscall(
+    handle: arch.ThreadContextHandle,
+    result: arch.SyscallResultRegisters,
+) arch.ThreadContextError!void {
+    const slot = try resolveMutableSlot(handle);
+    if (slot.pending_syscall_frame == null) return error.NoPendingSyscall;
+    slot.pending_syscall_frame = null;
+    slot.completed_syscall = result;
+}
+
 pub fn availableCount() usize {
     var count: usize = 0;
     for (slots) |slot| {
@@ -123,6 +146,12 @@ pub fn availableCount() usize {
 pub fn getForTest(handle: arch.ThreadContextHandle) arch.ThreadContextError!SlotInfo {
     const slot = try resolveSlot(handle);
     return .{ .handle = handle, .configuration = slot.configuration };
+}
+
+pub fn getCompletedSyscallForTest(
+    handle: arch.ThreadContextHandle,
+) arch.ThreadContextError!?arch.SyscallResultRegisters {
+    return (try resolveSlot(handle)).completed_syscall;
 }
 
 pub fn getCurrentForTest() arch.ThreadContextHandle {

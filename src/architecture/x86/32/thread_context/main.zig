@@ -43,6 +43,7 @@ const Slot = struct {
     generation: u32 = 1,
     saved_stack_pointer: usize = 0,
     address_space_root: arch.AddressSpaceRoot = .{ .value = 0 },
+    pending_syscall_frame: ?*frames.TrapFrame = null,
     used: bool = false,
     active: bool = false,
     retired: bool = false,
@@ -106,6 +107,7 @@ pub fn destroy(handle: arch.ThreadContextHandle) arch.ThreadContextError!void {
     slot.used = false;
     slot.saved_stack_pointer = 0;
     slot.address_space_root = .{ .value = 0 };
+    slot.pending_syscall_frame = null;
     if (slot.generation == MAX_GENERATION) {
         slot.retired = true;
     } else {
@@ -147,6 +149,31 @@ pub fn switchContext(
     );
 }
 
+pub fn beginSyscall(
+    handle: arch.ThreadContextHandle,
+    trap_frame_address: usize,
+) arch.ThreadContextError!void {
+    const slot = try resolveMutableSlot(handle);
+    if (slot.pending_syscall_frame != null) return error.SyscallAlreadyPending;
+    if (!isKernelStackRange(handle, trap_frame_address, @sizeOf(frames.TrapFrame))) {
+        return error.InvalidSyscallFrame;
+    }
+    slot.pending_syscall_frame = @ptrFromInt(trap_frame_address);
+}
+
+pub fn completeSyscall(
+    handle: arch.ThreadContextHandle,
+    result: arch.SyscallResultRegisters,
+) arch.ThreadContextError!void {
+    const slot = try resolveMutableSlot(handle);
+    const trap_frame = slot.pending_syscall_frame orelse return error.NoPendingSyscall;
+    trap_frame.eax = result.status;
+    trap_frame.ebx = @truncate(result.words[0]);
+    trap_frame.ecx = @truncate(result.words[1]);
+    trap_frame.edx = @truncate(result.words[2]);
+    slot.pending_syscall_frame = null;
+}
+
 pub fn availableCount() usize {
     var count: usize = 0;
     for (slots) |slot| {
@@ -180,6 +207,21 @@ pub fn getInitialStateForTest(
         .code_selector = frame.user_frame.trap.code_selector,
         .data_selector = frame.user_frame.stack_selector,
         .flags = frame.user_frame.trap.flags,
+    };
+}
+
+pub fn getSyscallResultForTest(
+    handle: arch.ThreadContextHandle,
+    trap_frame_address: usize,
+) arch.ThreadContextError!arch.SyscallResultRegisters {
+    _ = try resolveSlot(handle);
+    if (!isKernelStackRange(handle, trap_frame_address, @sizeOf(frames.TrapFrame))) {
+        return error.InvalidSyscallFrame;
+    }
+    const trap_frame: *const frames.TrapFrame = @ptrFromInt(trap_frame_address);
+    return .{
+        .status = trap_frame.eax,
+        .words = .{ trap_frame.ebx, trap_frame.ecx, trap_frame.edx },
     };
 }
 
@@ -277,6 +319,14 @@ fn kernelContinuationStackTop() usize {
 fn contextKernelStackTop(handle: arch.ThreadContextHandle) usize {
     if (handle == KERNEL_CONTEXT_HANDLE) return kernelContinuationStackTop();
     return kernelStackTop(handleSlotIndex(handle).?);
+}
+
+fn isKernelStackRange(handle: arch.ThreadContextHandle, address: usize, size: usize) bool {
+    if (handle == KERNEL_CONTEXT_HANDLE) return false;
+    const slot_index = handleSlotIndex(handle) orelse return false;
+    const start = @intFromPtr(&kernel_stacks[slot_index]);
+    const end = kernelStackTop(slot_index);
+    return address >= start and address <= end and size <= end - address;
 }
 
 fn initializeKernelContinuationStack(entry: *const fn () callconv(.c) noreturn) usize {

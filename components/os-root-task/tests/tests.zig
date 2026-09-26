@@ -2,6 +2,7 @@ const abi = @import("abi");
 const boot_modules = @import("boot_modules");
 const memory_management = @import("memory_management");
 const process_management = @import("process_management");
+const ipc = @import("ipc");
 const startup = @import("startup");
 const std = @import("std");
 
@@ -101,6 +102,7 @@ const RecordingEnvironment = struct {
 
 const ChildRollbackEnvironment = struct {
     var syscall_numbers: [32]u32 = undefined;
+    var syscall_arguments: [32][5]usize = undefined;
     var syscall_count: usize = 0;
     var next_capability: u32 = 100;
     var loader_memory: [child_process.STACK_SIZE + 0x4000]u8 align(4096) = undefined;
@@ -108,16 +110,18 @@ const ChildRollbackEnvironment = struct {
     fn reset() void {
         syscall_count = 0;
         next_capability = 100;
+        @memset(&syscall_arguments, .{ 0, 0, 0, 0, 0 });
         @memset(&loader_memory, 0);
     }
 
-    pub fn syscall3(number: u32, _: usize, _: usize, _: usize) callconv(.c) u32 {
-        record(number);
+    pub fn syscall3(number: u32, argument0: usize, argument1: usize, argument2: usize) callconv(.c) u32 {
+        record(number, .{ argument0, argument1, argument2, 0, 0 });
         const syscall_number: abi.syscall.SyscallNumber = @enumFromInt(number);
         return switch (syscall_number) {
             .create_capability_space,
             .create_address_space,
             .create_thread,
+            .install_capability,
             => nextCapability(),
             .create_memory_object => nextCapability(),
             .start_thread => abi.syscall.errorResult(.invalid_state),
@@ -125,8 +129,15 @@ const ChildRollbackEnvironment = struct {
         };
     }
 
-    pub fn syscall5(number: u32, _: usize, _: usize, _: usize, _: usize, _: usize) callconv(.c) u32 {
-        record(number);
+    pub fn syscall5(
+        number: u32,
+        argument0: usize,
+        argument1: usize,
+        argument2: usize,
+        argument3: usize,
+        argument4: usize,
+    ) callconv(.c) u32 {
+        record(number, .{ argument0, argument1, argument2, argument3, argument4 });
         const syscall_number: abi.syscall.SyscallNumber = @enumFromInt(number);
         return switch (syscall_number) {
             .retype_untyped_memory => nextCapability(),
@@ -141,8 +152,9 @@ const ChildRollbackEnvironment = struct {
         return @intFromPtr(&loader_memory) + offset;
     }
 
-    fn record(number: u32) void {
+    fn record(number: u32, arguments: [5]usize) void {
         syscall_numbers[syscall_count] = number;
+        syscall_arguments[syscall_count] = arguments;
         syscall_count += 1;
     }
 
@@ -189,6 +201,53 @@ const MemoryObjectFailureEnvironment = struct {
 
 const manager = memory_manager.MemoryManager(RecordingEnvironment);
 const process_manager = process_management.ProcessManager(RecordingEnvironment);
+const EndpointRecordingTransport = struct {
+    var syscall_number: u32 = 0;
+    var arguments: [5]usize = .{ 0, 0, 0, 0, 0 };
+    var scalar_response: u32 = abi.syscall.SYSCALL_SUCCESS;
+    var receive_response: abi.ipc.ReceiveResult = .{ .status = abi.syscall.SYSCALL_SUCCESS };
+
+    fn reset() void {
+        syscall_number = 0;
+        arguments = .{ 0, 0, 0, 0, 0 };
+        scalar_response = abi.syscall.SYSCALL_SUCCESS;
+        receive_response = .{ .status = abi.syscall.SYSCALL_SUCCESS };
+    }
+
+    pub fn syscall3(
+        number: u32,
+        argument0: usize,
+        argument1: usize,
+        argument2: usize,
+    ) callconv(.c) u32 {
+        syscall_number = number;
+        arguments = .{ argument0, argument1, argument2, 0, 0 };
+        return scalar_response;
+    }
+
+    pub fn syscall5(
+        number: u32,
+        argument0: usize,
+        argument1: usize,
+        argument2: usize,
+        argument3: usize,
+        argument4: usize,
+    ) callconv(.c) u32 {
+        syscall_number = number;
+        arguments = .{ argument0, argument1, argument2, argument3, argument4 };
+        return scalar_response;
+    }
+
+    pub fn syscallReceive(
+        number: u32,
+        endpoint: abi.capability.CapabilityHandle,
+    ) abi.ipc.ReceiveResult {
+        syscall_number = number;
+        arguments = .{ endpoint, 0, 0, 0, 0 };
+        return receive_response;
+    }
+};
+const endpoint_manager = ipc.EndpointManager(EndpointRecordingTransport);
 const child_process = process_management.child_process;
 
 var valid_physical_memory = [_]abi.boot_info.PhysicalMemoryInfo{.{
@@ -394,7 +453,8 @@ test "child construction rolls back every resource when final start fails" {
             &allocator,
             .{ .capability = 77 },
             &image,
-            .{ .mode = .clean_exit },
+            .{ .mode = .ipc_receive },
+            88,
         ),
     );
     try std.testing.expectEqual(@as(usize, 0), allocator.statistics().allocation_count);
@@ -407,6 +467,7 @@ test "child construction rolls back every resource when final start fails" {
         .unmap_address_space,
         .destroy_memory_object,
         .destroy_address_space,
+        .delete_capability,
         .destroy_capability_space,
     };
     try std.testing.expect(ChildRollbackEnvironment.syscall_count >= expected_tail.len);
@@ -417,6 +478,23 @@ test "child construction rolls back every resource when final start fails" {
             ChildRollbackEnvironment.syscall_numbers[tail_start + index],
         );
     }
+    try std.testing.expectEqual(
+        [_]usize{ 100, 88, abi.capability.rightsBits(.{ .receive = true }), 0, 0 },
+        ChildRollbackEnvironment.syscall_arguments[2],
+    );
+    try std.testing.expectEqual(
+        [_]usize{ 100, 102, 0, 0, 0 },
+        ChildRollbackEnvironment.syscall_arguments[tail_start + expected_tail.len - 2],
+    );
+
+    const startup_offset = child_process.PAGE_SIZE + child_process.STACK_SIZE -
+        @sizeOf(abi.process.ChildStartup);
+    const child_startup: *const abi.process.ChildStartup = @ptrCast(@alignCast(
+        &ChildRollbackEnvironment.loader_memory[startup_offset],
+    ));
+    try std.testing.expectEqual(abi.process.ChildStartupMode.ipc_receive, child_startup.mode);
+    try std.testing.expectEqual(@as(u32, 102), child_startup.endpoint_capability);
+    try std.testing.expect(child_startup.endpoint_capability != 88);
 }
 
 test "child construction deletes a derived frame when memory-object creation fails" {
@@ -442,7 +520,8 @@ test "child construction deletes a derived frame when memory-object creation fai
             &allocator,
             .{ .capability = 77 },
             &image,
-            .{ .mode = .clean_exit },
+            .{ .mode = .invalid_opcode },
+            null,
         ),
     );
     try std.testing.expectEqual(@as(usize, 0), allocator.statistics().allocation_count);
@@ -889,6 +968,64 @@ test "process manager decodes process-management errors" {
     for (expected) |case| {
         RecordingEnvironment.reset(&.{abi.syscall.errorResult(case.code)});
         try std.testing.expectError(case.err, process_manager.createThread());
+    }
+}
+
+test "endpoint manager emits fixed-register endpoint syscalls" {
+    EndpointRecordingTransport.reset();
+    EndpointRecordingTransport.scalar_response = 73;
+    const endpoint = try endpoint_manager.createEndpoint();
+    try std.testing.expectEqual(@as(u32, 73), endpoint.capability);
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.create_endpoint),
+        EndpointRecordingTransport.syscall_number,
+    );
+
+    EndpointRecordingTransport.scalar_response = abi.syscall.SYSCALL_SUCCESS;
+    try endpoint_manager.send(endpoint, .{ .words = .{ 11, 22, 33 } });
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.endpoint_send),
+        EndpointRecordingTransport.syscall_number,
+    );
+    try std.testing.expectEqual(
+        [_]usize{ 73, 11, 22, 33, 0 },
+        EndpointRecordingTransport.arguments,
+    );
+
+    EndpointRecordingTransport.receive_response = .{
+        .status = abi.syscall.SYSCALL_SUCCESS,
+        .message = .{ .words = .{ 44, 55, 66 } },
+    };
+    try std.testing.expectEqual(
+        abi.ipc.Message{ .words = .{ 44, 55, 66 } },
+        try endpoint_manager.receive(endpoint),
+    );
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.endpoint_receive),
+        EndpointRecordingTransport.syscall_number,
+    );
+
+    try endpoint_manager.destroyEndpoint(endpoint);
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.destroy_endpoint),
+        EndpointRecordingTransport.syscall_number,
+    );
+}
+
+test "endpoint manager distinguishes empty full and authorization failures" {
+    const cases = [_]struct { code: abi.syscall.ErrorCode, err: ipc.Error }{
+        .{ .code = .endpoint_empty, .err = error.Empty },
+        .{ .code = .endpoint_full, .err = error.Full },
+        .{ .code = .insufficient_rights, .err = error.InsufficientRights },
+        .{ .code = .invalid_capability, .err = error.InvalidCapability },
+    };
+    for (cases) |case| {
+        EndpointRecordingTransport.reset();
+        EndpointRecordingTransport.receive_response.status = abi.syscall.errorResult(case.code);
+        try std.testing.expectError(
+            case.err,
+            endpoint_manager.receive(.{ .capability = 73 }),
+        );
     }
 }
 
