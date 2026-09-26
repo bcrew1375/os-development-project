@@ -41,13 +41,14 @@ test "BootModuleInfo ABI layout is stable" {
 }
 
 test "ChildStartup ABI layout and values are stable" {
-    try std.testing.expectEqual(@as(u32, 2), abi.process.CHILD_STARTUP_VERSION);
-    try std.testing.expectEqual(@as(usize, 20), @sizeOf(abi.process.ChildStartup));
+    try std.testing.expectEqual(@as(u32, 3), abi.process.CHILD_STARTUP_VERSION);
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(abi.process.ChildStartup));
     try std.testing.expectEqual(@as(usize, 4), @alignOf(abi.process.ChildStartup));
     try std.testing.expectEqual(@as(usize, 8), @offsetOf(abi.process.ChildStartup, "mode"));
-    try std.testing.expectEqual(@as(usize, 12), @offsetOf(abi.process.ChildStartup, "endpoint_capability"));
-    try std.testing.expectEqual(@as(usize, 16), @offsetOf(abi.process.ChildStartup, "reserved"));
-    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(abi.process.ChildStartupMode.ipc_receive));
+    try std.testing.expectEqual(@as(usize, 12), @offsetOf(abi.process.ChildStartup, "request_endpoint_capability"));
+    try std.testing.expectEqual(@as(usize, 16), @offsetOf(abi.process.ChildStartup, "reply_endpoint_capability"));
+    try std.testing.expectEqual(@as(usize, 20), @offsetOf(abi.process.ChildStartup, "reserved"));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(abi.process.ChildStartupMode.ipc_ping_pong));
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum(abi.process.ChildStartupMode.invalid_opcode));
 }
 
@@ -117,6 +118,10 @@ test "Endpoint IPC ABI uses three fixed words and stable syscall values" {
     try std.testing.expectEqual(
         abi.syscall.ErrorCode.endpoint_full,
         abi.syscall.decodeError(abi.syscall.errorResult(.endpoint_full)).?,
+    );
+    try std.testing.expectEqual(
+        abi.syscall.ErrorCode.endpoint_canceled,
+        abi.syscall.decodeError(abi.syscall.errorResult(.endpoint_canceled)).?,
     );
 }
 
@@ -195,14 +200,18 @@ test "Syscall numbers and structured errors are stable" {
 }
 
 test "system smoke protocol records are complete ordered serial lines" {
-    try std.testing.expectEqual(@as(u32, 4), abi.system_smoke.PROTOCOL_VERSION);
+    try std.testing.expectEqual(@as(u32, 5), abi.system_smoke.PROTOCOL_VERSION);
     try std.testing.expectEqualStrings(
-        "SYSTEM-SMOKE protocol=4\n",
+        "SYSTEM-SMOKE protocol=5\n",
         abi.system_smoke.HEADER,
     );
     try std.testing.expectEqual(
         abi.ipc.Message{ .words = .{ 0x4950_4331, 0x1234_5678, 0xCAFE_BABE } },
-        abi.system_smoke.IPC_MESSAGE,
+        abi.system_smoke.IPC_REQUEST,
+    );
+    try std.testing.expectEqual(
+        abi.ipc.Message{ .words = .{ 0x4950_4332, 0x8765_4321, 0xBEEF_CAFE } },
+        abi.system_smoke.IPC_REPLY,
     );
 
     const expected = [_][]const u8{
@@ -218,12 +227,13 @@ test "system smoke protocol records are complete ordered serial lines" {
         "SYSTEM-SMOKE milestone=userspace_heap_verified\n",
         "SYSTEM-SMOKE milestone=cooperative_yield_completed\n",
         "SYSTEM-SMOKE milestone=ipc_child_started\n",
-        "SYSTEM-SMOKE milestone=ipc_message_sent\n",
-        "SYSTEM-SMOKE milestone=ipc_message_verified\n",
-        "SYSTEM-SMOKE milestone=root_resumed_after_ipc_child_yield\n",
-        "SYSTEM-SMOKE milestone=ipc_child_resumed\n",
+        "SYSTEM-SMOKE milestone=root_resumed_after_ipc_child_blocked\n",
+        "SYSTEM-SMOKE milestone=ipc_request_sent\n",
+        "SYSTEM-SMOKE milestone=ipc_request_verified\n",
+        "SYSTEM-SMOKE milestone=ipc_reply_sent\n",
+        "SYSTEM-SMOKE milestone=ipc_reply_verified\n",
         "SYSTEM-SMOKE milestone=ipc_child_destroyed\n",
-        "SYSTEM-SMOKE milestone=ipc_endpoint_destroyed\n",
+        "SYSTEM-SMOKE milestone=ipc_endpoints_destroyed\n",
         "SYSTEM-SMOKE milestone=fault_child_started\n",
         "SYSTEM-SMOKE milestone=fault_child_yielding\n",
         "SYSTEM-SMOKE milestone=root_resumed_after_fault_child_yield\n",

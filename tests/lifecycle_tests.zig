@@ -82,3 +82,49 @@ test "Lifecycle: user fault records architecture data and selects idle" {
         kernel.process.execution_context.current(),
     );
 }
+
+test "Lifecycle: terminating a blocked IPC thread removes its waiter" {
+    try setup();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+
+    const blocked = try createConfiguredThread(4);
+    const survivor = try createConfiguredThread(5);
+    try initializeCurrent(blocked);
+    try kernel.process.scheduler.makeReady(survivor);
+    const endpoint_handle = try kernel.ipc.endpoint.create();
+    try kernel.ipc.endpoint.enqueueReceiver(endpoint_handle, .{
+        .thread_handle = blocked,
+        .architecture_context_handle = (try kernel.process.thread.get(blocked)).architecture_context_handle,
+        .authorization = .{ .capability_space_handle = 1, .capability_handle = 2 },
+    });
+    try kernel.process.scheduler.blockCurrentForEndpoint(.{ .endpoint_receive = endpoint_handle });
+    try std.testing.expectEqual(@as(usize, 1), try kernel.ipc.endpoint.receiverCount(endpoint_handle));
+
+    try kernel.process.scheduler.terminate(blocked, 9);
+    try std.testing.expectEqual(@as(usize, 0), try kernel.ipc.endpoint.receiverCount(endpoint_handle));
+    try std.testing.expectEqual(kernel.process.thread.State.exited, (try kernel.process.thread.get(blocked)).state);
+}
+
+test "Lifecycle: faulting a thread removes any retained IPC waiter" {
+    try setup();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+
+    const handle = try createConfiguredThread(6);
+    try initializeCurrent(handle);
+    const endpoint_handle = try kernel.ipc.endpoint.create();
+    try kernel.ipc.endpoint.enqueueReceiver(endpoint_handle, .{
+        .thread_handle = handle,
+        .architecture_context_handle = (try kernel.process.thread.get(handle)).architecture_context_handle,
+        .authorization = .{ .capability_space_handle = 1, .capability_handle = 2 },
+    });
+    const fault = kernel.process.thread.UserFault{
+        .kind = .invalid_opcode,
+        .instruction_pointer = 0x0040_1234,
+    };
+
+    try kernel.process.lifecycle.faultCurrent(fault);
+    try std.testing.expectEqual(@as(usize, 0), try kernel.ipc.endpoint.receiverCount(endpoint_handle));
+    const faulted = try kernel.process.thread.get(handle);
+    try std.testing.expectEqual(kernel.process.thread.State.faulted, faulted.state);
+    try std.testing.expectEqualDeep(@as(?kernel.process.thread.UserFault, fault), faulted.user_fault);
+}

@@ -453,8 +453,9 @@ test "child construction rolls back every resource when final start fails" {
             &allocator,
             .{ .capability = 77 },
             &image,
-            .{ .mode = .ipc_receive },
+            .{ .mode = .ipc_ping_pong },
             88,
+            89,
         ),
     );
     try std.testing.expectEqual(@as(usize, 0), allocator.statistics().allocation_count);
@@ -467,6 +468,7 @@ test "child construction rolls back every resource when final start fails" {
         .unmap_address_space,
         .destroy_memory_object,
         .destroy_address_space,
+        .delete_capability,
         .delete_capability,
         .destroy_capability_space,
     };
@@ -483,6 +485,14 @@ test "child construction rolls back every resource when final start fails" {
         ChildRollbackEnvironment.syscall_arguments[2],
     );
     try std.testing.expectEqual(
+        [_]usize{ 100, 89, abi.capability.rightsBits(.{ .send = true }), 0, 0 },
+        ChildRollbackEnvironment.syscall_arguments[3],
+    );
+    try std.testing.expectEqual(
+        [_]usize{ 100, 103, 0, 0, 0 },
+        ChildRollbackEnvironment.syscall_arguments[tail_start + expected_tail.len - 3],
+    );
+    try std.testing.expectEqual(
         [_]usize{ 100, 102, 0, 0, 0 },
         ChildRollbackEnvironment.syscall_arguments[tail_start + expected_tail.len - 2],
     );
@@ -492,9 +502,11 @@ test "child construction rolls back every resource when final start fails" {
     const child_startup: *const abi.process.ChildStartup = @ptrCast(@alignCast(
         &ChildRollbackEnvironment.loader_memory[startup_offset],
     ));
-    try std.testing.expectEqual(abi.process.ChildStartupMode.ipc_receive, child_startup.mode);
-    try std.testing.expectEqual(@as(u32, 102), child_startup.endpoint_capability);
-    try std.testing.expect(child_startup.endpoint_capability != 88);
+    try std.testing.expectEqual(abi.process.ChildStartupMode.ipc_ping_pong, child_startup.mode);
+    try std.testing.expectEqual(@as(u32, 102), child_startup.request_endpoint_capability);
+    try std.testing.expectEqual(@as(u32, 103), child_startup.reply_endpoint_capability);
+    try std.testing.expect(child_startup.request_endpoint_capability != 88);
+    try std.testing.expect(child_startup.reply_endpoint_capability != 89);
 }
 
 test "child construction deletes a derived frame when memory-object creation fails" {
@@ -521,6 +533,7 @@ test "child construction deletes a derived frame when memory-object creation fai
             .{ .capability = 77 },
             &image,
             .{ .mode = .invalid_opcode },
+            null,
             null,
         ),
     );
@@ -1016,6 +1029,7 @@ test "endpoint manager distinguishes empty full and authorization failures" {
     const cases = [_]struct { code: abi.syscall.ErrorCode, err: ipc.Error }{
         .{ .code = .endpoint_empty, .err = error.Empty },
         .{ .code = .endpoint_full, .err = error.Full },
+        .{ .code = .endpoint_canceled, .err = error.Canceled },
         .{ .code = .insufficient_rights, .err = error.InsufficientRights },
         .{ .code = .invalid_capability, .err = error.InvalidCapability },
     };

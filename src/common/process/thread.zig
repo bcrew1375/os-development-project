@@ -3,6 +3,7 @@
 const std = @import("std");
 const arch = @import("arch");
 const capability_space = @import("../capability/space.zig");
+const endpoint = @import("../ipc/endpoint.zig");
 
 pub const MAX_THREADS: usize = 32;
 const HANDLE_SLOT_BITS: u32 = 5;
@@ -22,6 +23,12 @@ pub const State = enum {
     blocked,
     faulted,
     exited,
+};
+
+pub const BlockReason = union(enum) {
+    suspended,
+    endpoint_send: endpoint.Handle,
+    endpoint_receive: endpoint.Handle,
 };
 
 pub const UserFaultKind = enum {
@@ -58,6 +65,7 @@ pub const Thread = struct {
     architecture_context_handle: arch.ThreadContextHandle = arch.INVALID_THREAD_CONTEXT_HANDLE,
     exit_status: ?u64 = null,
     user_fault: ?UserFault = null,
+    block_reason: ?BlockReason = null,
 
     pub fn isConfigured(self: Thread) bool {
         return self.capability_space_handle != 0 and
@@ -138,10 +146,14 @@ pub fn makeReady(handle: Handle) Error!void {
         .new => {
             if (!slot.thread.isConfigured()) return Error.ThreadNotConfigured;
         },
-        .blocked, .running => {},
+        .blocked => if (!sameBlockReason(slot.thread.block_reason, .suspended)) {
+            return Error.InvalidStateTransition;
+        },
+        .running => {},
         .ready, .faulted, .exited => return Error.InvalidStateTransition,
     }
     slot.thread.state = .ready;
+    slot.thread.block_reason = null;
 }
 
 pub fn startRunning(handle: Handle) Error!void {
@@ -154,12 +166,33 @@ pub fn block(handle: Handle) Error!void {
     const slot = try resolveMutableSlot(handle);
     if (slot.thread.state != .running) return Error.InvalidStateTransition;
     slot.thread.state = .blocked;
+    slot.thread.block_reason = .suspended;
+}
+
+pub fn blockForEndpoint(handle: Handle, reason: BlockReason) Error!void {
+    const slot = try resolveMutableSlot(handle);
+    if (slot.thread.state != .running) return Error.InvalidStateTransition;
+    switch (reason) {
+        .endpoint_send, .endpoint_receive => {},
+        .suspended => return Error.InvalidStateTransition,
+    }
+    slot.thread.state = .blocked;
+    slot.thread.block_reason = reason;
+}
+
+pub fn wakeFromEndpoint(handle: Handle, expected: BlockReason) Error!void {
+    const slot = try resolveMutableSlot(handle);
+    if (slot.thread.state != .blocked) return Error.InvalidStateTransition;
+    if (!sameBlockReason(slot.thread.block_reason, expected)) return Error.InvalidStateTransition;
+    slot.thread.state = .ready;
+    slot.thread.block_reason = null;
 }
 
 pub fn suspendReady(handle: Handle) Error!void {
     const slot = try resolveMutableSlot(handle);
     if (slot.thread.state != .ready) return Error.InvalidStateTransition;
     slot.thread.state = .blocked;
+    slot.thread.block_reason = .suspended;
 }
 
 pub fn suspendRunning(handle: Handle) Error!void {
@@ -173,6 +206,8 @@ pub fn exit(handle: Handle, status: u64) Error!void {
         .faulted, .exited => return Error.InvalidStateTransition,
     }
     slot.thread.state = .exited;
+    _ = endpoint.cancelThread(handle);
+    slot.thread.block_reason = null;
     slot.thread.exit_status = status;
     slot.thread.user_fault = null;
 }
@@ -184,6 +219,8 @@ pub fn recordFault(handle: Handle, fault: UserFault) Error!void {
         .new, .faulted, .exited => return Error.InvalidStateTransition,
     }
     slot.thread.state = .faulted;
+    _ = endpoint.cancelThread(handle);
+    slot.thread.block_reason = null;
     slot.thread.exit_status = null;
     slot.thread.user_fault = fault;
 }
@@ -291,6 +328,21 @@ fn handleSlotIndex(handle: Handle) ?usize {
 
 fn emptyThread() Thread {
     return .{ .owner_process_handle = 0 };
+}
+
+fn sameBlockReason(actual: ?BlockReason, expected: BlockReason) bool {
+    const reason = actual orelse return false;
+    return switch (reason) {
+        .suspended => expected == .suspended,
+        .endpoint_send => |handle| switch (expected) {
+            .endpoint_send => |expected_handle| handle == expected_handle,
+            else => false,
+        },
+        .endpoint_receive => |handle| switch (expected) {
+            .endpoint_receive => |expected_handle| handle == expected_handle,
+            else => false,
+        },
+    };
 }
 
 comptime {

@@ -19,7 +19,7 @@ pub const LOADER_WINDOW_END: usize = 0x0400_0000;
 pub const STACK_TOP: usize = 0x00C0_0000;
 pub const STACK_SIZE: usize = 0x0001_0000;
 pub const STACK_START: usize = STACK_TOP - STACK_SIZE;
-pub const MAX_STARTUP_CAPABILITIES: usize = 1;
+pub const MAX_STARTUP_CAPABILITIES: usize = 2;
 
 pub const Error = elf.ElfLoadError || memory_management.PhysicalRangeAllocator.Error ||
     memory_management.operations.Error || process_management.Error || error{
@@ -220,7 +220,8 @@ pub fn createAndStart(
     root_address_space: AddressSpace,
     image: []const u8,
     startup: abi.process.ChildStartup,
-    receive_endpoint: ?abi.capability.CapabilityHandle,
+    request_endpoint: ?abi.capability.CapabilityHandle,
+    reply_endpoint: ?abi.capability.CapabilityHandle,
 ) Error!ChildProcess {
     const manager = memory_management.operations.MemoryManager(Environment);
     const process_manager = process_management.ProcessManager(Environment);
@@ -231,7 +232,7 @@ pub fn createAndStart(
     child.capability_space = try process_manager.createCapabilitySpace();
     child.address_space = try manager.createAddressSpace();
     var child_startup = startup;
-    if (receive_endpoint) |endpoint_capability| {
+    if (request_endpoint) |endpoint_capability| {
         const child_capability = try process_manager.installCapability(
             child.capability_space.?,
             endpoint_capability,
@@ -239,7 +240,17 @@ pub fn createAndStart(
         );
         child.startup_capabilities[0] = child_capability;
         child.startup_capability_count = 1;
-        child_startup.endpoint_capability = child_capability;
+        child_startup.request_endpoint_capability = child_capability;
+    }
+    if (reply_endpoint) |endpoint_capability| {
+        const child_capability = try process_manager.installCapability(
+            child.capability_space.?,
+            endpoint_capability,
+            .{ .send = true },
+        );
+        child.startup_capabilities[1] = child_capability;
+        child.startup_capability_count = 2;
+        child_startup.reply_endpoint_capability = child_capability;
     }
 
     var loader_cursor = LOADER_WINDOW_START;

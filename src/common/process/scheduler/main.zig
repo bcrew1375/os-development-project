@@ -105,8 +105,38 @@ pub fn suspendThread(handle: thread.Handle) Error!void {
 pub fn resumeThread(handle: thread.Handle) Error!void {
     try requireInitialized();
     const object = try thread.get(handle);
-    if (object.state != .blocked) return error.InvalidStateTransition;
+    if (object.state != .blocked or !blockReasonMatches(object.block_reason, .suspended)) {
+        return error.InvalidStateTransition;
+    }
     try makeReady(handle);
+}
+
+pub fn blockCurrentForEndpoint(reason: thread.BlockReason) Error!void {
+    try requireInitialized();
+    const current_handle = current_thread_handle orelse return error.NoCurrentThread;
+    const current = try thread.get(current_handle);
+    if (current.state != .running or
+        current.architecture_context_handle != current_architecture_context)
+    {
+        return error.CurrentThreadMismatch;
+    }
+    try thread.blockForEndpoint(current_handle, reason);
+    try scheduleAfterCurrentStops();
+}
+
+pub fn prepareEndpointWake(handle: thread.Handle, expected: thread.BlockReason) Error!void {
+    try requireInitialized();
+    if (ready_queue.contains(handle)) return error.ThreadAlreadyQueued;
+    if (ready_queue.length == ready_queue.handles.len) return error.ReadyQueueFull;
+    const object = try thread.get(handle);
+    if (object.state != .blocked) return error.InvalidStateTransition;
+    if (!blockReasonMatches(object.block_reason, expected)) return error.InvalidStateTransition;
+}
+
+pub fn commitEndpointWake(handle: thread.Handle, expected: thread.BlockReason) Error!void {
+    try prepareEndpointWake(handle, expected);
+    try thread.wakeFromEndpoint(handle, expected);
+    try ready_queue.push(handle);
 }
 
 pub fn terminate(handle: thread.Handle, status: u64) Error!void {
@@ -250,6 +280,21 @@ fn installExecutionContext(handle: thread.Handle, object: thread.Thread) void {
 
 fn requireInitialized() error{SchedulerUninitialized}!void {
     if (!initialized) return error.SchedulerUninitialized;
+}
+
+fn blockReasonMatches(actual: ?thread.BlockReason, expected: thread.BlockReason) bool {
+    const reason = actual orelse return false;
+    return switch (reason) {
+        .suspended => expected == .suspended,
+        .endpoint_send => |handle| switch (expected) {
+            .endpoint_send => |expected_handle| handle == expected_handle,
+            else => false,
+        },
+        .endpoint_receive => |handle| switch (expected) {
+            .endpoint_receive => |expected_handle| handle == expected_handle,
+            else => false,
+        },
+    };
 }
 
 fn idleMain() callconv(.c) noreturn {

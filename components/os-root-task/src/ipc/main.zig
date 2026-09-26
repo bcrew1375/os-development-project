@@ -14,6 +14,7 @@ pub const Error = error{
     ObjectInUse,
     Empty,
     Full,
+    Canceled,
     InternalFailure,
 };
 
@@ -76,6 +77,7 @@ pub fn EndpointManager(comptime Transport: type) type {
                 .object_in_use => Error.ObjectInUse,
                 .endpoint_empty => Error.Empty,
                 .endpoint_full => Error.Full,
+                .endpoint_canceled => Error.Canceled,
                 .invalid_range,
                 .invalid_permissions,
                 .mapping_not_found,

@@ -3,6 +3,7 @@
 const abi = @import("abi");
 const arch = @import("arch");
 const capability = @import("../capability/main.zig");
+const ipc = @import("../ipc/main.zig");
 const process = @import("../process/main.zig");
 const user_memory = @import("../user_memory.zig");
 
@@ -59,6 +60,7 @@ pub const Failure = struct {
 pub const Result = union(enum) {
     returned: u32,
     returned_registers: arch.SyscallResultRegisters,
+    blocked,
     yield,
     debug_write: struct {
         address: u64,
@@ -199,10 +201,13 @@ fn sendEndpoint(comptime Services: type, caller_space: u32, arguments: [5]u64) R
         toU32(arguments[2]) catch |err| return failure(.convert_argument, err),
         toU32(arguments[3]) catch |err| return failure(.convert_argument, err),
     } };
-    Services.sendEndpointMessage(caller_space, handle, message) catch |err| {
+    const outcome = Services.sendEndpointMessage(caller_space, handle, message) catch |err| {
         return failure(.endpoint_send, err);
     };
-    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+    return switch (outcome) {
+        .completed => .{ .returned = abi.syscall.SYSCALL_SUCCESS },
+        .blocked => .blocked,
+    };
 }
 
 fn receiveEndpoint(
@@ -214,13 +219,16 @@ fn receiveEndpoint(
         return .{ .returned = abi.syscall.errorResult(.unsupported) };
     }
     const handle = toU32(capability_value) catch |err| return failure(.convert_argument, err);
-    const message = Services.receiveEndpointMessage(caller_space, handle) catch |err| {
+    const outcome = Services.receiveEndpointMessage(caller_space, handle) catch |err| {
         return failure(.endpoint_receive, err);
     };
-    return .{ .returned_registers = .{
-        .status = abi.syscall.SYSCALL_SUCCESS,
-        .words = .{ message.words[0], message.words[1], message.words[2] },
-    } };
+    return switch (outcome) {
+        .completed => |message| .{ .returned_registers = .{
+            .status = abi.syscall.SYSCALL_SUCCESS,
+            .words = .{ message.words[0], message.words[1], message.words[2] },
+        } },
+        .blocked => .blocked,
+    };
 }
 
 fn createCapabilitySpace(comptime Services: type, caller_space: u32) Result {
@@ -708,6 +716,7 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         => .object_in_use,
         error.EndpointEmpty => .endpoint_empty,
         error.EndpointFull => .endpoint_full,
+        error.EndpointCanceled => .endpoint_canceled,
         error.UserPageNotMapped,
         error.UserAccessDenied,
         error.WriteAccessDenied,
@@ -799,6 +808,37 @@ fn productionTerminateThreadCapability(caller_space: u32, thread_capability: u32
     try process.scheduler.terminate(handle, status);
 }
 
+fn productionSendEndpointMessage(
+    caller_space: u32,
+    endpoint_capability: u32,
+    message: abi.ipc.Message,
+) !ipc.operations.Outcome {
+    const handle = try capability.resolveEndpoint(
+        caller_space,
+        endpoint_capability,
+        .{ .send = true },
+    );
+    return ipc.operations.send(handle, .{
+        .capability_space_handle = caller_space,
+        .capability_handle = endpoint_capability,
+    }, message);
+}
+
+fn productionReceiveEndpointMessage(
+    caller_space: u32,
+    endpoint_capability: u32,
+) !ipc.operations.ReceiveOutcome {
+    const handle = try capability.resolveEndpoint(
+        caller_space,
+        endpoint_capability,
+        .{ .receive = true },
+    );
+    return ipc.operations.receive(handle, .{
+        .capability_space_handle = caller_space,
+        .capability_handle = endpoint_capability,
+    });
+}
+
 const ProductionServices = struct {
     pub const currentAddressSpaceHandle = process.execution_context.currentAddressSpaceHandle;
     pub const findAddressSpaceCapability = capability.findAddressSpaceCapability;
@@ -829,6 +869,6 @@ const ProductionServices = struct {
     pub const destroyCapabilitySpaceCapability = capability.destroyCapabilitySpaceCapability;
     pub const deleteCapabilityFromSpace = capability.deleteCapabilityFromSpace;
     pub const destroyEndpointCapability = capability.destroyEndpointCapability;
-    pub const sendEndpointMessage = capability.sendEndpointMessage;
-    pub const receiveEndpointMessage = capability.receiveEndpointMessage;
+    pub const sendEndpointMessage = productionSendEndpointMessage;
+    pub const receiveEndpointMessage = productionReceiveEndpointMessage;
 };

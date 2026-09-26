@@ -283,13 +283,15 @@ uniprocessor concurrency rules for the planned kernel object types. The document
 also records which policies remain in the root task and explicitly distinguishes
 the design contract from implemented production semantics.
 
-**Remaining implementation work:** Address spaces, memory objects, capabilities,
-threads, endpoints, and notifications still require the implementation milestones
-listed below. This item completes the design prerequisite only.
+**Remaining implementation work:** Notifications and the remaining advanced
+semantics for implemented address spaces, memory objects, capabilities, threads,
+and endpoints still require the implementation milestones listed below. This item
+completes the design prerequisite only.
 
 **Problem:** Address spaces, memory objects, and capabilities were added before
-their complete ownership and lifetime relationships were defined. Threads and
-endpoints do not yet exist.
+their complete ownership and lifetime relationships were defined. Subsequent
+thread and endpoint implementations also require that shared contract to remain
+authoritative as their semantics expand.
 
 **Why it matters:** Implementing more object types without a stable contract can
 lock prototype ownership assumptions into public ABI and internal APIs.

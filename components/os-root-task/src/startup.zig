@@ -138,29 +138,37 @@ fn runChildSmoke(
     const child_process = process_management.child_process;
 
     const endpoint_manager = ipc.EndpointManager(Environment);
-    const endpoint = try endpoint_manager.createEndpoint();
-    var endpoint_owned = true;
-    errdefer if (endpoint_owned) endpoint_manager.destroyEndpoint(endpoint) catch {};
+    const request_endpoint = try endpoint_manager.createEndpoint();
+    var request_endpoint_owned = true;
+    errdefer if (request_endpoint_owned) endpoint_manager.destroyEndpoint(request_endpoint) catch {};
+    const reply_endpoint = try endpoint_manager.createEndpoint();
+    var reply_endpoint_owned = true;
+    errdefer if (reply_endpoint_owned) endpoint_manager.destroyEndpoint(reply_endpoint) catch {};
     var ipc_child = try child_process.createAndStart(
         Environment,
         allocator,
         root_address_space,
         image,
-        .{ .mode = .ipc_receive },
-        endpoint.capability,
+        .{ .mode = .ipc_ping_pong },
+        request_endpoint.capability,
+        reply_endpoint.capability,
     );
     errdefer ipc_child.destroy(Environment, allocator, root_address_space) catch {};
     Environment.debugWrite(abi.system_smoke.IPC_CHILD_STARTED);
-    try endpoint_manager.send(endpoint, abi.system_smoke.IPC_MESSAGE);
-    Environment.debugWrite(abi.system_smoke.IPC_MESSAGE_SENT);
     try yieldSuccessfully(Environment);
-    Environment.debugWrite(abi.system_smoke.ROOT_RESUMED_AFTER_IPC_CHILD_YIELD);
-    try yieldSuccessfully(Environment);
+    Environment.debugWrite(abi.system_smoke.ROOT_RESUMED_AFTER_IPC_CHILD_BLOCKED);
+    try endpoint_manager.send(request_endpoint, abi.system_smoke.IPC_REQUEST);
+    Environment.debugWrite(abi.system_smoke.IPC_REQUEST_SENT);
+    const reply = try endpoint_manager.receive(reply_endpoint);
+    if (!std.meta.eql(reply, abi.system_smoke.IPC_REPLY)) return error.InvalidIpcReply;
+    Environment.debugWrite(abi.system_smoke.IPC_REPLY_VERIFIED);
     try ipc_child.destroy(Environment, allocator, root_address_space);
     Environment.debugWrite(abi.system_smoke.IPC_CHILD_DESTROYED);
-    try endpoint_manager.destroyEndpoint(endpoint);
-    endpoint_owned = false;
-    Environment.debugWrite(abi.system_smoke.IPC_ENDPOINT_DESTROYED);
+    try endpoint_manager.destroyEndpoint(reply_endpoint);
+    reply_endpoint_owned = false;
+    try endpoint_manager.destroyEndpoint(request_endpoint);
+    request_endpoint_owned = false;
+    Environment.debugWrite(abi.system_smoke.IPC_ENDPOINTS_DESTROYED);
 
     var fault_child = try child_process.createAndStart(
         Environment,
@@ -168,6 +176,7 @@ fn runChildSmoke(
         root_address_space,
         image,
         .{ .mode = .invalid_opcode },
+        null,
         null,
     );
     Environment.debugWrite(abi.system_smoke.FAULT_CHILD_STARTED);

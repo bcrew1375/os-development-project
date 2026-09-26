@@ -1109,7 +1109,24 @@ process useful in a microkernel system.
 - message delivery has defined all-or-nothing semantics;
 - endpoint exhaustion is explicit and non-allocating.
 
-## [ ] U5.2 Add blocking IPC and scheduler integration
+## [x] U5.2 Add blocking IPC and scheduler integration
+
+- Started: 2026-09-26
+- Completed: 2026-09-26
+- Implemented: fixed-capacity FIFO sender and receiver wait queues; direct
+  sender-to-receiver handoff; sender blocking when the bounded message queue is
+  full; receiver blocking when no message is available; retained syscall
+  completion through architecture thread contexts; scheduler-owned blocked
+  reasons and endpoint-only wakeup; and cancellation on capability deletion,
+  endpoint destruction, thread exit, and user fault.
+- Validation: ABI and root-task component tests; native endpoint, scheduler,
+  lifecycle, syscall, cancellation, queue-order, and repeated ping/pong tests;
+  `zig build tests`; `zig build coverage`; freestanding x86-32 and x86-64
+  production builds; architecture tests and architecture coverage on both x86
+  targets; production system-smoke protocol 5 on both targets; `zig fmt
+  --check`; stale-reference checks; and `git diff --check`.
+- Limitation: ordinary IPC remains a three-word buffered message path without
+  capability payloads. Atomic capability transfer is U5.3.
 
 **Kernel work:**
 
@@ -1246,8 +1263,8 @@ process useful in a microkernel system.
 
 ## Phase 5 exit gate
 
-- [ ] Processes exchange synchronous IPC messages.
-- [ ] Blocking IPC integrates with scheduler state safely.
+- [x] Processes exchange synchronous IPC messages.
+- [x] Blocking IPC integrates with scheduler state safely.
 - [ ] Capabilities transfer atomically with rights attenuation.
 - [ ] The process manager receives child lifecycle and fault events.
 - [ ] At least one service runs in a separate userspace protection domain.

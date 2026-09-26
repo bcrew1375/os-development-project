@@ -68,6 +68,7 @@ pub const ErrorCode = enum(u32) {
     invalid_user_memory = 12,
     endpoint_empty = 13,
     endpoint_full = 14,
+    endpoint_canceled = 15,
 };
 
 /// Encodes a recoverable ABI error in a syscall return value.
@@ -93,6 +94,7 @@ pub fn decodeError(value: u32) ?ErrorCode {
         @intFromEnum(ErrorCode.invalid_user_memory) => .invalid_user_memory,
         @intFromEnum(ErrorCode.endpoint_empty) => .endpoint_empty,
         @intFromEnum(ErrorCode.endpoint_full) => .endpoint_full,
+        @intFromEnum(ErrorCode.endpoint_canceled) => .endpoint_canceled,
         else => .internal_failure,
     };
 }

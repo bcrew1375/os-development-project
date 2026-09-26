@@ -25,10 +25,10 @@ The default timeout is 60 seconds. Override it with
 ## Protocol
 
 Production components unconditionally emit complete serial lines using protocol
-version 4. The required order is:
+version 5. The required order is:
 
 ```text
-SYSTEM-SMOKE protocol=4
+SYSTEM-SMOKE protocol=5
 SYSTEM-SMOKE milestone=root_process_prepared
 SYSTEM-SMOKE milestone=kernel_initialized
 SYSTEM-SMOKE milestone=userspace_entered
@@ -41,13 +41,14 @@ SYSTEM-SMOKE milestone=memory_object_mapped
 SYSTEM-SMOKE milestone=userspace_heap_verified
 SYSTEM-SMOKE milestone=cooperative_yield_completed
 SYSTEM-SMOKE milestone=ipc_child_started
-SYSTEM-SMOKE milestone=ipc_message_sent
-SYSTEM-SMOKE milestone=ipc_message_verified
-SYSTEM-SMOKE milestone=root_resumed_after_ipc_child_yield
-SYSTEM-SMOKE milestone=ipc_child_resumed
+SYSTEM-SMOKE milestone=root_resumed_after_ipc_child_blocked
+SYSTEM-SMOKE milestone=ipc_request_sent
+SYSTEM-SMOKE milestone=ipc_request_verified
+SYSTEM-SMOKE milestone=ipc_reply_sent
 SYSTEM-SMOKE CHILD_EXIT status=0
+SYSTEM-SMOKE milestone=ipc_reply_verified
 SYSTEM-SMOKE milestone=ipc_child_destroyed
-SYSTEM-SMOKE milestone=ipc_endpoint_destroyed
+SYSTEM-SMOKE milestone=ipc_endpoints_destroyed
 SYSTEM-SMOKE milestone=fault_child_started
 SYSTEM-SMOKE milestone=fault_child_yielding
 SYSTEM-SMOKE milestone=root_resumed_after_fault_child_yield
@@ -63,9 +64,10 @@ root-process preparation, and records completion of boot finalization and
 interrupt initialization. The root task records user-mode entry, valid boot
 information, delegated boot-module validation, physical-memory allocation,
 capability acquisition, capability-backed memory-object mapping, userspace heap
-verification, cooperative yield completion, a queued three-word endpoint message,
-receive-only child capability delegation, child-side message verification, and
-child lifecycle milestones. Child exit and fault records are intermediate events:
+verification, cooperative yield completion, and blocking two-endpoint ping/pong.
+The child first blocks with a receive-only request capability; the root wakes it
+by direct handoff, then blocks on the reply endpoint until the child's send-only
+reply capability completes that retained syscall. Child exit and fault records are intermediate events:
 they prove scheduler handoff and containment but do not terminate host observation.
 The kernel emits the terminal record only after accepting the root task's exit
 syscall.

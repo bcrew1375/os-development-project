@@ -2,16 +2,17 @@
 
 An early x86 microkernel project written in Zig. The repository currently boots
 on x86-32 and x86-64, loads an independently built root task, enters user mode,
-and exercises a small capability-shaped syscall ABI under QEMU. The root task is
-the first userspace process; the next execution milestone is a separately
-created child process.
+constructs isolated child processes, and exercises a capability-shaped syscall
+ABI under QEMU. Root and child threads use scheduler-integrated blocking IPC for
+a bounded request/reply exchange.
 
 The project is intentionally **not described as a complete microkernel yet**.
 Its current object registries, capability checks, physical-memory delegation,
-architecture-neutral thread lifecycle, and low-level x86 context switching
-plus bounded cooperative scheduling establish useful boundaries, but IPC, fault
-containment, complete capability spaces, and general process construction are
-still future work.
+architecture-neutral thread lifecycle, low-level x86 context switching, bounded
+cooperative scheduling, process construction, fault containment, capability
+spaces, and buffered IPC establish useful boundaries. Capability transfer,
+userspace fault delivery, notifications, and userspace service extraction remain
+future work.
 
 ## Design direction
 
@@ -72,10 +73,8 @@ validation semantics.
 
 ## Current priorities
 
-The next major milestone is to let the root task safely construct and run a
-second isolated userspace process. The shortest useful vertical slice is:
-explicit execution identity, safe user-memory access, contained user faults,
-complete address-space objects, public child-thread construction, and real child
-memory backing. The detailed sequence is tracked in the [userspace process
-roadmap](docs/roadmaps/userspace-process-roadmap.md), while ownership and
-lifetime rules are defined in the [kernel object model](docs/kernel-object-model.md).
+The current milestone is to extend scheduler-integrated endpoint IPC with atomic
+capability transfer and rights attenuation. The detailed sequence is tracked in
+the [userspace process roadmap](docs/roadmaps/userspace-process-roadmap.md), while
+ownership and lifetime rules are defined in the
+[kernel object model](docs/kernel-object-model.md).

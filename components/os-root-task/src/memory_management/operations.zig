@@ -260,6 +260,7 @@ pub fn MemoryManager(comptime Transport: type) type {
                 .invalid_user_memory,
                 .endpoint_empty,
                 .endpoint_full,
+                .endpoint_canceled,
                 => Error.InternalFailure,
                 .internal_failure => Error.InternalFailure,
             };

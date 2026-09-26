@@ -4,6 +4,7 @@ const abi = @import("abi");
 const arch = @import("arch");
 const std = @import("std");
 const endpoint = @import("../ipc/endpoint.zig");
+const ipc_operations = @import("../ipc/operations.zig");
 const authority = @import("../memory_management/physical_memory_authority.zig");
 const process = @import("../process/main.zig");
 pub const space = @import("space.zig");
@@ -17,7 +18,7 @@ pub const CapabilityError = error{
     CapabilityHasDescendants,
     InvalidCapabilityRights,
     CapabilitySpaceNotEmpty,
-} || process.ProcessError || space.Error || authority.Error || endpoint.Error;
+} || process.ProcessError || space.Error || authority.Error || endpoint.Error || ipc_operations.Error;
 
 pub const MAX_CAPABILITIES: usize = abi.capability.MAX_CAPABILITY_SLOT_INDEX + 1;
 
@@ -244,7 +245,7 @@ pub fn destroyEndpointCapability(
         .{ .manage = true },
     );
     if (hasChild(reference)) return error.CapabilityHasDescendants;
-    try endpoint.destroy(object_handle);
+    try ipc_operations.destroy(object_handle);
     try clear(reference);
 }
 
@@ -458,6 +459,10 @@ pub fn deleteCapability(
     const reference = ref(space_handle, capability_handle);
     _ = try resolve(space_handle, capability_handle, .{});
     if (hasChild(reference)) return error.CapabilityHasDescendants;
+    try ipc_operations.cancelAuthorization(.{
+        .capability_space_handle = space_handle,
+        .capability_handle = capability_handle,
+    });
     try clear(reference);
 }
 

@@ -151,6 +151,7 @@ pub fn ProcessManager(comptime Transport: type) type {
                 .invalid_user_memory => Error.InvalidUserMemory,
                 .endpoint_empty,
                 .endpoint_full,
+                .endpoint_canceled,
                 => Error.InternalFailure,
                 .internal_failure => Error.InternalFailure,
             };

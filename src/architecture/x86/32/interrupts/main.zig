@@ -175,6 +175,7 @@ fn handleSyscallResult(
     switch (result) {
         .returned => |status| completeSyscall(context_handle, trap_frame, .fromStatus(status)),
         .returned_registers => |registers| completeSyscall(context_handle, trap_frame, registers),
+        .blocked => {},
         .yield => {
             kernel_common.process.scheduler.yieldCurrent() catch |err| {
                 arch.platform.writer().print("yield failed: {s}\n", .{@errorName(err)}) catch {};

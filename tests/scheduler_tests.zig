@@ -166,6 +166,29 @@ test "Scheduler: suspension removes ready threads and resume restores queue memb
     );
 }
 
+test "Scheduler: explicit resume cannot wake an endpoint waiter" {
+    try setup();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+
+    const blocked = try createConfiguredThread(6);
+    const survivor = try createConfiguredThread(7);
+    const endpoint_handle = try kernel.ipc.endpoint.create();
+    _ = try initializeWithRunningThread(blocked);
+    try kernel.process.scheduler.makeReady(survivor);
+    try kernel.process.scheduler.blockCurrentForEndpoint(.{ .endpoint_receive = endpoint_handle });
+
+    try std.testing.expectError(
+        error.InvalidStateTransition,
+        kernel.process.scheduler.resumeThread(blocked),
+    );
+    const object = try kernel.process.thread.get(blocked);
+    try std.testing.expectEqual(kernel.process.thread.State.blocked, object.state);
+    try std.testing.expectEqualDeep(
+        @as(?kernel.process.thread.BlockReason, .{ .endpoint_receive = endpoint_handle }),
+        object.block_reason,
+    );
+}
+
 test "Scheduler: termination removes a ready thread transactionally" {
     try setup();
     defer arch.impl.test_support.deinitializeMemoryFixture();

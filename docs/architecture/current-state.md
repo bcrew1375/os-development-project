@@ -1,6 +1,6 @@
 # Current Kernel Structure and Rationale
 
-Status date: 2026-09-25
+Status date: 2026-09-26
 
 This document summarizes the kernel as it is implemented now and explains why
 its current boundaries exist. It is the architectural starting point for readers
@@ -10,16 +10,17 @@ who need context before entering the source or the detailed roadmaps.
 
 > The repository is a well-structured x86 kernel bring-up environment with a real
 > userspace transition, cooperative scheduling, root-task child construction, and
-> an initial capability-shaped API, but it does not yet provide IPC or a complete
-> microkernel service model.
+> scheduler-integrated buffered IPC, but it does not yet provide capability
+> transfer or a complete microkernel service model.
 
 The production system can boot on x86-32 and x86-64, load a freestanding root
 ELF, enter ring 3, service system calls, enforce capability-space-local rights,
 contain user faults, construct isolated child processes from packaged ELF
 artifacts, and observe clean child/root exits. The root and child threads are
-enrolled through the normal cooperative scheduler. The root task remains
-bootstrap-created, while IPC and useful multi-service orchestration remain future
-work.
+enrolled through the normal cooperative scheduler and complete a blocking
+request/reply exchange through capability-authorized endpoints. The root task
+remains bootstrap-created, while capability transfer and useful multi-service
+orchestration remain future work.
 
 ## System boundary
 
@@ -45,6 +46,7 @@ The repository contains three independently scoped deliverables:
 - capability checks and protected-object registries;
 - architecture-independent syscall policy;
 - bounded cooperative thread scheduling;
+- bounded buffered endpoints with scheduler-integrated blocking;
 - bounded early allocation and platform access.
 
 The kernel does not link root-task source. It consumes the root task as an ELF
@@ -147,8 +149,9 @@ The current production path is:
 11. architecture interrupt code converts registers into a common syscall request;
 12. common syscall policy performs capability and object-registry operations;
 13. the root task constructs and verifies its initial userspace heap extent;
-14. the root task loads and starts a clean child ELF, alternates with it through
-    cooperative yield, observes its contained exit, and destroys its resources;
+14. the root task loads and starts a clean child ELF, completes a blocking
+    two-endpoint request/reply exchange, observes its contained exit, and destroys
+    its resources;
 15. the root task repeats construction with a child configured to execute `ud2`,
     observes contained fault attribution, resumes, and destroys the child;
 16. the root task exits and the production smoke protocol records success.
@@ -204,6 +207,13 @@ number 2 performs cooperative `yield`; a sole runnable thread yields to itself
 without a physical switch. Ready threads may be removed transactionally for
 suspension or termination, and blocked threads may be resumed. Timer preemption
 remains disabled.
+
+`src/common/ipc` owns 32 generation-checked endpoint objects. Each endpoint has an
+eight-message FIFO plus fixed-capacity FIFO sender and receiver wait queues.
+Unmatched operations block the current thread without consuming a ready-queue
+slot; compatible peers complete retained syscalls through the architecture
+context and wake through scheduler-owned endpoint reasons. Capability deletion,
+endpoint destruction, thread exit, and user fault cancel affected waiters.
 
 There is no first-class kernel process object; process grouping remains userspace
 policy. The root task's bounded `ChildProcess` record groups the public object
