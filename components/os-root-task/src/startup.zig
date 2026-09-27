@@ -188,6 +188,69 @@ fn runChildSmoke(
     try fault_child.destroy(Environment, allocator, root_address_space);
     Environment.debugWrite(abi.system_smoke.FAULT_CHILD_DESTROYED);
     Environment.debugWrite(abi.system_smoke.ROOT_RESUMED_AFTER_CHILDREN);
+    try runManagedProcessSmoke(Environment, allocator, root_address_space, image);
+}
+
+fn runManagedProcessSmoke(
+    comptime Environment: type,
+    allocator: *PhysicalRangeAllocator,
+    root_address_space: memory_manager.AddressSpace,
+    image: []const u8,
+) !void {
+    const ManagedProcess = process_management.managed_process.ManagedProcess;
+
+    var exit_child = try ManagedProcess.createAndStart(
+        Environment,
+        allocator,
+        root_address_space,
+        image,
+        1,
+        .exit_success,
+    );
+    errdefer cleanupManagedProcess(Environment, &exit_child, allocator, root_address_space);
+    Environment.debugWrite(abi.system_smoke.MANAGED_EXIT_CHILD_STARTED);
+    try exit_child.observeStartup(Environment);
+    Environment.debugWrite(abi.system_smoke.MANAGED_EXIT_STARTUP_OBSERVED);
+    try exit_child.transferServiceCapability(Environment);
+    Environment.debugWrite(abi.system_smoke.MANAGED_EXIT_SERVICE_TRANSFERRED);
+    try exit_child.observeServiceReady(Environment);
+    Environment.debugWrite(abi.system_smoke.MANAGED_EXIT_SERVICE_READY);
+    _ = try exit_child.observeTerminal(Environment);
+    Environment.debugWrite(abi.system_smoke.CHILD_EXIT_SUCCESS);
+    try exit_child.destroy(Environment, allocator, root_address_space);
+    Environment.debugWrite(abi.system_smoke.MANAGED_EXIT_CHILD_DESTROYED);
+
+    var fault_child = try ManagedProcess.createAndStart(
+        Environment,
+        allocator,
+        root_address_space,
+        image,
+        2,
+        .fault_invalid_opcode,
+    );
+    errdefer cleanupManagedProcess(Environment, &fault_child, allocator, root_address_space);
+    Environment.debugWrite(abi.system_smoke.MANAGED_FAULT_CHILD_STARTED);
+    try fault_child.observeStartup(Environment);
+    Environment.debugWrite(abi.system_smoke.MANAGED_FAULT_STARTUP_OBSERVED);
+    try fault_child.transferServiceCapability(Environment);
+    Environment.debugWrite(abi.system_smoke.MANAGED_FAULT_SERVICE_TRANSFERRED);
+    try fault_child.observeServiceReady(Environment);
+    Environment.debugWrite(abi.system_smoke.MANAGED_FAULT_SERVICE_READY);
+    _ = try fault_child.observeTerminal(Environment);
+    Environment.debugWrite(abi.system_smoke.CHILD_FAULT_INVALID_OPCODE);
+    try fault_child.destroy(Environment, allocator, root_address_space);
+    Environment.debugWrite(abi.system_smoke.MANAGED_FAULT_CHILD_DESTROYED);
+}
+
+fn cleanupManagedProcess(
+    comptime Environment: type,
+    managed: *process_management.managed_process.ManagedProcess,
+    allocator: *PhysicalRangeAllocator,
+    root_address_space: memory_manager.AddressSpace,
+) void {
+    if (managed.state == .terminal_observed) {
+        managed.destroy(Environment, allocator, root_address_space) catch {};
+    }
 }
 
 fn runCapabilityTransferSmoke(

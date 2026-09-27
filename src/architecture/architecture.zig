@@ -126,6 +126,10 @@ pub const ThreadContextError = error{
     SyscallAlreadyPending,
     NoPendingSyscall,
     InvalidSyscallFrame,
+    FaultFrameAlreadyRetained,
+    NoRetainedFaultFrame,
+    InvalidFaultFrame,
+    InvalidInstructionPointer,
 };
 
 /// Boot-time physical memory map.
@@ -236,6 +240,9 @@ pub fn validateImpl(comptime T: type) void {
             beginSyscall: fn (handle: ThreadContextHandle, trap_frame_address: usize) ThreadContextError!void,
             prepareSyscallCompletion: fn (handle: ThreadContextHandle) ThreadContextError!void,
             completeSyscall: fn (handle: ThreadContextHandle, result: SyscallResultRegisters) ThreadContextError!void,
+            retainFaultFrame: fn (handle: ThreadContextHandle, trap_frame_address: usize, instruction_pointer: u64) ThreadContextError!void,
+            setFaultInstructionPointer: fn (handle: ThreadContextHandle, instruction_pointer: u64) ThreadContextError!void,
+            clearFaultFrame: fn (handle: ThreadContextHandle) ThreadContextError!void,
             availableCount: fn () usize,
         });
 

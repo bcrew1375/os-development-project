@@ -38,6 +38,7 @@ pub const Operation = enum {
     suspend_thread,
     resume_thread,
     terminate_thread,
+    fault_reply,
     install_capability,
     destroy_thread,
     destroy_capability_space,
@@ -140,6 +141,7 @@ pub fn dispatchWithServices(
         .suspend_thread => controlThread(Services, caller_capability_space, request.arguments[0], .suspend_thread),
         .resume_thread => controlThread(Services, caller_capability_space, request.arguments[0], .resume_thread),
         .terminate_thread => terminateThread(Services, caller_capability_space, request.arguments),
+        .fault_reply => faultReply(Services, caller_capability_space, request.arguments),
         .install_capability => installCapability(Services, caller_capability_space, request.arguments),
         .destroy_thread => destroyObjectCapability(Services, caller_capability_space, request.arguments[0], .destroy_thread),
         .destroy_capability_space => destroyObjectCapability(Services, caller_capability_space, request.arguments[0], .destroy_capability_space),
@@ -370,6 +372,19 @@ fn terminateThread(comptime Services: type, caller_space: u32, arguments: [5]u64
     const thread_capability = toU32(arguments[0]) catch |err| return failure(.convert_argument, err);
     Services.terminateThreadCapability(caller_space, thread_capability, arguments[1]) catch |err| {
         return failure(.terminate_thread, err);
+    };
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
+fn faultReply(comptime Services: type, caller_space: u32, arguments: [5]u64) Result {
+    if (!@hasDecl(Services, "faultReplyFromUser")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const endpoint_capability = toU32(arguments[0]) catch |err| {
+        return failure(.convert_argument, err);
+    };
+    Services.faultReplyFromUser(caller_space, endpoint_capability, arguments[1]) catch |err| {
+        return failure(.fault_reply, err);
     };
     return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
 }
@@ -764,6 +779,10 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.MemoryObjectInUse,
         => .address_space_in_use,
         error.InvalidStateTransition,
+        error.FaultReplyUnauthorized,
+        error.InvalidFaultReply,
+        error.NoRetainedFaultFrame,
+        error.InvalidInstructionPointer,
         error.ThreadNotConfigured,
         error.ThreadAlreadyConfigured,
         error.SchedulerUninitialized,
@@ -833,13 +852,91 @@ fn productionConfigureThreadFromUser(
         configuration.address_space,
         .{ .execute = true },
     );
+    const lifecycle_endpoint_handle = if (configuration.lifecycle_endpoint == abi.capability.INVALID_CAPABILITY)
+        @as(u32, 0)
+    else
+        try capability.resolveEndpoint(
+            caller_space,
+            configuration.lifecycle_endpoint,
+            .{ .manage = true },
+        );
+    const fault_endpoint_handle = if (configuration.fault_endpoint == abi.capability.INVALID_CAPABILITY)
+        @as(u32, 0)
+    else
+        try capability.resolveEndpoint(
+            caller_space,
+            configuration.fault_endpoint,
+            .{ .manage = true },
+        );
     try process.configureThread(thread_handle, .{
         .capability_space_handle = capability_space_handle,
         .address_space_handle = address_space_handle,
         .entry_point = configuration.entry_point,
         .stack_pointer = configuration.stack_pointer,
         .argument = configuration.argument,
+        .lifecycle_endpoint_handle = lifecycle_endpoint_handle,
+        .lifecycle_token = configuration.lifecycle_token,
+        .fault_endpoint_handle = fault_endpoint_handle,
+        .fault_token = configuration.fault_token,
     });
+}
+
+fn productionFaultReplyFromUser(
+    caller_space: u32,
+    endpoint_capability: u32,
+    request_address: u64,
+) !void {
+    var bytes: [@sizeOf(abi.process.FaultReplyRequest)]u8 = undefined;
+    try user_memory.copyFromUser(&bytes, request_address, bytes.len);
+    const request = @import("std").mem.bytesToValue(abi.process.FaultReplyRequest, &bytes);
+    if (request.reserved != 0) return error.InvalidFaultReply;
+    const endpoint_handle = try capability.resolveEndpoint(
+        caller_space,
+        endpoint_capability,
+        .{ .manage = true },
+    );
+    switch (request.action) {
+        .resume_thread => {
+            if (request.value != 0) return error.InvalidFaultReply;
+            const object = try process.scheduler.prepareFaultResume(
+                request.thread_handle,
+                endpoint_handle,
+                request.fault_token,
+            );
+            try arch.thread_context.clearFaultFrame(object.architecture_context_handle);
+            try process.scheduler.commitFaultResume(
+                request.thread_handle,
+                endpoint_handle,
+                request.fault_token,
+            );
+        },
+        .resume_at => {
+            const object = try process.scheduler.prepareFaultResume(
+                request.thread_handle,
+                endpoint_handle,
+                request.fault_token,
+            );
+            try arch.thread_context.setFaultInstructionPointer(
+                object.architecture_context_handle,
+                request.value,
+            );
+            try arch.thread_context.clearFaultFrame(object.architecture_context_handle);
+            try process.scheduler.commitFaultResume(
+                request.thread_handle,
+                endpoint_handle,
+                request.fault_token,
+            );
+        },
+        .terminate => {
+            _ = try process.thread.authorizeFaultReply(
+                request.thread_handle,
+                endpoint_handle,
+                request.fault_token,
+            );
+            try process.scheduler.terminate(request.thread_handle, request.value);
+        },
+        _ => return error.InvalidFaultReply,
+    }
 }
 
 fn productionStartThreadCapability(caller_space: u32, thread_capability: u32) !void {
@@ -968,6 +1065,7 @@ const ProductionServices = struct {
     pub const suspendThreadCapability = productionSuspendThreadCapability;
     pub const resumeThreadCapability = productionResumeThreadCapability;
     pub const terminateThreadCapability = productionTerminateThreadCapability;
+    pub const faultReplyFromUser = productionFaultReplyFromUser;
     pub const installCapability = capability.installCapability;
     pub const destroyThreadCapability = capability.destroyThreadCapability;
     pub const destroyCapabilitySpaceCapability = capability.destroyCapabilitySpaceCapability;

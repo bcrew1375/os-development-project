@@ -41,16 +41,46 @@ test "BootModuleInfo ABI layout is stable" {
 }
 
 test "ChildStartup ABI layout and values are stable" {
-    try std.testing.expectEqual(@as(u32, 4), abi.process.CHILD_STARTUP_VERSION);
-    try std.testing.expectEqual(@as(usize, 24), @sizeOf(abi.process.ChildStartup));
+    try std.testing.expectEqual(@as(u32, 5), abi.process.CHILD_STARTUP_VERSION);
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(abi.process.ChildStartup));
     try std.testing.expectEqual(@as(usize, 4), @alignOf(abi.process.ChildStartup));
     try std.testing.expectEqual(@as(usize, 8), @offsetOf(abi.process.ChildStartup, "mode"));
     try std.testing.expectEqual(@as(usize, 12), @offsetOf(abi.process.ChildStartup, "request_endpoint_capability"));
     try std.testing.expectEqual(@as(usize, 16), @offsetOf(abi.process.ChildStartup, "reply_endpoint_capability"));
-    try std.testing.expectEqual(@as(usize, 20), @offsetOf(abi.process.ChildStartup, "reserved"));
+    try std.testing.expectEqual(@as(usize, 20), @offsetOf(abi.process.ChildStartup, "parent_endpoint_capability"));
+    try std.testing.expectEqual(@as(usize, 24), @offsetOf(abi.process.ChildStartup, "lifecycle_token"));
+    try std.testing.expectEqual(@as(usize, 28), @offsetOf(abi.process.ChildStartup, "managed_action"));
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(abi.process.ChildStartupMode.ipc_ping_pong));
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum(abi.process.ChildStartupMode.invalid_opcode));
     try std.testing.expectEqual(@as(u32, 3), @intFromEnum(abi.process.ChildStartupMode.capability_transfer));
+    try std.testing.expectEqual(@as(u32, 4), @intFromEnum(abi.process.ChildStartupMode.managed_lifecycle));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(abi.process.ManagedChildAction.exit_success));
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(abi.process.ManagedChildAction.fault_invalid_opcode));
+}
+
+test "Process protocol messages encode and validate fixed register records" {
+    const parent = try abi.process.parentMessage(.service_request, 17, 23);
+    try std.testing.expectEqual(
+        abi.process.ParentMessage{ .kind = .service_request, .lifecycle_token = 17, .value = 23 },
+        try abi.process.decodeParentMessage(parent),
+    );
+    const lifecycle = try abi.process.lifecycleEvent(.faulted, 17, @intFromEnum(abi.process.FaultReason.page_fault));
+    try std.testing.expectEqual(
+        abi.process.LifecycleEvent{
+            .kind = .faulted,
+            .lifecycle_token = 17,
+            .value = @intFromEnum(abi.process.FaultReason.page_fault),
+        },
+        try abi.process.decodeLifecycleEvent(lifecycle),
+    );
+    try std.testing.expectError(
+        error.InvalidLifecycleToken,
+        abi.process.parentMessage(.startup, abi.process.INVALID_LIFECYCLE_TOKEN, 0),
+    );
+    try std.testing.expectError(
+        error.InvalidMessageKind,
+        abi.process.decodeLifecycleEvent(.{ .words = .{ 99, 17, 0 } }),
+    );
 }
 
 test "Capability rights containment is explicit" {
@@ -81,12 +111,45 @@ test "Capability object type values are stable" {
 
 test "Thread configuration ABI layout is fixed width" {
     const Configuration = abi.process.ThreadConfiguration;
-    try std.testing.expectEqual(@as(usize, 32), @sizeOf(Configuration));
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(Configuration));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(Configuration, "capability_space"));
     try std.testing.expectEqual(@as(usize, 4), @offsetOf(Configuration, "address_space"));
     try std.testing.expectEqual(@as(usize, 8), @offsetOf(Configuration, "entry_point"));
     try std.testing.expectEqual(@as(usize, 16), @offsetOf(Configuration, "stack_pointer"));
     try std.testing.expectEqual(@as(usize, 24), @offsetOf(Configuration, "argument"));
+    try std.testing.expectEqual(@as(usize, 32), @offsetOf(Configuration, "lifecycle_endpoint"));
+    try std.testing.expectEqual(@as(usize, 36), @offsetOf(Configuration, "lifecycle_token"));
+    try std.testing.expectEqual(@as(usize, 40), @offsetOf(Configuration, "fault_endpoint"));
+    try std.testing.expectEqual(@as(usize, 44), @offsetOf(Configuration, "fault_token"));
+}
+
+test "Fault event and reply ABI records are stable" {
+    try std.testing.expectEqual(@as(u32, 39), @intFromEnum(abi.syscall.SyscallNumber.fault_reply));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(abi.process.FaultReplyRequest));
+    const messages = abi.process.faultEventMessages(.{
+        .fault_token = 7,
+        .thread_handle = 9,
+        .reason = .page_fault,
+        .address = 0x1122_3344_5566_7788,
+        .instruction_pointer = 0x8877_6655_4433_2211,
+        .architecture_data = 0xaabb_ccdd,
+    });
+    try std.testing.expectEqual(
+        abi.ipc.Message{ .words = .{ @intFromEnum(abi.process.FaultEventRecordKind.header), 7, 9 } },
+        messages[0],
+    );
+    try std.testing.expectEqual(
+        abi.ipc.Message{ .words = .{ @intFromEnum(abi.process.FaultEventRecordKind.address), 0x5566_7788, 0x1122_3344 } },
+        messages[1],
+    );
+    try std.testing.expectEqual(
+        abi.ipc.Message{ .words = .{ @intFromEnum(abi.process.FaultEventRecordKind.instruction_pointer), 0x4433_2211, 0x8877_6655 } },
+        messages[2],
+    );
+    try std.testing.expectEqual(
+        abi.ipc.Message{ .words = .{ @intFromEnum(abi.process.FaultEventRecordKind.architecture_data), @intFromEnum(abi.process.FaultReason.page_fault), 0xaabb_ccdd } },
+        messages[3],
+    );
 }
 
 test "Thread lifecycle rights are representable and attenuable" {
@@ -211,9 +274,9 @@ test "Syscall numbers and structured errors are stable" {
 }
 
 test "system smoke protocol records are complete ordered serial lines" {
-    try std.testing.expectEqual(@as(u32, 6), abi.system_smoke.PROTOCOL_VERSION);
+    try std.testing.expectEqual(@as(u32, 7), abi.system_smoke.PROTOCOL_VERSION);
     try std.testing.expectEqualStrings(
-        "SYSTEM-SMOKE protocol=6\n",
+        "SYSTEM-SMOKE protocol=7\n",
         abi.system_smoke.HEADER,
     );
     try std.testing.expectEqual(
@@ -269,6 +332,16 @@ test "system smoke protocol records are complete ordered serial lines" {
         "SYSTEM-SMOKE milestone=fault_child_resumed\n",
         "SYSTEM-SMOKE milestone=fault_child_destroyed\n",
         "SYSTEM-SMOKE milestone=root_resumed_after_children\n",
+        "SYSTEM-SMOKE milestone=managed_exit_child_started\n",
+        "SYSTEM-SMOKE milestone=managed_exit_startup_observed\n",
+        "SYSTEM-SMOKE milestone=managed_exit_service_transferred\n",
+        "SYSTEM-SMOKE milestone=managed_exit_service_ready\n",
+        "SYSTEM-SMOKE milestone=managed_exit_child_destroyed\n",
+        "SYSTEM-SMOKE milestone=managed_fault_child_started\n",
+        "SYSTEM-SMOKE milestone=managed_fault_startup_observed\n",
+        "SYSTEM-SMOKE milestone=managed_fault_service_transferred\n",
+        "SYSTEM-SMOKE milestone=managed_fault_service_ready\n",
+        "SYSTEM-SMOKE milestone=managed_fault_child_destroyed\n",
     };
     try std.testing.expectEqual(expected.len, abi.system_smoke.ordered_milestones.len);
     for (expected, abi.system_smoke.ordered_milestones) |expected_record, actual_record| {
@@ -287,6 +360,14 @@ test "system smoke protocol records are complete ordered serial lines" {
     try std.testing.expectEqualStrings(
         "SYSTEM-SMOKE CHILD_FAULT kind={s}\n",
         abi.system_smoke.CHILD_FAULT_FORMAT,
+    );
+    try std.testing.expectEqualStrings(
+        "SYSTEM-SMOKE CHILD_EXIT status=0\n",
+        abi.system_smoke.CHILD_EXIT_SUCCESS,
+    );
+    try std.testing.expectEqualStrings(
+        "SYSTEM-SMOKE CHILD_FAULT kind=invalid_opcode\n",
+        abi.system_smoke.CHILD_FAULT_INVALID_OPCODE,
     );
 }
 

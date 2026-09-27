@@ -27,6 +27,7 @@ pub const State = enum {
 
 pub const BlockReason = union(enum) {
     suspended,
+    fault_manager: endpoint.Handle,
     endpoint_send: endpoint.Handle,
     endpoint_receive: endpoint.Handle,
     endpoint_transfer_send: endpoint.Handle,
@@ -54,6 +55,10 @@ pub const Configuration = struct {
     entry_point: u64,
     stack_pointer: u64,
     argument: u64 = 0,
+    lifecycle_endpoint_handle: endpoint.Handle = endpoint.INVALID_HANDLE,
+    lifecycle_token: u32 = 0,
+    fault_endpoint_handle: endpoint.Handle = endpoint.INVALID_HANDLE,
+    fault_token: u32 = 0,
 };
 
 pub const Thread = struct {
@@ -68,6 +73,10 @@ pub const Thread = struct {
     exit_status: ?u64 = null,
     user_fault: ?UserFault = null,
     block_reason: ?BlockReason = null,
+    lifecycle_endpoint_handle: endpoint.Handle = endpoint.INVALID_HANDLE,
+    lifecycle_token: u32 = 0,
+    fault_endpoint_handle: endpoint.Handle = endpoint.INVALID_HANDLE,
+    fault_token: u32 = 0,
 
     pub fn isConfigured(self: Thread) bool {
         return self.capability_space_handle != 0 and
@@ -89,6 +98,9 @@ pub const Error = error{
     ThreadNotConfigured,
     InvalidStateTransition,
     ThreadInUse,
+    InvalidLifecycleToken,
+    InvalidFaultToken,
+    FaultReplyUnauthorized,
 } || arch.ThreadContextError;
 
 const Slot = struct {
@@ -133,6 +145,16 @@ pub fn configure(
     if (architecture_context_handle == arch.INVALID_THREAD_CONTEXT_HANDLE) {
         return error.InvalidThreadContextHandle;
     }
+    if ((configuration.lifecycle_endpoint_handle == endpoint.INVALID_HANDLE) !=
+        (configuration.lifecycle_token == 0))
+    {
+        return error.InvalidLifecycleToken;
+    }
+    if ((configuration.fault_endpoint_handle == endpoint.INVALID_HANDLE) !=
+        (configuration.fault_token == 0))
+    {
+        return error.InvalidFaultToken;
+    }
 
     slot.thread.capability_space_handle = configuration.capability_space_handle;
     slot.thread.address_space_handle = configuration.address_space_handle;
@@ -140,6 +162,10 @@ pub fn configure(
     slot.thread.stack_pointer = configuration.stack_pointer;
     slot.thread.argument = configuration.argument;
     slot.thread.architecture_context_handle = architecture_context_handle;
+    slot.thread.lifecycle_endpoint_handle = configuration.lifecycle_endpoint_handle;
+    slot.thread.lifecycle_token = configuration.lifecycle_token;
+    slot.thread.fault_endpoint_handle = configuration.fault_endpoint_handle;
+    slot.thread.fault_token = configuration.fault_token;
 }
 
 pub fn makeReady(handle: Handle) Error!void {
@@ -180,7 +206,7 @@ pub fn blockForEndpoint(handle: Handle, reason: BlockReason) Error!void {
         .endpoint_transfer_send,
         .endpoint_transfer_receive,
         => {},
-        .suspended => return Error.InvalidStateTransition,
+        .suspended, .fault_manager => return Error.InvalidStateTransition,
     }
     slot.thread.state = .blocked;
     slot.thread.block_reason = reason;
@@ -211,6 +237,12 @@ pub fn exit(handle: Handle, status: u64) Error!void {
         .new, .ready, .running, .blocked => {},
         .faulted, .exited => return Error.InvalidStateTransition,
     }
+    if (slot.thread.block_reason) |reason| switch (reason) {
+        .fault_manager => try arch.thread_context.clearFaultFrame(
+            slot.thread.architecture_context_handle,
+        ),
+        else => {},
+    };
     slot.thread.state = .exited;
     _ = endpoint.cancelThread(handle);
     slot.thread.block_reason = null;
@@ -229,6 +261,44 @@ pub fn recordFault(handle: Handle, fault: UserFault) Error!void {
     slot.thread.block_reason = null;
     slot.thread.exit_status = null;
     slot.thread.user_fault = fault;
+}
+
+pub fn suspendForFault(handle: Handle, fault: UserFault) Error!void {
+    const slot = try resolveMutableSlot(handle);
+    if (slot.thread.state != .running or
+        slot.thread.fault_endpoint_handle == endpoint.INVALID_HANDLE)
+    {
+        return error.InvalidStateTransition;
+    }
+    slot.thread.state = .blocked;
+    slot.thread.block_reason = .{ .fault_manager = slot.thread.fault_endpoint_handle };
+    slot.thread.exit_status = null;
+    slot.thread.user_fault = fault;
+}
+
+pub fn authorizeFaultReply(
+    handle: Handle,
+    endpoint_handle: endpoint.Handle,
+    token: u32,
+) Error!Thread {
+    const object = (try resolveSlot(handle)).thread;
+    if (object.state != .blocked or
+        !sameBlockReason(object.block_reason, .{ .fault_manager = endpoint_handle }))
+    {
+        return error.InvalidStateTransition;
+    }
+    if (token == 0 or object.fault_token != token or object.user_fault == null) {
+        return error.FaultReplyUnauthorized;
+    }
+    return object;
+}
+
+pub fn resumeFromFault(handle: Handle, endpoint_handle: endpoint.Handle, token: u32) Error!void {
+    const slot = try resolveMutableSlot(handle);
+    _ = try authorizeFaultReply(handle, endpoint_handle, token);
+    slot.thread.state = .ready;
+    slot.thread.block_reason = null;
+    slot.thread.user_fault = null;
 }
 
 pub fn destroy(handle: Handle) Error!void {
@@ -267,6 +337,22 @@ pub fn referencesCapabilitySpace(capability_space_handle: CapabilitySpaceHandle)
         if (slot.used and slot.thread.capability_space_handle == capability_space_handle) {
             return true;
         }
+    }
+    return false;
+}
+
+pub fn referencesLifecycleEndpoint(endpoint_handle: endpoint.Handle) bool {
+    if (endpoint_handle == endpoint.INVALID_HANDLE) return false;
+    for (slots) |slot| {
+        if (slot.used and slot.thread.lifecycle_endpoint_handle == endpoint_handle) return true;
+    }
+    return false;
+}
+
+pub fn referencesFaultEndpoint(endpoint_handle: endpoint.Handle) bool {
+    if (endpoint_handle == endpoint.INVALID_HANDLE) return false;
+    for (slots) |slot| {
+        if (slot.used and slot.thread.fault_endpoint_handle == endpoint_handle) return true;
     }
     return false;
 }
@@ -340,6 +426,10 @@ fn sameBlockReason(actual: ?BlockReason, expected: BlockReason) bool {
     const reason = actual orelse return false;
     return switch (reason) {
         .suspended => expected == .suspended,
+        .fault_manager => |handle| switch (expected) {
+            .fault_manager => |expected_handle| handle == expected_handle,
+            else => false,
+        },
         .endpoint_send => |handle| switch (expected) {
             .endpoint_send => |expected_handle| handle == expected_handle,
             else => false,

@@ -2,10 +2,10 @@
 
 const ipc = @import("ipc.zig");
 
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 pub const PREFIX = "SYSTEM-SMOKE";
 
-pub const HEADER = PREFIX ++ " protocol=6\n";
+pub const HEADER = PREFIX ++ " protocol=7\n";
 pub const ROOT_PROCESS_PREPARED = PREFIX ++ " milestone=root_process_prepared\n";
 pub const KERNEL_INITIALIZED = PREFIX ++ " milestone=kernel_initialized\n";
 pub const USERSPACE_ENTERED = PREFIX ++ " milestone=userspace_entered\n";
@@ -61,6 +61,18 @@ pub const FAULT_CHILD_RESUMED = PREFIX ++ " milestone=fault_child_resumed\n";
 pub const CHILD_FAULT_FORMAT = PREFIX ++ " CHILD_FAULT kind={s}\n";
 pub const FAULT_CHILD_DESTROYED = PREFIX ++ " milestone=fault_child_destroyed\n";
 pub const ROOT_RESUMED_AFTER_CHILDREN = PREFIX ++ " milestone=root_resumed_after_children\n";
+pub const MANAGED_EXIT_CHILD_STARTED = PREFIX ++ " milestone=managed_exit_child_started\n";
+pub const MANAGED_EXIT_STARTUP_OBSERVED = PREFIX ++ " milestone=managed_exit_startup_observed\n";
+pub const MANAGED_EXIT_SERVICE_TRANSFERRED = PREFIX ++ " milestone=managed_exit_service_transferred\n";
+pub const MANAGED_EXIT_SERVICE_READY = PREFIX ++ " milestone=managed_exit_service_ready\n";
+pub const MANAGED_EXIT_CHILD_DESTROYED = PREFIX ++ " milestone=managed_exit_child_destroyed\n";
+pub const MANAGED_FAULT_CHILD_STARTED = PREFIX ++ " milestone=managed_fault_child_started\n";
+pub const MANAGED_FAULT_STARTUP_OBSERVED = PREFIX ++ " milestone=managed_fault_startup_observed\n";
+pub const MANAGED_FAULT_SERVICE_TRANSFERRED = PREFIX ++ " milestone=managed_fault_service_transferred\n";
+pub const MANAGED_FAULT_SERVICE_READY = PREFIX ++ " milestone=managed_fault_service_ready\n";
+pub const MANAGED_FAULT_CHILD_DESTROYED = PREFIX ++ " milestone=managed_fault_child_destroyed\n";
+pub const CHILD_EXIT_SUCCESS = PREFIX ++ " CHILD_EXIT status=0\n";
+pub const CHILD_FAULT_INVALID_OPCODE = PREFIX ++ " CHILD_FAULT kind=invalid_opcode\n";
 pub const EXIT_FORMAT = PREFIX ++ " EXIT status={d}\n";
 
 pub const ordered_milestones = [_][]const u8{
@@ -98,4 +110,14 @@ pub const ordered_milestones = [_][]const u8{
     FAULT_CHILD_RESUMED,
     FAULT_CHILD_DESTROYED,
     ROOT_RESUMED_AFTER_CHILDREN,
+    MANAGED_EXIT_CHILD_STARTED,
+    MANAGED_EXIT_STARTUP_OBSERVED,
+    MANAGED_EXIT_SERVICE_TRANSFERRED,
+    MANAGED_EXIT_SERVICE_READY,
+    MANAGED_EXIT_CHILD_DESTROYED,
+    MANAGED_FAULT_CHILD_STARTED,
+    MANAGED_FAULT_STARTUP_OBSERVED,
+    MANAGED_FAULT_SERVICE_TRANSFERRED,
+    MANAGED_FAULT_SERVICE_READY,
+    MANAGED_FAULT_CHILD_DESTROYED,
 };

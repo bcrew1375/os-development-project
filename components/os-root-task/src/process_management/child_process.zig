@@ -19,7 +19,7 @@ pub const LOADER_WINDOW_END: usize = 0x0400_0000;
 pub const STACK_TOP: usize = 0x00C0_0000;
 pub const STACK_SIZE: usize = 0x0001_0000;
 pub const STACK_START: usize = STACK_TOP - STACK_SIZE;
-pub const MAX_STARTUP_CAPABILITIES: usize = 2;
+pub const MAX_DELEGATED_CAPABILITIES: usize = 4;
 
 pub const Error = elf.ElfLoadError || memory_management.PhysicalRangeAllocator.Error ||
     memory_management.operations.Error || process_management.Error || error{
@@ -34,6 +34,7 @@ pub const Error = elf.ElfLoadError || memory_management.PhysicalRangeAllocator.E
     LoaderWindowExhausted,
     MappedAddressUnavailable,
     CleanupFailed,
+    TooManyDelegatedCapabilities,
 };
 
 pub const PlannedSegment = struct {
@@ -67,8 +68,8 @@ pub const ChildProcess = struct {
     thread: ?process_management.Thread = null,
     mappings: [MAX_LOAD_SEGMENTS + 1]OwnedMapping = undefined,
     mapping_count: usize = 0,
-    startup_capabilities: [MAX_STARTUP_CAPABILITIES]abi.capability.CapabilityHandle = undefined,
-    startup_capability_count: usize = 0,
+    delegated_capabilities: [MAX_DELEGATED_CAPABILITIES]abi.capability.CapabilityHandle = undefined,
+    delegated_capability_count: usize = 0,
     started: bool = false,
 
     pub fn destroy(
@@ -138,14 +139,14 @@ pub const ChildProcess = struct {
             self.address_space = null;
         }
         if (self.capability_space) |capability_space| {
-            var capability_index = self.startup_capability_count;
+            var capability_index = self.delegated_capability_count;
             while (capability_index > 0) {
                 capability_index -= 1;
                 process_manager.deleteCapability(
                     capability_space,
-                    self.startup_capabilities[capability_index],
+                    self.delegated_capabilities[capability_index],
                 ) catch return Error.CleanupFailed;
-                self.startup_capability_count -= 1;
+                self.delegated_capability_count -= 1;
             }
         }
         if (self.capability_space) |capability_space| {
@@ -153,6 +154,17 @@ pub const ChildProcess = struct {
             self.capability_space = null;
         }
         self.started = false;
+    }
+
+    pub fn trackDelegatedCapability(
+        self: *ChildProcess,
+        capability_handle: abi.capability.CapabilityHandle,
+    ) Error!void {
+        if (self.delegated_capability_count == self.delegated_capabilities.len) {
+            return Error.TooManyDelegatedCapabilities;
+        }
+        self.delegated_capabilities[self.delegated_capability_count] = capability_handle;
+        self.delegated_capability_count += 1;
     }
 };
 
@@ -223,6 +235,30 @@ pub fn createAndStart(
     request_endpoint: ?abi.capability.CapabilityHandle,
     reply_endpoint: ?abi.capability.CapabilityHandle,
 ) Error!ChildProcess {
+    return createAndStartManaged(
+        Environment,
+        physical_allocator,
+        root_address_space,
+        image,
+        startup,
+        request_endpoint,
+        reply_endpoint,
+        null,
+        null,
+    );
+}
+
+pub fn createAndStartManaged(
+    comptime Environment: type,
+    physical_allocator: *memory_management.PhysicalRangeAllocator,
+    root_address_space: AddressSpace,
+    image: []const u8,
+    startup: abi.process.ChildStartup,
+    request_endpoint: ?abi.capability.CapabilityHandle,
+    reply_endpoint: ?abi.capability.CapabilityHandle,
+    parent_endpoint: ?abi.capability.CapabilityHandle,
+    lifecycle_endpoint: ?abi.capability.CapabilityHandle,
+) Error!ChildProcess {
     const manager = memory_management.operations.MemoryManager(Environment);
     const process_manager = process_management.ProcessManager(Environment);
     const load_plan = try plan(image);
@@ -238,8 +274,7 @@ pub fn createAndStart(
             endpoint_capability,
             .{ .receive = true },
         );
-        child.startup_capabilities[0] = child_capability;
-        child.startup_capability_count = 1;
+        try child.trackDelegatedCapability(child_capability);
         child_startup.request_endpoint_capability = child_capability;
     }
     if (reply_endpoint) |endpoint_capability| {
@@ -248,9 +283,17 @@ pub fn createAndStart(
             endpoint_capability,
             .{ .send = true },
         );
-        child.startup_capabilities[1] = child_capability;
-        child.startup_capability_count = 2;
+        try child.trackDelegatedCapability(child_capability);
         child_startup.reply_endpoint_capability = child_capability;
+    }
+    if (parent_endpoint) |endpoint_capability| {
+        const child_capability = try process_manager.installCapability(
+            child.capability_space.?,
+            endpoint_capability,
+            .{ .send = true, .receive = true },
+        );
+        try child.trackDelegatedCapability(child_capability);
+        child_startup.parent_endpoint_capability = child_capability;
     }
 
     var loader_cursor = LOADER_WINDOW_START;
@@ -297,6 +340,8 @@ pub fn createAndStart(
         .entry_point = load_plan.entry_point,
         .stack_pointer = initial_stack_pointer,
         .argument = startupAddress(),
+        .lifecycle_endpoint = lifecycle_endpoint orelse abi.capability.INVALID_CAPABILITY,
+        .lifecycle_token = child_startup.lifecycle_token,
     };
     try process_manager.configureThread(child.thread.?, &configuration);
     try process_manager.startThread(child.thread.?);

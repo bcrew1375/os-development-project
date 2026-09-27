@@ -68,7 +68,7 @@ pub fn interruptHandler(vector: u8, stack_pointer: usize) callconv(.c) void {
             arch.platform.writer().writeAll("General protection fault.\n") catch {};
             arch.platform.writer().print(" EIP: 0x{x}, CS: 0x{x}, error: 0x{x}\n", .{ interrupted_frame.instruction_pointer, interrupted_frame.code_selector, interrupted_frame.error_code }) catch {};
             if (interrupted_frame.user_mode) {
-                containUserFault(.{
+                containUserFault(trap_frame, .{
                     .kind = .general_protection,
                     .instruction_pointer = interrupted_frame.instruction_pointer,
                     .architecture_error = interrupted_frame.error_code,
@@ -122,7 +122,7 @@ fn handlePageFault(trap_frame: *const TrapFrame, diagnostic: diagnostics.Decisio
     kernel_common.vmm.resolveFault(fault_info) catch |err| {
         if (isUserMode(trap_frame)) {
             arch.platform.writer().print("Unresolved user page fault: {s}\n", .{@errorName(err)}) catch {};
-            containUserFault(.{
+            containUserFault(trap_frame, .{
                 .kind = .page_fault,
                 .instruction_pointer = trap_frame.instruction_pointer,
                 .address = fault_info.address,
@@ -197,8 +197,6 @@ fn handleSyscallResult(
         .exit => |exit| {
             if (@hasDecl(root, "isRootThreadForSmoke") and root.isRootThreadForSmoke()) {
                 arch.platform.writer().print(abi.system_smoke.EXIT_FORMAT, .{exit.status}) catch {};
-            } else {
-                arch.platform.writer().print(abi.system_smoke.CHILD_EXIT_FORMAT, .{exit.status}) catch {};
             }
             arch.platform.writer().print("User process exited with status {d}.\n", .{exit.status}) catch {};
             kernel_common.process.lifecycle.exitCurrent(exit.status) catch |err| {
@@ -242,7 +240,7 @@ fn handleException(
 ) void {
     arch.platform.writer().print("{s}\n", .{message}) catch {};
     if (isUserMode(trap_frame)) {
-        containUserFault(.{
+        containUserFault(trap_frame, .{
             .kind = kind,
             .instruction_pointer = trap_frame.instruction_pointer,
             .architecture_error = trap_frame.error_code,
@@ -251,9 +249,14 @@ fn handleException(
     @panic(message);
 }
 
-fn containUserFault(fault: kernel_common.process.thread.UserFault) void {
-    arch.platform.writer().print(abi.system_smoke.CHILD_FAULT_FORMAT, .{@tagName(fault.kind)}) catch {};
-    kernel_common.process.lifecycle.faultCurrent(fault) catch |err| {
+fn containUserFault(
+    trap_frame: *const TrapFrame,
+    fault: kernel_common.process.thread.UserFault,
+) void {
+    kernel_common.process.lifecycle.faultCurrentFromFrame(
+        fault,
+        @intFromPtr(trap_frame),
+    ) catch |err| {
         arch.platform.writer().print("user fault containment failed: {s}\n", .{@errorName(err)}) catch {};
         @panic("user fault containment failed");
     };

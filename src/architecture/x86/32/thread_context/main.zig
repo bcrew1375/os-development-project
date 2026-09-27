@@ -44,6 +44,7 @@ const Slot = struct {
     saved_stack_pointer: usize = 0,
     address_space_root: arch.AddressSpaceRoot = .{ .value = 0 },
     pending_syscall_frame: ?*frames.TrapFrame = null,
+    retained_fault_frame: ?*frames.TrapFrame = null,
     used: bool = false,
     active: bool = false,
     retired: bool = false,
@@ -108,6 +109,7 @@ pub fn destroy(handle: arch.ThreadContextHandle) arch.ThreadContextError!void {
     slot.saved_stack_pointer = 0;
     slot.address_space_root = .{ .value = 0 };
     slot.pending_syscall_frame = null;
+    slot.retained_fault_frame = null;
     if (slot.generation == MAX_GENERATION) {
         slot.retired = true;
     } else {
@@ -180,6 +182,44 @@ pub fn completeSyscall(
     slot.pending_syscall_frame = null;
 }
 
+pub fn retainFaultFrame(
+    handle: arch.ThreadContextHandle,
+    trap_frame_address: usize,
+    instruction_pointer: u64,
+) arch.ThreadContextError!void {
+    if (instruction_pointer == 0 or instruction_pointer > std.math.maxInt(u32)) {
+        return error.InvalidInstructionPointer;
+    }
+    const slot = try resolveMutableSlot(handle);
+    if (slot.retained_fault_frame != null) return error.FaultFrameAlreadyRetained;
+    if (!isKernelStackRange(handle, trap_frame_address, @sizeOf(frames.TrapFrame))) {
+        return error.InvalidFaultFrame;
+    }
+    const trap_frame: *frames.TrapFrame = @ptrFromInt(trap_frame_address);
+    if (trap_frame.instruction_pointer != @as(u32, @intCast(instruction_pointer))) {
+        return error.InvalidFaultFrame;
+    }
+    slot.retained_fault_frame = trap_frame;
+}
+
+pub fn setFaultInstructionPointer(
+    handle: arch.ThreadContextHandle,
+    instruction_pointer: u64,
+) arch.ThreadContextError!void {
+    if (instruction_pointer == 0 or instruction_pointer > std.math.maxInt(u32)) {
+        return error.InvalidInstructionPointer;
+    }
+    const slot = try resolveMutableSlot(handle);
+    const trap_frame = slot.retained_fault_frame orelse return error.NoRetainedFaultFrame;
+    trap_frame.instruction_pointer = @intCast(instruction_pointer);
+}
+
+pub fn clearFaultFrame(handle: arch.ThreadContextHandle) arch.ThreadContextError!void {
+    const slot = try resolveMutableSlot(handle);
+    if (slot.retained_fault_frame == null) return error.NoRetainedFaultFrame;
+    slot.retained_fault_frame = null;
+}
+
 pub fn availableCount() usize {
     var count: usize = 0;
     for (slots) |slot| {
@@ -214,6 +254,14 @@ pub fn getInitialStateForTest(
         .data_selector = frame.user_frame.stack_selector,
         .flags = frame.user_frame.trap.flags,
     };
+}
+
+pub fn getInitialTrapFrameAddressForTest(
+    handle: arch.ThreadContextHandle,
+) arch.ThreadContextError!usize {
+    const slot = try resolveSlot(handle);
+    const frame: *const InitialStackFrame = @ptrFromInt(slot.saved_stack_pointer);
+    return @intFromPtr(&frame.user_frame.trap);
 }
 
 pub fn getSyscallResultForTest(

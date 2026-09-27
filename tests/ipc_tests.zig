@@ -73,6 +73,24 @@ test "IPC endpoint: bounded FIFO reports empty and full without partial delivery
     try std.testing.expectError(error.EndpointEmpty, kernel.ipc.endpoint.receive(handle));
 }
 
+test "IPC endpoint: batch delivery is all-or-nothing" {
+    resetState();
+    const handle = try kernel.ipc.endpoint.create();
+    for (0..kernel.ipc.endpoint.MESSAGE_CAPACITY - 1) |index| {
+        const word: u32 = @intCast(index);
+        try kernel.ipc.endpoint.send(handle, .{ .words = .{ word, 0, 0 } });
+    }
+    const messages = [_]abi.ipc.Message{
+        .{ .words = .{ 91, 92, 93 } },
+        .{ .words = .{ 94, 95, 96 } },
+    };
+    try std.testing.expectError(error.EndpointFull, kernel.ipc.endpoint.sendBatch(handle, &messages));
+    try std.testing.expectEqual(
+        kernel.ipc.endpoint.MESSAGE_CAPACITY - 1,
+        try kernel.ipc.endpoint.messageCount(handle),
+    );
+}
+
 test "IPC endpoint: destruction rejects queued messages and invalidates stale handles" {
     resetState();
     const stale = try kernel.ipc.endpoint.create();

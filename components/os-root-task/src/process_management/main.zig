@@ -3,6 +3,7 @@
 const abi = @import("abi");
 
 pub const child_process = @import("child_process.zig");
+pub const managed_process = @import("ManagedProcess.zig");
 
 pub const Thread = struct {
     capability: abi.capability.CapabilityHandle,

@@ -29,6 +29,14 @@ pub fn expectEqual(expected: anytype, actual: @TypeOf(expected)) TestError!void 
     if (expected != actual) return TestError.ValuesNotEqual;
 }
 
+pub fn expectError(expected: anyerror, result: anytype) TestError!void {
+    _ = result catch |actual| {
+        if (actual != expected) return TestError.ValuesNotEqual;
+        return;
+    };
+    return TestError.ExpectationFailed;
+}
+
 pub fn runAll(
     writer: anytype,
     architecture_name: []const u8,

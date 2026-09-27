@@ -12,7 +12,7 @@ import tempfile
 import time
 
 
-PROTOCOL_VERSION = 6
+PROTOCOL_VERSION = 7
 PREFIX = "SYSTEM-SMOKE"
 HEADER = f"{PREFIX} protocol={PROTOCOL_VERSION}"
 MILESTONES = (
@@ -50,6 +50,16 @@ MILESTONES = (
     "fault_child_resumed",
     "fault_child_destroyed",
     "root_resumed_after_children",
+    "managed_exit_child_started",
+    "managed_exit_startup_observed",
+    "managed_exit_service_transferred",
+    "managed_exit_service_ready",
+    "managed_exit_child_destroyed",
+    "managed_fault_child_started",
+    "managed_fault_startup_observed",
+    "managed_fault_service_transferred",
+    "managed_fault_service_ready",
+    "managed_fault_child_destroyed",
 )
 MILESTONE_PATTERN = re.compile(r"^SYSTEM-SMOKE milestone=(?P<name>[a-z0-9_]+)$")
 CHILD_EXIT_PATTERN = re.compile(r"^SYSTEM-SMOKE CHILD_EXIT status=(?P<status>\d+)$")
@@ -57,13 +67,12 @@ CHILD_FAULT_PATTERN = re.compile(r"^SYSTEM-SMOKE CHILD_FAULT kind=(?P<kind>[a-z0
 EXIT_PATTERN = re.compile(r"^SYSTEM-SMOKE EXIT status=(?P<status>\d+)$")
 
 EXPECTED_EVENTS = (
-    *(f"milestone={milestone}" for milestone in MILESTONES[:16]),
+    *(f"milestone={milestone}" for milestone in MILESTONES[:38]),
     "child_exit=0",
-    *(f"milestone={milestone}" for milestone in MILESTONES[16:25]),
-    "child_exit=0",
-    *(f"milestone={milestone}" for milestone in MILESTONES[25:32]),
+    f"milestone={MILESTONES[38]}",
+    *(f"milestone={milestone}" for milestone in MILESTONES[39:43]),
     "child_fault=invalid_opcode",
-    *(f"milestone={milestone}" for milestone in MILESTONES[32:]),
+    f"milestone={MILESTONES[43]}",
     "root_exit",
 )
 

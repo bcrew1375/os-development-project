@@ -38,6 +38,7 @@ pub const SyscallNumber = enum(u32) {
     endpoint_receive = 36,
     endpoint_send_capability = 37,
     endpoint_receive_capability = 38,
+    fault_reply = 39,
     _,
 };
 

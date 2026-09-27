@@ -75,8 +75,12 @@ pub fn makeArchitecture(comptime implementation: anytype) type {
             pub const beginSyscall = implementation.thread_context.beginSyscall;
             pub const prepareSyscallCompletion = implementation.thread_context.prepareSyscallCompletion;
             pub const completeSyscall = implementation.thread_context.completeSyscall;
+            pub const retainFaultFrame = implementation.thread_context.retainFaultFrame;
+            pub const setFaultInstructionPointer = implementation.thread_context.setFaultInstructionPointer;
+            pub const clearFaultFrame = implementation.thread_context.clearFaultFrame;
             pub const availableCount = implementation.thread_context.availableCount;
             pub const getInitialStateForTest = implementation.thread_context.getInitialStateForTest;
+            pub const getInitialTrapFrameAddressForTest = implementation.thread_context.getInitialTrapFrameAddressForTest;
             pub const getSyscallResultForTest = implementation.thread_context.getSyscallResultForTest;
             pub const getKernelStackBoundsForTest = implementation.thread_context.getKernelStackBoundsForTest;
             pub const prepareKernelContinuationForTest = implementation.thread_context.prepareKernelContinuationForTest;

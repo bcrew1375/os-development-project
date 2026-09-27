@@ -3,8 +3,7 @@ const std = @import("std");
 
 pub export fn _start(startup: *const abi.process.ChildStartup) callconv(.c) noreturn {
     if (startup.magic != abi.process.CHILD_STARTUP_MAGIC or
-        startup.version != abi.process.CHILD_STARTUP_VERSION or
-        startup.reserved != 0)
+        startup.version != abi.process.CHILD_STARTUP_VERSION)
     {
         exit(abi.syscall.EXIT_FAILURE);
     }
@@ -26,9 +25,11 @@ pub export fn _start(startup: *const abi.process.ChildStartup) callconv(.c) nore
             }
             debugWrite(abi.system_smoke.FAULT_CHILD_YIELDING);
         },
+        .managed_lifecycle => managedLifecycle(startup),
     }
     switch (startup.mode) {
         .ipc_ping_pong, .capability_transfer => exit(abi.syscall.EXIT_SUCCESS),
+        .managed_lifecycle => unreachable,
         .invalid_opcode => {
             if (abi.syscall.syscall3(@intFromEnum(abi.syscall.SyscallNumber.yield), 0, 0, 0) !=
                 abi.syscall.SYSCALL_SUCCESS)
@@ -40,6 +41,74 @@ pub export fn _start(startup: *const abi.process.ChildStartup) callconv(.c) nore
         },
     }
     unreachable;
+}
+
+fn managedLifecycle(startup: *const abi.process.ChildStartup) noreturn {
+    if (startup.parent_endpoint_capability == abi.capability.INVALID_CAPABILITY or
+        startup.lifecycle_token == abi.process.INVALID_LIFECYCLE_TOKEN or
+        startup.request_endpoint_capability != abi.capability.INVALID_CAPABILITY or
+        startup.reply_endpoint_capability != abi.capability.INVALID_CAPABILITY)
+    {
+        exit(abi.syscall.EXIT_FAILURE);
+    }
+    sendParent(startup.parent_endpoint_capability, .startup, startup.lifecycle_token);
+    sendParent(startup.parent_endpoint_capability, .service_request, startup.lifecycle_token);
+    const request = abi.ipc.TransferReceiveRequest{
+        .destination_slot = abi.system_smoke.CAPABILITY_TRANSFER_DESTINATION_SLOT,
+    };
+    const transfer = abi.syscall.syscallTransferReceive(
+        @intFromEnum(abi.syscall.SyscallNumber.endpoint_receive_capability),
+        startup.parent_endpoint_capability,
+        &request,
+    );
+    const transfer_message = abi.process.decodeParentMessage(transfer.message) catch
+        exit(abi.syscall.EXIT_FAILURE);
+    if (transfer.status != abi.syscall.SYSCALL_SUCCESS or
+        abi.capability.capabilitySlotIndex(transfer.capability) != request.destination_slot or
+        transfer_message.kind != .service_ready or
+        transfer_message.lifecycle_token != startup.lifecycle_token)
+    {
+        exit(abi.syscall.EXIT_FAILURE);
+    }
+    sendParentValue(
+        transfer.capability,
+        .service_ready,
+        startup.lifecycle_token,
+        transfer.capability,
+    );
+    switch (startup.managed_action) {
+        .exit_success => exit(abi.syscall.EXIT_SUCCESS),
+        .fault_invalid_opcode => asm volatile ("ud2"),
+    }
+    unreachable;
+}
+
+fn sendParent(
+    endpoint_capability: abi.capability.CapabilityHandle,
+    kind: abi.process.ParentMessageKind,
+    lifecycle_token: u32,
+) void {
+    sendParentValue(endpoint_capability, kind, lifecycle_token, 0);
+}
+
+fn sendParentValue(
+    endpoint_capability: abi.capability.CapabilityHandle,
+    kind: abi.process.ParentMessageKind,
+    lifecycle_token: u32,
+    value: u32,
+) void {
+    const message = abi.process.parentMessage(kind, lifecycle_token, value) catch
+        exit(abi.syscall.EXIT_FAILURE);
+    if (abi.syscall.syscall5(
+        @intFromEnum(abi.syscall.SyscallNumber.endpoint_send),
+        endpoint_capability,
+        message.words[0],
+        message.words[1],
+        message.words[2],
+        0,
+    ) != abi.syscall.SYSCALL_SUCCESS) {
+        exit(abi.syscall.EXIT_FAILURE);
+    }
 }
 
 fn receiveTransferredCapability(

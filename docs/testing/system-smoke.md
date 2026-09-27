@@ -25,10 +25,10 @@ The default timeout is 60 seconds. Override it with
 ## Protocol
 
 Production components unconditionally emit complete serial lines using protocol
-version 6. The required order is:
+version 7. The required order is:
 
 ```text
-SYSTEM-SMOKE protocol=6
+SYSTEM-SMOKE protocol=7
 SYSTEM-SMOKE milestone=root_process_prepared
 SYSTEM-SMOKE milestone=kernel_initialized
 SYSTEM-SMOKE milestone=userspace_entered
@@ -45,7 +45,6 @@ SYSTEM-SMOKE milestone=root_resumed_after_ipc_child_blocked
 SYSTEM-SMOKE milestone=ipc_request_sent
 SYSTEM-SMOKE milestone=ipc_request_verified
 SYSTEM-SMOKE milestone=ipc_reply_sent
-SYSTEM-SMOKE CHILD_EXIT status=0
 SYSTEM-SMOKE milestone=ipc_reply_verified
 SYSTEM-SMOKE milestone=ipc_child_destroyed
 SYSTEM-SMOKE milestone=ipc_endpoints_destroyed
@@ -55,7 +54,6 @@ SYSTEM-SMOKE milestone=capability_transfer_sent
 SYSTEM-SMOKE milestone=capability_transfer_received
 SYSTEM-SMOKE milestone=capability_transfer_rights_attenuated
 SYSTEM-SMOKE milestone=capability_transfer_ack_sent
-SYSTEM-SMOKE CHILD_EXIT status=0
 SYSTEM-SMOKE milestone=capability_transfer_ack_verified
 SYSTEM-SMOKE milestone=capability_transfer_child_destroyed
 SYSTEM-SMOKE milestone=capability_transfer_endpoints_destroyed
@@ -63,9 +61,20 @@ SYSTEM-SMOKE milestone=fault_child_started
 SYSTEM-SMOKE milestone=fault_child_yielding
 SYSTEM-SMOKE milestone=root_resumed_after_fault_child_yield
 SYSTEM-SMOKE milestone=fault_child_resumed
-SYSTEM-SMOKE CHILD_FAULT kind=invalid_opcode
 SYSTEM-SMOKE milestone=fault_child_destroyed
 SYSTEM-SMOKE milestone=root_resumed_after_children
+SYSTEM-SMOKE milestone=managed_exit_child_started
+SYSTEM-SMOKE milestone=managed_exit_startup_observed
+SYSTEM-SMOKE milestone=managed_exit_service_transferred
+SYSTEM-SMOKE milestone=managed_exit_service_ready
+SYSTEM-SMOKE CHILD_EXIT status=0
+SYSTEM-SMOKE milestone=managed_exit_child_destroyed
+SYSTEM-SMOKE milestone=managed_fault_child_started
+SYSTEM-SMOKE milestone=managed_fault_startup_observed
+SYSTEM-SMOKE milestone=managed_fault_service_transferred
+SYSTEM-SMOKE milestone=managed_fault_service_ready
+SYSTEM-SMOKE CHILD_FAULT kind=invalid_opcode
+SYSTEM-SMOKE milestone=managed_fault_child_destroyed
 SYSTEM-SMOKE EXIT status=0
 ```
 
@@ -83,8 +92,15 @@ transfer receive, receives an attenuated send-only endpoint capability in slot 7
 proves receive authority was not transferred, and sends an acknowledgment through
 the transferred capability. The root validates the returned slot-local handle,
 deletes it from the child capability space, and destroys all transfer resources.
-Child exit and fault records are intermediate events: they prove scheduler handoff
-and containment but do not terminate host observation.
+Two managed children then prove parent communication and lifecycle delivery. Each
+announces startup through an attenuated parent endpoint, requests and receives a
+send-only service endpoint, and acknowledges readiness through the transferred
+capability. The clean child exits and the fault child executes `ud2`. In both
+cases, the root task blocks on a separate manager-owned lifecycle endpoint,
+validates the kernel-generated token and terminal value, and only then emits the
+`CHILD_EXIT` or `CHILD_FAULT` evidence. Architecture handlers no longer emit those
+records directly. Child terminal records remain intermediate events and do not
+terminate host observation.
 The kernel emits the terminal record only after accepting the root task's exit
 syscall.
 

@@ -46,6 +46,7 @@ const Slot = struct {
     saved_stack_pointer: usize = 0,
     address_space_root: arch.AddressSpaceRoot = .{ .value = 0 },
     pending_syscall_frame: ?*frames.TrapFrame = null,
+    retained_fault_frame: ?*frames.TrapFrame = null,
     used: bool = false,
     active: bool = false,
     retired: bool = false,
@@ -105,6 +106,7 @@ pub fn destroy(handle: arch.ThreadContextHandle) arch.ThreadContextError!void {
     slot.saved_stack_pointer = 0;
     slot.address_space_root = .{ .value = 0 };
     slot.pending_syscall_frame = null;
+    slot.retained_fault_frame = null;
     if (slot.generation == MAX_GENERATION) {
         slot.retired = true;
     } else {
@@ -177,6 +179,42 @@ pub fn completeSyscall(
     slot.pending_syscall_frame = null;
 }
 
+pub fn retainFaultFrame(
+    handle: arch.ThreadContextHandle,
+    trap_frame_address: usize,
+    instruction_pointer: u64,
+) arch.ThreadContextError!void {
+    if (!isValidUserInstructionPointer(instruction_pointer)) {
+        return error.InvalidInstructionPointer;
+    }
+    const slot = try resolveMutableSlot(handle);
+    if (slot.retained_fault_frame != null) return error.FaultFrameAlreadyRetained;
+    if (!isKernelStackRange(handle, trap_frame_address, @sizeOf(frames.TrapFrame))) {
+        return error.InvalidFaultFrame;
+    }
+    const trap_frame: *frames.TrapFrame = @ptrFromInt(trap_frame_address);
+    if (trap_frame.instruction_pointer != instruction_pointer) return error.InvalidFaultFrame;
+    slot.retained_fault_frame = trap_frame;
+}
+
+pub fn setFaultInstructionPointer(
+    handle: arch.ThreadContextHandle,
+    instruction_pointer: u64,
+) arch.ThreadContextError!void {
+    if (!isValidUserInstructionPointer(instruction_pointer)) {
+        return error.InvalidInstructionPointer;
+    }
+    const slot = try resolveMutableSlot(handle);
+    const trap_frame = slot.retained_fault_frame orelse return error.NoRetainedFaultFrame;
+    trap_frame.instruction_pointer = instruction_pointer;
+}
+
+pub fn clearFaultFrame(handle: arch.ThreadContextHandle) arch.ThreadContextError!void {
+    const slot = try resolveMutableSlot(handle);
+    if (slot.retained_fault_frame == null) return error.NoRetainedFaultFrame;
+    slot.retained_fault_frame = null;
+}
+
 pub fn availableCount() usize {
     var count: usize = 0;
     for (slots) |slot| {
@@ -211,6 +249,14 @@ pub fn getInitialStateForTest(
         .data_selector = frame.user_frame.stack_selector,
         .flags = frame.user_frame.flags,
     };
+}
+
+pub fn getInitialTrapFrameAddressForTest(
+    handle: arch.ThreadContextHandle,
+) arch.ThreadContextError!usize {
+    const slot = try resolveSlot(handle);
+    const frame: *const InitialStackFrame = @ptrFromInt(slot.saved_stack_pointer);
+    return @intFromPtr(&frame.user_frame);
 }
 
 pub fn getSyscallResultForTest(
@@ -334,6 +380,13 @@ fn isKernelStackRange(handle: arch.ThreadContextHandle, address: usize, size: us
     const start = @intFromPtr(&kernel_stacks[slot_index]);
     const end = kernelStackTop(slot_index);
     return address >= start and address <= end and size <= end - address;
+}
+
+fn isValidUserInstructionPointer(instruction_pointer: u64) bool {
+    if (instruction_pointer == 0) return false;
+    const upper = instruction_pointer >> 47;
+    if (upper != 0 and upper != 0x1ffff) return false;
+    return instruction_pointer < arch.mmu.getKernelVirtualAddressStart();
 }
 
 fn initializeKernelContinuationStack(entry: *const fn () callconv(.c) noreturn) usize {

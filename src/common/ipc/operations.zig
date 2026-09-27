@@ -76,6 +76,11 @@ pub fn receive(
 }
 
 pub fn destroy(handle: endpoint.Handle) Error!void {
+    if (process.thread.referencesLifecycleEndpoint(handle) or
+        process.thread.referencesFaultEndpoint(handle))
+    {
+        return error.EndpointInUse;
+    }
     if (try endpoint.messageCount(handle) != 0) return error.EndpointInUse;
     try cancelEndpoint(handle);
     try endpoint.destroy(handle);

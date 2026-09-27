@@ -1,6 +1,6 @@
 # Root-Created Userspace Processes
 
-Status date: 2026-09-25
+Status date: 2026-09-27
 
 The kernel supports meaningful root-created userspace processes, within a
 deliberately limited execution model. A child is a real isolated protection
@@ -9,9 +9,10 @@ space, bind it to a separate capability space and thread, run it through the
 normal scheduler, contain its faults, and reclaim its resources.
 
 This is enough for freestanding compute processes that use the current syscall
-ABI. It is not yet a general-purpose application or service environment because
-there is no IPC, filesystem-backed program service, standard argument and
-environment convention, or preemptive scheduling.
+ABI and for a bounded manager/service handshake. It is not yet a general-purpose
+application or service environment because
+there is no filesystem-backed program service, general service registry,
+standard argument and environment convention, or preemptive scheduling.
 
 The broader ownership contract is documented in the [kernel object
 model](../kernel-object-model.md). Planned extensions are tracked in the
@@ -34,11 +35,12 @@ capability space, architecture context, exit status or fault state, and schedule
 membership. Kernel authority comes from capabilities, not from the userspace
 `ChildProcess` record.
 
-The child capability space starts empty. The root task has a separate operation
-for installing an attenuated capability into a managed capability space, but the
-current child-construction path does not install any initial grants. A newly
-started child therefore has no delegated memory-management, thread-management,
-device, or service authority.
+The child capability space starts empty. Construction may install only explicitly
+selected startup capabilities. Managed children receive one parent-protocol
+endpoint with attenuated send and receive rights. After the child announces
+startup and requests a service, the root task transfers one send-only service
+endpoint through IPC. No memory-management, thread-management, or device authority
+is delegated by this path.
 
 ## Executable source and validation
 
@@ -132,20 +134,51 @@ can consequently resume, yield again, and allow the child to continue. There is
 no timer preemption: a runnable child that neither yields, exits, faults, nor
 blocks in a future kernel mechanism can retain the processor indefinitely.
 
+## Parent communication and terminal lifecycle delivery
+
+The root task owns a `ManagedProcess` policy record for each managed child. It
+groups the child resource owner with three separate endpoints:
+
+- a parent-protocol endpoint used for startup, service request, and acknowledgment;
+- a manager-only lifecycle endpoint bound to the child thread; and
+- a service endpoint whose send-only capability is transferred after startup.
+
+The parent and lifecycle endpoints are intentionally separate. The child can send
+and receive protocol messages through its attenuated parent capability, but it
+cannot forge or consume kernel lifecycle records. The lifecycle endpoint remains
+manager-owned and cannot be destroyed while a configured thread references it.
+
+The child startup record includes a manager-selected nonzero lifecycle token. The
+kernel copies the resolved lifecycle endpoint identity and token into thread state
+during checked thread configuration. On normal exit or a contained userspace
+fault, common lifecycle policy generates exactly one three-word terminal record:
+
+```text
+event kind | lifecycle token | exit status or coarse fault reason
+```
+
+Kernel-originated delivery wakes a blocked receiver directly when one is waiting;
+otherwise it queues the record on the endpoint. Architecture exception and syscall
+handlers do not synthesize process-manager evidence. The root task emits smoke
+records only after receiving and validating the kernel lifecycle message.
+
 ## Clean exit and fault containment
 
-A clean child `exit` transitions only that thread to the exited state and records
-its status. The scheduler then selects another runnable thread, allowing the root
-task to continue and destroy the child resources.
+A clean child `exit` publishes the bound lifecycle record, transitions only that
+thread to the exited state, and records its status. The scheduler then selects
+another runnable thread, allowing the root task to receive the terminal event and
+destroy the child resources.
 
 A user fault is attributed to the responsible execution context. The production
 smoke child demonstrates this by executing the invalid-opcode instruction `ud2`.
-The child thread becomes faulted, the kernel reports the attributed fault, and
-the root task resumes. The fault does not terminate the root task or the kernel.
+The child thread becomes faulted, the kernel publishes the configured coarse fault
+record, and the root task resumes. The fault does not terminate the root task or
+the kernel.
 
-Containment currently ends at stopping and attributing the fault. There is no
-userspace fault-delivery endpoint, exception-handler registration, automatic
-restart policy, or general parent notification/wait interface.
+U5.4 lifecycle delivery is terminal notification, not resumable fault IPC. There
+is no exception-handler registration, register or address payload, fault reply,
+automatic restart policy, or resume operation. Those richer mechanisms remain
+U5.5.
 
 ## Transactional ownership and cleanup
 
@@ -171,13 +204,16 @@ a retry without double-unmapping, double-destroying, or double-freeing resources
 
 ## Demonstrated production behavior
 
-Production system-smoke protocol version 3 runs two children sequentially:
+Production system-smoke protocol version 7 retains the existing IPC, capability
+transfer, and fault-containment children, then runs two managed children:
 
-1. The clean child starts, yields, resumes, and exits with status zero. The root
-   resumes and destroys all child resources.
-2. The fault child starts, yields, resumes, and executes `ud2`. The kernel
-   contains and reports the invalid-opcode fault, after which the root resumes and
-   destroys all child resources.
+1. A managed clean child announces startup, requests a service, receives a
+   send-only service endpoint, acknowledges readiness through that endpoint, and
+   exits with status zero. The root validates the kernel lifecycle event before
+   emitting `CHILD_EXIT` and reclaiming all child and endpoint resources.
+2. A managed fault child completes the same startup and service handshake, then
+   executes `ud2`. The root validates the kernel's coarse invalid-opcode lifecycle
+   event before emitting `CHILD_FAULT` and reclaiming the resources.
 
 The complete production path has been validated on:
 
@@ -201,9 +237,9 @@ process model. Its deliberate limitations include:
 - dynamic linking, interpreters, relocations, and shared libraries are absent;
 - the startup contract has no command-line arguments, environment, or auxiliary
   vector;
-- the child starts without delegated capabilities or service connections;
-- there are no IPC endpoints, notifications, messages, or IPC capability
-  transfer;
+- service discovery is a fixed demonstration protocol rather than a registry;
+- IPC payloads remain three fixed words and capability transfer is exact-slot,
+  single-capability rendezvous;
 - there is no process ID namespace, naming service, process table, general wait
   API, or persistent parent/child event model;
 - construction creates one initial thread per child;
@@ -211,13 +247,13 @@ process model. Its deliberate limitations include:
 - the stack location and 64 KiB size are fixed;
 - an ELF may contain at most eight loadable segments;
 - page-aligned `PT_LOAD` ranges may not overlap; and
-- faults are contained but cannot yet be delivered to a userspace supervisor.
+- lifecycle faults expose only a terminal coarse class and cannot be resumed.
 
-These restrictions mean a child can perform isolated computation and exercise
-the syscall ABI, but it cannot yet participate in a useful multi-service
-microkernel system. IPC, practical capability delegation, service discovery,
-richer startup data, and process-manager policy are the next boundaries between
-the current vertical slice and general-purpose userspace.
+These restrictions mean a child can perform isolated computation, communicate
+with its manager, receive one attenuated service capability, and report terminal
+lifecycle state, but it cannot yet participate in a general multi-service
+microkernel environment. A real service split, richer startup data, resumable
+fault IPC, notifications, and broader discovery policy remain future work.
 
 ## Production and test boundaries
 

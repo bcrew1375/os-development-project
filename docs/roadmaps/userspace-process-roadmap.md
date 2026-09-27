@@ -1,6 +1,6 @@
 # Userspace Process Roadmap
 
-Status date: 2026-09-25
+Status date: 2026-09-27
 
 This document is the implementation plan for progressing from the bootstrapped
 root task to multiple isolated, useful userspace processes. The architectural
@@ -1198,7 +1198,30 @@ process useful in a microkernel system.
 - revoking the parent derivation invalidates transferred descendants as designed;
 - stale or forged source handles are rejected.
 
-## [ ] U5.4 Establish parent/process-manager communication
+## [x] U5.4 Establish parent/process-manager communication
+
+- Started: 2026-09-27
+- Completed: 2026-09-27
+- Implemented: separate manager-owned parent-protocol and lifecycle endpoints for
+  each managed child; attenuated child access to the parent endpoint; versioned
+  startup, service-request, service-ready, exit, and coarse-fault records; a
+  root-task `ManagedProcess` state machine; dynamic transfer of one send-only
+  service capability; generation-correct delegated-capability cleanup; optional
+  lifecycle endpoint/token fields in thread configuration; endpoint pinning while
+  referenced by a thread; and exactly one kernel-generated terminal lifecycle
+  record for normal userspace exit or contained userspace fault.
+- Validation: ABI and root-task component tests; native lifecycle, syscall,
+  endpoint-pinning, direct-wakeup, queued-delivery, and manager-state tests; `zig
+  build tests`; `zig build coverage` at 100% common-code line coverage (1,031 of
+  1,031 coverable lines); freestanding x86-32 and x86-64 root-task and kernel
+  builds; architecture tests on x86-32 and x86-64; architecture coverage on both
+  targets; protocol-7 production smoke on x86-32 Limine, x86-32 Multiboot, and
+  x86-64 Limine; Python runner tests and compilation; `zig fmt`; and `git diff
+  --check` excluding the pre-existing unrelated `scripts/test.sh` whitespace.
+- Limitation: lifecycle records are terminal notifications only. Fault records
+  contain a coarse fault class and do not expose registers, addresses, resumable
+  replies, or fault-handler policy; those remain U5.5. Manager-initiated thread
+  termination does not emit a lifecycle event in this milestone.
 
 **Root-task work:**
 
@@ -1298,7 +1321,7 @@ process useful in a microkernel system.
 - [x] Processes exchange synchronous IPC messages.
 - [x] Blocking IPC integrates with scheduler state safely.
 - [x] Capabilities transfer atomically with rights attenuation.
-- [ ] The process manager receives child lifecycle and fault events.
+- [x] The process manager receives child lifecycle and fault events.
 - [ ] At least one service runs in a separate userspace protection domain.
 - [ ] Hardware events can reach an authorized userspace thread through a
       notification object.

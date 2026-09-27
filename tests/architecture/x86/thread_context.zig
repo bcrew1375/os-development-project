@@ -53,6 +53,65 @@ pub fn initialStateUsesBoundedKernelStack() !void {
     }
 }
 
+pub fn retainedFaultFrameIsValidatedMutatedAndCleared() !void {
+    const root = currentAddressSpaceRoot();
+    const original_instruction_pointer: usize = 0x0040_0000;
+    const replacement_instruction_pointer: usize = 0x0040_1000;
+    const handle = try arch.thread_context.create(.{
+        .address_space_root = root,
+        .entry_point = original_instruction_pointer,
+        .stack_pointer = validUserStackPointer(0x0080_0000),
+        .argument = 0,
+    });
+    defer arch.thread_context.destroy(handle) catch {};
+
+    const trap_frame_address = try arch.thread_context.getInitialTrapFrameAddressForTest(handle);
+    try framework.expectError(
+        error.InvalidFaultFrame,
+        arch.thread_context.retainFaultFrame(
+            handle,
+            trap_frame_address,
+            original_instruction_pointer + 1,
+        ),
+    );
+    try framework.expectError(
+        error.InvalidInstructionPointer,
+        arch.thread_context.retainFaultFrame(handle, trap_frame_address, 0),
+    );
+
+    try arch.thread_context.retainFaultFrame(
+        handle,
+        trap_frame_address,
+        original_instruction_pointer,
+    );
+    try framework.expectError(
+        error.FaultFrameAlreadyRetained,
+        arch.thread_context.retainFaultFrame(
+            handle,
+            trap_frame_address,
+            original_instruction_pointer,
+        ),
+    );
+    try framework.expectError(
+        error.InvalidInstructionPointer,
+        arch.thread_context.setFaultInstructionPointer(handle, 0),
+    );
+
+    try arch.thread_context.setFaultInstructionPointer(handle, replacement_instruction_pointer);
+    const mutated = try arch.thread_context.getInitialStateForTest(handle);
+    try framework.expectEqual(replacement_instruction_pointer, mutated.entry_point);
+
+    try arch.thread_context.clearFaultFrame(handle);
+    try framework.expectError(
+        error.NoRetainedFaultFrame,
+        arch.thread_context.clearFaultFrame(handle),
+    );
+    try framework.expectError(
+        error.NoRetainedFaultFrame,
+        arch.thread_context.setFaultInstructionPointer(handle, original_instruction_pointer),
+    );
+}
+
 pub fn switchRoundTripRestoresAddressSpaceAndPrivilegeStack() !void {
     @call(.never_inline, arch.boot.finishBoot, .{});
 

@@ -317,6 +317,53 @@ test "Mock thread contexts are bounded and switch address-space roots" {
     );
 }
 
+test "Mock thread contexts retain mutate and clear fault frames" {
+    arch.impl.test_support.resetState();
+    const handle = try arch.thread_context.create(.{
+        .address_space_root = .{ .value = 1 },
+        .entry_point = 0x400000,
+        .stack_pointer = 0x800000,
+        .argument = 0,
+    });
+
+    try std.testing.expectError(
+        error.InvalidFaultFrame,
+        arch.thread_context.retainFaultFrame(handle, 0, 0x400000),
+    );
+    try std.testing.expectError(
+        error.InvalidInstructionPointer,
+        arch.thread_context.retainFaultFrame(handle, 0x1000, 0),
+    );
+    try arch.thread_context.retainFaultFrame(handle, 0x1000, 0x400000);
+    try std.testing.expectEqual(
+        @as(?u64, 0x400000),
+        try arch.thread_context.getFaultInstructionPointerForTest(handle),
+    );
+    try std.testing.expectError(
+        error.FaultFrameAlreadyRetained,
+        arch.thread_context.retainFaultFrame(handle, 0x2000, 0x500000),
+    );
+
+    try arch.thread_context.setFaultInstructionPointer(handle, 0x401000);
+    try std.testing.expectEqual(
+        @as(?u64, 0x401000),
+        try arch.thread_context.getFaultInstructionPointerForTest(handle),
+    );
+    try arch.thread_context.clearFaultFrame(handle);
+    try std.testing.expectEqual(
+        @as(?u64, null),
+        try arch.thread_context.getFaultInstructionPointerForTest(handle),
+    );
+    try std.testing.expectError(
+        error.NoRetainedFaultFrame,
+        arch.thread_context.setFaultInstructionPointer(handle, 0x402000),
+    );
+    try std.testing.expectError(
+        error.NoRetainedFaultFrame,
+        arch.thread_context.clearFaultFrame(handle),
+    );
+}
+
 test "Mock thread context exhaustion and stale handles are explicit" {
     arch.impl.test_support.resetState();
     var handles: [arch.impl.thread_context.MAX_CONTEXTS]arch.ThreadContextHandle = undefined;

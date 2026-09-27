@@ -95,6 +95,7 @@ fn addRootTask(
         .optimize = optimize,
     });
     ipc.addImport("abi", abi);
+    process_management.addImport("ipc", ipc);
     const boot_modules = b.createModule(.{
         .root_source_file = b.path("src/boot_modules.zig"),
         .target = config.target,
@@ -184,6 +185,7 @@ fn addTests(
         .optimize = optimize,
     });
     ipc.addImport("abi", abi);
+    process_management.addImport("ipc", ipc);
     const boot_modules = b.createModule(.{
         .root_source_file = b.path("src/boot_modules.zig"),
         .target = b.graph.host,

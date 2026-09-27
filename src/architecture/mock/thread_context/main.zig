@@ -23,6 +23,8 @@ const Slot = struct {
     configuration: arch.ThreadContextConfiguration = undefined,
     pending_syscall_frame: ?usize = null,
     completed_syscall: ?arch.SyscallResultRegisters = null,
+    retained_fault_frame: ?usize = null,
+    fault_instruction_pointer: ?u64 = null,
     used: bool = false,
     retired: bool = false,
 };
@@ -140,6 +142,38 @@ pub fn completeSyscall(
     slot.completed_syscall = result;
 }
 
+pub fn retainFaultFrame(
+    handle: arch.ThreadContextHandle,
+    trap_frame_address: usize,
+    instruction_pointer: u64,
+) arch.ThreadContextError!void {
+    if (trap_frame_address == 0) return error.InvalidFaultFrame;
+    if (instruction_pointer == 0) return error.InvalidInstructionPointer;
+    const slot = try resolveMutableSlot(handle);
+    if (slot.retained_fault_frame != null) return error.FaultFrameAlreadyRetained;
+    slot.retained_fault_frame = trap_frame_address;
+    slot.fault_instruction_pointer = instruction_pointer;
+}
+
+pub fn setFaultInstructionPointer(
+    handle: arch.ThreadContextHandle,
+    instruction_pointer: u64,
+) arch.ThreadContextError!void {
+    if (instruction_pointer == 0 or instruction_pointer > @as(u64, @import("std").math.maxInt(usize))) {
+        return error.InvalidInstructionPointer;
+    }
+    const slot = try resolveMutableSlot(handle);
+    if (slot.retained_fault_frame == null) return error.NoRetainedFaultFrame;
+    slot.fault_instruction_pointer = instruction_pointer;
+}
+
+pub fn clearFaultFrame(handle: arch.ThreadContextHandle) arch.ThreadContextError!void {
+    const slot = try resolveMutableSlot(handle);
+    if (slot.retained_fault_frame == null) return error.NoRetainedFaultFrame;
+    slot.retained_fault_frame = null;
+    slot.fault_instruction_pointer = null;
+}
+
 pub fn availableCount() usize {
     var count: usize = 0;
     for (slots) |slot| {
@@ -157,6 +191,12 @@ pub fn getCompletedSyscallForTest(
     handle: arch.ThreadContextHandle,
 ) arch.ThreadContextError!?arch.SyscallResultRegisters {
     return (try resolveSlot(handle)).completed_syscall;
+}
+
+pub fn getFaultInstructionPointerForTest(
+    handle: arch.ThreadContextHandle,
+) arch.ThreadContextError!?u64 {
+    return (try resolveSlot(handle)).fault_instruction_pointer;
 }
 
 pub fn getCurrentForTest() arch.ThreadContextHandle {

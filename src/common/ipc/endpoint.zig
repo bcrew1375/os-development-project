@@ -121,6 +121,21 @@ pub fn send(handle: Handle, message: abi.ipc.Message) Error!void {
     slot.length += 1;
 }
 
+/// Atomically appends a bounded message sequence or leaves the queue unchanged.
+pub fn sendBatch(handle: Handle, messages: []const abi.ipc.Message) Error!void {
+    const slot = try resolve(handle);
+    if (messages.len > MESSAGE_CAPACITY - slot.length) return error.EndpointFull;
+    for (messages) |message| {
+        const tail = (slot.head + slot.length) % MESSAGE_CAPACITY;
+        slot.messages[tail] = message;
+        slot.length += 1;
+    }
+}
+
+pub fn availableMessageCount(handle: Handle) Error!usize {
+    return MESSAGE_CAPACITY - (try resolve(handle)).length;
+}
+
 /// Atomically removes the oldest message or reports that the queue is empty.
 pub fn receive(handle: Handle) Error!abi.ipc.Message {
     const slot = try resolve(handle);

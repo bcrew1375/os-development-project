@@ -111,6 +111,28 @@ pub fn resumeThread(handle: thread.Handle) Error!void {
     try makeReady(handle);
 }
 
+pub fn prepareFaultResume(
+    handle: thread.Handle,
+    endpoint_handle: @import("../../ipc/endpoint.zig").Handle,
+    token: u32,
+) Error!thread.Thread {
+    try requireInitialized();
+    const object = try thread.authorizeFaultReply(handle, endpoint_handle, token);
+    if (ready_queue.contains(handle)) return error.ThreadAlreadyQueued;
+    if (ready_queue.length == ready_queue.handles.len) return error.ReadyQueueFull;
+    return object;
+}
+
+pub fn commitFaultResume(
+    handle: thread.Handle,
+    endpoint_handle: @import("../../ipc/endpoint.zig").Handle,
+    token: u32,
+) Error!void {
+    _ = try prepareFaultResume(handle, endpoint_handle, token);
+    try thread.resumeFromFault(handle, endpoint_handle, token);
+    try ready_queue.push(handle);
+}
+
 pub fn blockCurrentForEndpoint(reason: thread.BlockReason) Error!void {
     try requireInitialized();
     const current_handle = current_thread_handle orelse return error.NoCurrentThread;
@@ -286,6 +308,10 @@ fn blockReasonMatches(actual: ?thread.BlockReason, expected: thread.BlockReason)
     const reason = actual orelse return false;
     return switch (reason) {
         .suspended => expected == .suspended,
+        .fault_manager => |handle| switch (expected) {
+            .fault_manager => |expected_handle| handle == expected_handle,
+            else => false,
+        },
         .endpoint_send => |handle| switch (expected) {
             .endpoint_send => |expected_handle| handle == expected_handle,
             else => false,
