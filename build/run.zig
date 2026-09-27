@@ -11,10 +11,27 @@ pub fn addStep(
     root_task: configuration.RootTaskArtifact,
 ) void {
     const child_module = production_boot_modules.createChildModule(b, config.architecture);
+    const echo_service_module = production_boot_modules.createEchoServiceModule(
+        b,
+        config.architecture,
+    );
     const run_step = b.step("run", "Run kernel with qemu");
     const run_command = switch (config.bootloader) {
-        .multiboot => createDirectKernelRunStep(b, kernel, root_task, child_module),
-        .limine => createLimineRunStep(b, config, kernel, root_task, child_module),
+        .multiboot => createDirectKernelRunStep(
+            b,
+            kernel,
+            root_task,
+            child_module,
+            echo_service_module,
+        ),
+        .limine => createLimineRunStep(
+            b,
+            config,
+            kernel,
+            root_task,
+            child_module,
+            echo_service_module,
+        ),
     };
 
     run_command.step.dependOn(b.getInstallStep());
@@ -26,20 +43,23 @@ fn createDirectKernelRunStep(
     kernel: *std.Build.Step.Compile,
     root_task: configuration.RootTaskArtifact,
     child_module: std.Build.LazyPath,
+    echo_service_module: std.Build.LazyPath,
 ) *std.Build.Step.Run {
     const script =
         \\set -eu
         \\kernel="$1"
         \\root_task="$2"
         \\child_module="$3"
-        \\shift 3
-        \\exec qemu-system-i386 "$@" -kernel "$kernel" -initrd "$root_task,$child_module"
+        \\echo_service_module="$4"
+        \\shift 4
+        \\exec qemu-system-i386 "$@" -kernel "$kernel" -initrd "$root_task,$child_module,$echo_service_module"
     ;
     const qemu_cmd = b.addSystemCommand(&.{ "bash", "-c", script, "run-multiboot" });
 
     qemu_cmd.addFileArg(kernel.getEmittedBin());
     qemu_cmd.addFileArg(root_task.path);
     qemu_cmd.addFileArg(child_module);
+    qemu_cmd.addFileArg(echo_service_module);
     qemu_cmd.addArgs(direct_qemu_args[1..]);
 
     return qemu_cmd;
@@ -51,6 +71,7 @@ fn createLimineRunStep(
     kernel: *std.Build.Step.Compile,
     root_task: configuration.RootTaskArtifact,
     child_module: std.Build.LazyPath,
+    echo_service_module: std.Build.LazyPath,
 ) *std.Build.Step.Run {
     const iso = limine.createIso(
         b,
@@ -64,6 +85,10 @@ fn createLimineRunStep(
             .{
                 .source = child_module,
                 .iso_name = production_boot_modules.child_module_name,
+            },
+            .{
+                .source = echo_service_module,
+                .iso_name = production_boot_modules.echo_service_module_name,
             },
         },
         b.fmt("kernel-{s}.iso", .{@tagName(config.architecture)}),
