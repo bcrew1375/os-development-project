@@ -9,18 +9,19 @@ who need context before entering the source or the detailed roadmaps.
 ## Maturity in one sentence
 
 > The repository is a well-structured x86 kernel bring-up environment with a real
-> userspace transition, cooperative scheduling, root-task child construction, and
-> scheduler-integrated buffered IPC, but it does not yet provide capability
-> transfer or a complete microkernel service model.
+> userspace transition, cooperative scheduling, root-task child construction,
+> scheduler-integrated buffered IPC, and atomic capability transfer, but it does not
+> yet provide a complete microkernel service model.
 
 The production system can boot on x86-32 and x86-64, load a freestanding root
 ELF, enter ring 3, service system calls, enforce capability-space-local rights,
 contain user faults, construct isolated child processes from packaged ELF
 artifacts, and observe clean child/root exits. The root and child threads are
-enrolled through the normal cooperative scheduler and complete a blocking
-request/reply exchange through capability-authorized endpoints. The root task
-remains bootstrap-created, while capability transfer and useful multi-service
-orchestration remain future work.
+enrolled through the normal cooperative scheduler, complete a blocking
+request/reply exchange through capability-authorized endpoints, and can transfer
+an attenuated capability into an exact destination slot. The root task remains
+bootstrap-created, while userspace fault delivery, notifications, and useful
+multi-service orchestration remain future work.
 
 ## System boundary
 
@@ -215,6 +216,17 @@ slot; compatible peers complete retained syscalls through the architecture
 context and wake through scheduler-owned endpoint reasons. Capability deletion,
 endpoint destruction, thread exit, and user fault cancel affected waiters.
 
+`src/common/ipc/transfer_operations.zig` adds a direct-rendezvous capability transfer
+path with its own transfer sender and receiver wait queues, which never match
+ordinary endpoint waiters. A send names a `grant`-authorized source capability, the
+attenuated rights, and a message; a receive names an exact destination slot in the
+receiving capability space. Delivery is transactional: the transfer validates the
+source rights and destination availability and prepares the scheduler wake before
+committing the installed capability, so a failure leaves the sender's, receiver's,
+and endpoint's state unchanged. `src/common/syscall` exposes it as the
+`endpoint_send_capability` and `endpoint_receive_capability` syscalls, returning the
+installed slot-local handle in an added fourth result register.
+
 There is no first-class kernel process object; process grouping remains userspace
 policy. The root task's bounded `ChildProcess` record groups the public object
 capabilities and physical allocations required for one child and owns transactional
@@ -258,13 +270,20 @@ handle from one space does not resolve in another. Slots record object identity,
 rights, and an optional cross-space parent reference. Userspace may install an
 attenuated capability into a managed target space and later delete that target-local
 slot. Physical-memory revocation follows derivation references across spaces.
+
+Endpoint capability transfer uses a separate transactional exact-slot path. A
+`grant` right is required to derive or transfer, attenuation is validated before
+mutation, an occupied or retired destination is rejected explicitly, and the
+installation is rolled back if delivery fails. Revocation of a physical parent
+counts remaining authority references, so a revoked derivation invalidates
+transferred descendants without destroying authority still referenced elsewhere.
 Thread and capability-space objects are first-class capability targets with explicit
 configure, start, suspend, resume, terminate, and manage authority.
 
 This is still not a complete seL4 CSpace model: there are no addressable multi-level
-CSpace trees, badges, endpoint transfer, or general revocation semantics for every
-object type. The implemented bounded model is sufficient for U4.5 construction and
-least-authority delegation.
+CSpace trees, badges, or general revocation semantics for every object type. The
+implemented bounded model is sufficient for U4.5 construction, least-authority
+delegation, and U5.3 atomic transfer.
 
 ### Syscall policy
 
@@ -370,12 +389,12 @@ details.
 | Userspace | Bootstrapped root plus sequentially constructed isolated child processes | IPC-connected services and broader process policy |
 | Address spaces | Every registered object owns a hardware root and bounded VMA registry | Thread-driven activation and broader lifecycle integration |
 | Memory objects | Immutable delegated physical backing and transactional explicit-root mapping | Broader object attributes and sharing policy |
-| Capabilities | Bounded generation-checked spaces, local handles, rights attenuation, cross-space install/delete, physical derivation tracking | Endpoint transfer and broader object revocation semantics |
-| Scheduling | Bounded FIFO cooperative scheduler, reserved idle continuation, root/child yielding, and contained exit/fault handoff | Timer preemption and blocking IPC |
+| Capabilities | Bounded generation-checked spaces, local handles, rights attenuation, `grant`-authorized exact-slot transfer, cross-space install/delete, reference-counted physical derivation tracking | Broader object revocation semantics and multi-level addressing |
+| Scheduling | Bounded FIFO cooperative scheduler, reserved idle continuation, root/child yielding, and contained exit/fault handoff | Timer preemption and priority policy |
 | Fault handling | User faults are attributed and contained | Process-manager consumption and richer reporting |
-| IPC | None | Synchronous endpoints, then notifications |
+| IPC | Capability-authorized endpoints with blocking buffered messages and atomic capability transfer | Notifications and userspace driver routing |
 | Memory policy | Bounded root-task physical-range allocator and capability-backed multi-extent userspace heap; no kernel PMM or heap | Capability-funded userspace services and broader reclamation policy |
-| Testing | Native, physical, coverage, and protocol-v3 root/child smoke layers | Cover IPC and useful service processes |
+| Testing | Native, physical, coverage, and protocol-5 root/child smoke layers | Cover IPC and useful service processes |
 
 ## Why the repository is shaped this way
 

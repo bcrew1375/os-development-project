@@ -101,9 +101,13 @@ pub const KernelContinuationConfiguration = struct {
 };
 
 /// Architecture-neutral register values returned by a completed syscall.
+///
+/// `capability` is optional because its register is an argument register for
+/// ordinary syscalls on some architectures; only transfer operations define it.
 pub const SyscallResultRegisters = struct {
     status: u32,
     words: [3]u64 = .{ 0, 0, 0 },
+    capability: ?u64 = null,
 
     pub fn fromStatus(status: u32) SyscallResultRegisters {
         return .{ .status = status };
@@ -230,6 +234,7 @@ pub fn validateImpl(comptime T: type) void {
             activate: fn (handle: ThreadContextHandle) noreturn,
             switchContext: fn (current: ThreadContextHandle, next: ThreadContextHandle) ThreadContextError!void,
             beginSyscall: fn (handle: ThreadContextHandle, trap_frame_address: usize) ThreadContextError!void,
+            prepareSyscallCompletion: fn (handle: ThreadContextHandle) ThreadContextError!void,
             completeSyscall: fn (handle: ThreadContextHandle, result: SyscallResultRegisters) ThreadContextError!void,
             availableCount: fn () usize,
         });

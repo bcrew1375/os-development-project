@@ -46,6 +46,8 @@ pub const Operation = enum {
     destroy_endpoint,
     endpoint_send,
     endpoint_receive,
+    endpoint_send_capability,
+    endpoint_receive_capability,
     convert_argument,
 };
 
@@ -162,6 +164,16 @@ pub fn dispatchWithServices(
             caller_capability_space,
             request.arguments[0],
         ),
+        .endpoint_send_capability => sendEndpointCapability(
+            Services,
+            caller_capability_space,
+            request.arguments,
+        ),
+        .endpoint_receive_capability => receiveEndpointCapability(
+            Services,
+            caller_capability_space,
+            request.arguments,
+        ),
         _ => .{ .returned = abi.syscall.errorResult(.unsupported) },
     };
 }
@@ -226,6 +238,58 @@ fn receiveEndpoint(
         .completed => |message| .{ .returned_registers = .{
             .status = abi.syscall.SYSCALL_SUCCESS,
             .words = .{ message.words[0], message.words[1], message.words[2] },
+        } },
+        .blocked => .blocked,
+    };
+}
+
+fn sendEndpointCapability(
+    comptime Services: type,
+    caller_space: u32,
+    arguments: [5]u64,
+) Result {
+    if (!@hasDecl(Services, "sendEndpointCapability")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const endpoint_capability = toU32(arguments[0]) catch |err| {
+        return failure(.convert_argument, err);
+    };
+    const outcome = Services.sendEndpointCapability(
+        caller_space,
+        endpoint_capability,
+        arguments[1],
+    ) catch |err| return failure(.endpoint_send_capability, err);
+    return switch (outcome) {
+        .completed => .{ .returned = abi.syscall.SYSCALL_SUCCESS },
+        .blocked => .blocked,
+    };
+}
+
+fn receiveEndpointCapability(
+    comptime Services: type,
+    caller_space: u32,
+    arguments: [5]u64,
+) Result {
+    if (!@hasDecl(Services, "receiveEndpointCapability")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const endpoint_capability = toU32(arguments[0]) catch |err| {
+        return failure(.convert_argument, err);
+    };
+    const outcome = Services.receiveEndpointCapability(
+        caller_space,
+        endpoint_capability,
+        arguments[1],
+    ) catch |err| return failure(.endpoint_receive_capability, err);
+    return switch (outcome) {
+        .completed => |transfer| .{ .returned_registers = .{
+            .status = abi.syscall.SYSCALL_SUCCESS,
+            .words = .{
+                transfer.message.words[0],
+                transfer.message.words[1],
+                transfer.message.words[2],
+            },
+            .capability = transfer.capability,
         } },
         .blocked => .blocked,
     };
@@ -717,6 +781,8 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.EndpointEmpty => .endpoint_empty,
         error.EndpointFull => .endpoint_full,
         error.EndpointCanceled => .endpoint_canceled,
+        error.CapabilitySlotOccupied => .capability_slot_occupied,
+        error.InvalidCapabilitySlot => .invalid_capability_slot,
         error.UserPageNotMapped,
         error.UserAccessDenied,
         error.WriteAccessDenied,
@@ -839,6 +905,44 @@ fn productionReceiveEndpointMessage(
     });
 }
 
+fn productionSendEndpointCapability(
+    caller_space: u32,
+    endpoint_capability: u32,
+    request_address: u64,
+) !ipc.transfer_operations.Outcome {
+    var bytes: [@sizeOf(abi.ipc.TransferSendRequest)]u8 = undefined;
+    try user_memory.copyFromUser(&bytes, request_address, bytes.len);
+    const transfer_request = @import("std").mem.bytesToValue(abi.ipc.TransferSendRequest, &bytes);
+    const handle = try capability.resolveEndpoint(
+        caller_space,
+        endpoint_capability,
+        .{ .send = true },
+    );
+    return ipc.transfer_operations.send(handle, .{
+        .capability_space_handle = caller_space,
+        .capability_handle = endpoint_capability,
+    }, caller_space, transfer_request);
+}
+
+fn productionReceiveEndpointCapability(
+    caller_space: u32,
+    endpoint_capability: u32,
+    request_address: u64,
+) !ipc.transfer_operations.ReceiveOutcome {
+    var bytes: [@sizeOf(abi.ipc.TransferReceiveRequest)]u8 = undefined;
+    try user_memory.copyFromUser(&bytes, request_address, bytes.len);
+    const transfer_request = @import("std").mem.bytesToValue(abi.ipc.TransferReceiveRequest, &bytes);
+    const handle = try capability.resolveEndpoint(
+        caller_space,
+        endpoint_capability,
+        .{ .receive = true },
+    );
+    return ipc.transfer_operations.receive(handle, .{
+        .capability_space_handle = caller_space,
+        .capability_handle = endpoint_capability,
+    }, caller_space, transfer_request);
+}
+
 const ProductionServices = struct {
     pub const currentAddressSpaceHandle = process.execution_context.currentAddressSpaceHandle;
     pub const findAddressSpaceCapability = capability.findAddressSpaceCapability;
@@ -871,4 +975,6 @@ const ProductionServices = struct {
     pub const destroyEndpointCapability = capability.destroyEndpointCapability;
     pub const sendEndpointMessage = productionSendEndpointMessage;
     pub const receiveEndpointMessage = productionReceiveEndpointMessage;
+    pub const sendEndpointCapability = productionSendEndpointCapability;
+    pub const receiveEndpointCapability = productionReceiveEndpointCapability;
 };

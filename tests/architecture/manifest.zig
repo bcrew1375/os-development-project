@@ -45,6 +45,7 @@ pub const TestId = enum {
     thread_context_switch_round_trip_restores_architecture_state,
     kernel_continuation_switch_round_trip_restores_architecture_state,
     syscall_continuation_supports_deferred_multi_register_writeback,
+    scalar_syscall_completion_preserves_live_capability_register,
 };
 
 pub const ExpectedFault = struct {
@@ -109,6 +110,7 @@ pub const tests = [_]Test{
     .{ .id = .thread_context_switch_round_trip_restores_architecture_state, .name = "thread context switch round trip restores architecture state", .mode = .isolated_machine, .architectures = all_x86 },
     .{ .id = .kernel_continuation_switch_round_trip_restores_architecture_state, .name = "kernel continuation switch round trip restores architecture state", .mode = .isolated_machine, .architectures = all_x86 },
     .{ .id = .syscall_continuation_supports_deferred_multi_register_writeback, .name = "syscall continuation supports deferred multi-register writeback", .mode = .isolated_machine, .architectures = all_x86 },
+    .{ .id = .scalar_syscall_completion_preserves_live_capability_register, .name = "scalar syscall completion preserves the live capability register", .mode = .isolated_machine, .architectures = all_x86 },
 };
 
 pub fn find(id: TestId) Test {

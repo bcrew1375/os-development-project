@@ -294,6 +294,14 @@ fn blockReasonMatches(actual: ?thread.BlockReason, expected: thread.BlockReason)
             .endpoint_receive => |expected_handle| handle == expected_handle,
             else => false,
         },
+        .endpoint_transfer_send => |handle| switch (expected) {
+            .endpoint_transfer_send => |expected_handle| handle == expected_handle,
+            else => false,
+        },
+        .endpoint_transfer_receive => |handle| switch (expected) {
+            .endpoint_transfer_receive => |expected_handle| handle == expected_handle,
+            else => false,
+        },
     };
 }
 

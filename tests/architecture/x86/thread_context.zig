@@ -16,6 +16,7 @@ var syscall_next: arch.ThreadContextHandle = arch.INVALID_THREAD_CONTEXT_HANDLE;
 const deferred_syscall_result = arch.SyscallResultRegisters{
     .status = 0x1234_5678,
     .words = .{ 0x1111_2222, 0x3333_4444, 0x5555_6666 },
+    .capability = 0x7777_8888,
 };
 
 pub fn initialStateUsesBoundedKernelStack() !void {
@@ -190,6 +191,36 @@ pub fn syscallContinuationSupportsDeferredMultiRegisterWriteback() !void {
     for (deferred_syscall_result.words, actual.words) |expected, observed| {
         try framework.expectEqual(expected, observed);
     }
+    try framework.expectEqual(deferred_syscall_result.capability, actual.capability);
+}
+
+pub fn scalarSyscallCompletionPreservesLiveCapabilityRegister() !void {
+    @call(.never_inline, arch.boot.finishBoot, .{});
+
+    const root = currentAddressSpaceRoot();
+    const current = try arch.thread_context.create(.{
+        .address_space_root = root,
+        .entry_point = 0x0040_0000,
+        .stack_pointer = validUserStackPointer(0x0082_0000),
+        .argument = 0,
+    });
+
+    // The capability register is an argument register for ordinary syscalls on
+    // x86-32, so it holds live caller state that a non-transfer syscall must
+    // return untouched. Seed it with a transfer completion, then reuse the same
+    // trap frame for a scalar completion that defines no capability result.
+    const bounds = try arch.thread_context.getKernelStackBoundsForTest(current);
+    const trap_frame_address = bounds.start;
+
+    try arch.thread_context.beginSyscall(current, trap_frame_address);
+    try arch.thread_context.completeSyscall(current, deferred_syscall_result);
+
+    try arch.thread_context.beginSyscall(current, trap_frame_address);
+    try arch.thread_context.completeSyscall(current, .fromStatus(0x0000_0042));
+
+    const actual = try arch.thread_context.getSyscallResultForTest(current, trap_frame_address);
+    try framework.expectEqual(@as(u32, 0x0000_0042), actual.status);
+    try framework.expectEqual(deferred_syscall_result.capability.?, actual.capability.?);
 }
 
 fn deferredSyscallContinuation() callconv(.c) noreturn {

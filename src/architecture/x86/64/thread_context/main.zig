@@ -158,6 +158,11 @@ pub fn beginSyscall(
     slot.pending_syscall_frame = @ptrFromInt(trap_frame_address);
 }
 
+pub fn prepareSyscallCompletion(handle: arch.ThreadContextHandle) arch.ThreadContextError!void {
+    const slot = try resolveSlot(handle);
+    if (slot.pending_syscall_frame == null) return error.NoPendingSyscall;
+}
+
 pub fn completeSyscall(
     handle: arch.ThreadContextHandle,
     result: arch.SyscallResultRegisters,
@@ -168,6 +173,7 @@ pub fn completeSyscall(
     trap_frame.rbx = result.words[0];
     trap_frame.rcx = result.words[1];
     trap_frame.rdx = result.words[2];
+    if (result.capability) |installed| trap_frame.rsi = installed;
     slot.pending_syscall_frame = null;
 }
 
@@ -219,6 +225,7 @@ pub fn getSyscallResultForTest(
     return .{
         .status = @truncate(trap_frame.rax),
         .words = .{ trap_frame.rbx, trap_frame.rcx, trap_frame.rdx },
+        .capability = trap_frame.rsi,
     };
 }
 

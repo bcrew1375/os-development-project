@@ -101,5 +101,6 @@ fn testFunction(id: manifest.TestId) framework.TestFunction {
         .thread_context_switch_round_trip_restores_architecture_state => thread_context.switchRoundTripRestoresAddressSpaceAndPrivilegeStack,
         .kernel_continuation_switch_round_trip_restores_architecture_state => thread_context.kernelContinuationRoundTripRestoresAddressSpaceAndPrivilegeStack,
         .syscall_continuation_supports_deferred_multi_register_writeback => thread_context.syscallContinuationSupportsDeferredMultiRegisterWriteback,
+        .scalar_syscall_completion_preserves_live_capability_register => thread_context.scalarSyscallCompletionPreservesLiveCapabilityRegister,
     };
 }

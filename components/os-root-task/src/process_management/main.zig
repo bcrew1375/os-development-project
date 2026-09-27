@@ -152,6 +152,8 @@ pub fn ProcessManager(comptime Transport: type) type {
                 .endpoint_empty,
                 .endpoint_full,
                 .endpoint_canceled,
+                .capability_slot_occupied,
+                .invalid_capability_slot,
                 => Error.InternalFailure,
                 .internal_failure => Error.InternalFailure,
             };

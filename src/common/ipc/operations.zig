@@ -139,12 +139,17 @@ fn cancelWaiter(handle: endpoint.Handle, waiter: endpoint.CanceledWaiter) Error!
     const blocked = switch (waiter) {
         .sender => |sender| sender.waiter,
         .receiver => |receiver| receiver,
+        .transfer_sender => |sender| sender.waiter,
+        .transfer_receiver => |receiver| receiver.waiter,
     };
     const reason: process.thread.BlockReason = switch (waiter) {
         .sender => .{ .endpoint_send = handle },
         .receiver => .{ .endpoint_receive = handle },
+        .transfer_sender => .{ .endpoint_transfer_send = handle },
+        .transfer_receiver => .{ .endpoint_transfer_receive = handle },
     };
     try prepareWake(handle, blocked, reason);
+    try arch.thread_context.prepareSyscallCompletion(blocked.architecture_context_handle);
     try arch.thread_context.completeSyscall(
         blocked.architecture_context_handle,
         .fromStatus(abi.syscall.errorResult(.endpoint_canceled)),

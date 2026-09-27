@@ -36,6 +36,8 @@ pub const SyscallNumber = enum(u32) {
     destroy_endpoint = 34,
     endpoint_send = 35,
     endpoint_receive = 36,
+    endpoint_send_capability = 37,
+    endpoint_receive_capability = 38,
     _,
 };
 
@@ -69,6 +71,8 @@ pub const ErrorCode = enum(u32) {
     endpoint_empty = 13,
     endpoint_full = 14,
     endpoint_canceled = 15,
+    capability_slot_occupied = 16,
+    invalid_capability_slot = 17,
 };
 
 /// Encodes a recoverable ABI error in a syscall return value.
@@ -95,6 +99,8 @@ pub fn decodeError(value: u32) ?ErrorCode {
         @intFromEnum(ErrorCode.endpoint_empty) => .endpoint_empty,
         @intFromEnum(ErrorCode.endpoint_full) => .endpoint_full,
         @intFromEnum(ErrorCode.endpoint_canceled) => .endpoint_canceled,
+        @intFromEnum(ErrorCode.capability_slot_occupied) => .capability_slot_occupied,
+        @intFromEnum(ErrorCode.invalid_capability_slot) => .invalid_capability_slot,
         else => .internal_failure,
     };
 }
@@ -185,5 +191,34 @@ pub fn syscallReceive(number: u32, endpoint: capability.CapabilityHandle) ipc.Re
     return .{
         .status = status,
         .message = .{ .words = .{ @truncate(word0), @truncate(word1), @truncate(word2) } },
+    };
+}
+
+/// Performs a capability-transfer receive returning a handle plus three message registers.
+pub fn syscallTransferReceive(
+    number: u32,
+    endpoint: capability.CapabilityHandle,
+    request: *const ipc.TransferReceiveRequest,
+) ipc.TransferReceiveResult {
+    var status: u32 = undefined;
+    var word0: usize = undefined;
+    var word1: usize = undefined;
+    var word2: usize = undefined;
+    var installed_capability: usize = undefined;
+    asm volatile (
+        \\int $0x80
+        : [status] "={eax}" (status),
+          [word0] "={ebx}" (word0),
+          [word1] "={ecx}" (word1),
+          [word2] "={edx}" (word2),
+          [installed_capability] "={esi}" (installed_capability),
+        : [number] "{eax}" (number),
+          [endpoint] "{ebx}" (endpoint),
+          [request] "{ecx}" (request),
+        : .{ .memory = true });
+    return .{
+        .status = status,
+        .message = .{ .words = .{ @truncate(word0), @truncate(word1), @truncate(word2) } },
+        .capability = @truncate(installed_capability),
     };
 }

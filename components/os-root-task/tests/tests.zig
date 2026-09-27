@@ -206,12 +206,25 @@ const EndpointRecordingTransport = struct {
     var arguments: [5]usize = .{ 0, 0, 0, 0, 0 };
     var scalar_response: u32 = abi.syscall.SYSCALL_SUCCESS;
     var receive_response: abi.ipc.ReceiveResult = .{ .status = abi.syscall.SYSCALL_SUCCESS };
+    var transfer_receive_response: abi.ipc.TransferReceiveResult = .{
+        .status = abi.syscall.SYSCALL_SUCCESS,
+        .capability = abi.capability.INVALID_CAPABILITY,
+    };
+
+    var recorded_transfer_send_request: ?abi.ipc.TransferSendRequest = null;
+    var recorded_transfer_receive_request: ?abi.ipc.TransferReceiveRequest = null;
 
     fn reset() void {
         syscall_number = 0;
         arguments = .{ 0, 0, 0, 0, 0 };
         scalar_response = abi.syscall.SYSCALL_SUCCESS;
         receive_response = .{ .status = abi.syscall.SYSCALL_SUCCESS };
+        transfer_receive_response = .{
+            .status = abi.syscall.SYSCALL_SUCCESS,
+            .capability = abi.capability.INVALID_CAPABILITY,
+        };
+        recorded_transfer_send_request = null;
+        recorded_transfer_receive_request = null;
     }
 
     pub fn syscall3(
@@ -222,6 +235,10 @@ const EndpointRecordingTransport = struct {
     ) callconv(.c) u32 {
         syscall_number = number;
         arguments = .{ argument0, argument1, argument2, 0, 0 };
+        if (number == @intFromEnum(abi.syscall.SyscallNumber.endpoint_send_capability)) {
+            const req_ptr: *const abi.ipc.TransferSendRequest = @ptrFromInt(argument1);
+            recorded_transfer_send_request = req_ptr.*;
+        }
         return scalar_response;
     }
 
@@ -245,6 +262,17 @@ const EndpointRecordingTransport = struct {
         syscall_number = number;
         arguments = .{ endpoint, 0, 0, 0, 0 };
         return receive_response;
+    }
+
+    pub fn syscallTransferReceive(
+        number: u32,
+        endpoint: abi.capability.CapabilityHandle,
+        request: *const abi.ipc.TransferReceiveRequest,
+    ) abi.ipc.TransferReceiveResult {
+        syscall_number = number;
+        arguments = .{ endpoint, @intFromPtr(request), 0, 0, 0 };
+        recorded_transfer_receive_request = request.*;
+        return transfer_receive_response;
     }
 };
 const endpoint_manager = ipc.EndpointManager(EndpointRecordingTransport);
@@ -1025,6 +1053,57 @@ test "endpoint manager emits fixed-register endpoint syscalls" {
     );
 }
 
+test "endpoint manager emits capability-transfer send and receive syscalls" {
+    EndpointRecordingTransport.reset();
+    const endpoint = ipc.Endpoint{ .capability = 73 };
+    const message = abi.ipc.Message{ .words = .{ 10, 20, 30 } };
+    const rights = abi.capability.Rights{ .send = true };
+
+    try endpoint_manager.sendCapability(endpoint, 99, rights, message);
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.endpoint_send_capability),
+        EndpointRecordingTransport.syscall_number,
+    );
+    try std.testing.expectEqual(@as(usize, 73), EndpointRecordingTransport.arguments[0]);
+    const send_req = EndpointRecordingTransport.recorded_transfer_send_request.?;
+    try std.testing.expectEqual(@as(u32, 99), send_req.source_capability);
+    try std.testing.expectEqual(abi.capability.rightsBits(rights), send_req.rights_bits);
+    try std.testing.expectEqual(message, send_req.message);
+
+    EndpointRecordingTransport.reset();
+    EndpointRecordingTransport.transfer_receive_response = .{
+        .status = abi.syscall.SYSCALL_SUCCESS,
+        .message = message,
+        .capability = 101,
+    };
+    const received = try endpoint_manager.receiveCapability(endpoint, 15);
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.endpoint_receive_capability),
+        EndpointRecordingTransport.syscall_number,
+    );
+    try std.testing.expectEqual(@as(usize, 73), EndpointRecordingTransport.arguments[0]);
+    const recv_req = EndpointRecordingTransport.recorded_transfer_receive_request.?;
+    try std.testing.expectEqual(@as(u32, 15), recv_req.destination_slot);
+    try std.testing.expectEqual(message, received.message);
+    try std.testing.expectEqual(@as(u32, 101), received.capability);
+
+    EndpointRecordingTransport.reset();
+    EndpointRecordingTransport.transfer_receive_response.status =
+        abi.syscall.errorResult(.capability_slot_occupied);
+    try std.testing.expectError(
+        error.SlotOccupied,
+        endpoint_manager.receiveCapability(endpoint, 15),
+    );
+
+    EndpointRecordingTransport.reset();
+    EndpointRecordingTransport.transfer_receive_response.status =
+        abi.syscall.errorResult(.invalid_capability_slot);
+    try std.testing.expectError(
+        error.InvalidSlot,
+        endpoint_manager.receiveCapability(endpoint, 15),
+    );
+}
+
 test "endpoint manager distinguishes empty full and authorization failures" {
     const cases = [_]struct { code: abi.syscall.ErrorCode, err: ipc.Error }{
         .{ .code = .endpoint_empty, .err = error.Empty },
@@ -1032,6 +1111,7 @@ test "endpoint manager distinguishes empty full and authorization failures" {
         .{ .code = .endpoint_canceled, .err = error.Canceled },
         .{ .code = .insufficient_rights, .err = error.InsufficientRights },
         .{ .code = .invalid_capability, .err = error.InvalidCapability },
+        .{ .code = .invalid_user_memory, .err = error.InvalidUserMemory },
     };
     for (cases) |case| {
         EndpointRecordingTransport.reset();

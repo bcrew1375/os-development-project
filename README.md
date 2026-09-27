@@ -4,14 +4,15 @@ An early x86 microkernel project written in Zig. The repository currently boots
 on x86-32 and x86-64, loads an independently built root task, enters user mode,
 constructs isolated child processes, and exercises a capability-shaped syscall
 ABI under QEMU. Root and child threads use scheduler-integrated blocking IPC for
-a bounded request/reply exchange.
+a bounded request/reply exchange and can transfer an attenuated capability into
+an exact destination slot.
 
 The project is intentionally **not described as a complete microkernel yet**.
 Its current object registries, capability checks, physical-memory delegation,
 architecture-neutral thread lifecycle, low-level x86 context switching, bounded
 cooperative scheduling, process construction, fault containment, capability
-spaces, and buffered IPC establish useful boundaries. Capability transfer,
-userspace fault delivery, notifications, and userspace service extraction remain
+spaces, buffered IPC, and atomic capability transfer establish useful boundaries.
+Userspace fault delivery, notifications, and userspace service extraction remain
 future work.
 
 ## Design direction
@@ -73,8 +74,9 @@ validation semantics.
 
 ## Current priorities
 
-The current milestone is to extend scheduler-integrated endpoint IPC with atomic
-capability transfer and rights attenuation. The detailed sequence is tracked in
-the [userspace process roadmap](docs/roadmaps/userspace-process-roadmap.md), while
+The current milestone is to turn the transferred endpoint capability into usable
+parent/process-manager communication and userspace fault delivery. The detailed
+sequence is tracked in the
+[userspace process roadmap](docs/roadmaps/userspace-process-roadmap.md), while
 ownership and lifetime rules are defined in the
 [kernel object model](docs/kernel-object-model.md).

@@ -1145,7 +1145,37 @@ process useful in a microkernel system.
 - cancellation removes stale wait-queue entries;
 - a two-thread ping/pong test runs for many iterations.
 
-## [ ] U5.3 Transfer capabilities through IPC
+## [x] U5.3 Transfer capabilities through IPC
+
+- Started: 2026-09-26
+- Completed: 2026-09-26
+- Implemented: a `grant` capability right with an extended known-rights mask; explicit
+  source and destination slots carried by fixed-layout `TransferSendRequest` and
+  `TransferReceiveRequest` records copied through checked user memory; a fourth
+  `TransferReceiveResult` register (`esi`/`rsi`) returning the installed
+  slot-local handle; capability-authorized `endpoint_send_capability` and
+  `endpoint_receive_capability` syscalls with root-task wrappers; dedicated
+  transfer sender and receiver wait queues that never cross-match ordinary
+  endpoint waiters; direct sender-to-receiver rendezvous that installs the
+  attenuated derivation into the receiver's exact destination slot; transactional
+  three-phase installation (validate, prepare wake, commit) with explicit rollback
+  when the destination becomes occupied; generation-checked rejection of forged,
+  stale, and ungranted source handles; cancellation of blocked transfer senders
+  when the source capability is deleted; and reference-counted revocation so that
+  revoking a parent derivation invalidates transferred physical descendants.
+- Validation: ABI and root-task component tests; native exact-slot transaction,
+  both blocking orders, cross-matching, cancellation, forged/stale/ungranted
+  source, cross-space revocation, and production-syscall copy/writeback tests;
+  `zig build tests`; `zig build coverage` at 100% common-code line coverage;
+  freestanding x86-32 and x86-64 production builds; architecture tests and
+  architecture coverage on both targets; both production system-smoke tests as
+  regression evidence (they do not yet exercise transfer, as noted below);
+  `zig fmt --check`; and `git diff --check`.
+- Limitation: transfer is a direct sender-to-receiver rendezvous with a single
+  capability per message and exact-slot addressing only; there is no badges,
+  multi-level CSpace addressing, bulk transfer, or cross-endpoint capability
+  delivery queue. Root-task wrappers exist but the production child path still
+  installs startup capabilities directly rather than through IPC transfer.
 
 **Related assessment:** P4.2.
 
@@ -1265,7 +1295,7 @@ process useful in a microkernel system.
 
 - [x] Processes exchange synchronous IPC messages.
 - [x] Blocking IPC integrates with scheduler state safely.
-- [ ] Capabilities transfer atomically with rights attenuation.
+- [x] Capabilities transfer atomically with rights attenuation.
 - [ ] The process manager receives child lifecycle and fault events.
 - [ ] At least one service runs in a separate userspace protection domain.
 - [ ] Hardware events can reach an authorized userspace thread through a

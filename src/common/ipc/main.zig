@@ -4,3 +4,5 @@
 pub const endpoint = @import("endpoint.zig");
 /// Blocking buffered endpoint operations and deferred syscall completion.
 pub const operations = @import("operations.zig");
+/// Direct-rendezvous capability transfer with transactional exact-slot installation.
+pub const transfer_operations = @import("transfer_operations.zig");

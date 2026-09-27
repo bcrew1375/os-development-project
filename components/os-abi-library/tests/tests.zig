@@ -58,10 +58,12 @@ test "Capability rights containment is explicit" {
         .write = true,
         .execute = true,
         .manage = true,
+        .grant = true,
     };
 
     try std.testing.expect(all.contains(.{ .read = true }));
     try std.testing.expect(all.contains(.{ .read = true, .write = true }));
+    try std.testing.expect(all.contains(.{ .grant = true }));
     try std.testing.expect(!(abi.capability.Rights{ .read = true }).contains(.{ .write = true }));
 }
 
@@ -101,7 +103,7 @@ test "Thread lifecycle rights are representable and attenuable" {
     try std.testing.expect(endpoint.contains(.{ .send = true }));
     try std.testing.expect(endpoint.contains(.{ .receive = true }));
     try std.testing.expect(!endpoint.contains(.{ .write = true }));
-    try std.testing.expectEqual(@as(u32, 0x07ff), abi.capability.KNOWN_RIGHTS_MASK);
+    try std.testing.expectEqual(@as(u32, 0x0fff), abi.capability.KNOWN_RIGHTS_MASK);
 }
 
 test "Endpoint IPC ABI uses three fixed words and stable syscall values" {
@@ -111,6 +113,11 @@ test "Endpoint IPC ABI uses three fixed words and stable syscall values" {
     try std.testing.expectEqual(@as(u32, 34), @intFromEnum(abi.syscall.SyscallNumber.destroy_endpoint));
     try std.testing.expectEqual(@as(u32, 35), @intFromEnum(abi.syscall.SyscallNumber.endpoint_send));
     try std.testing.expectEqual(@as(u32, 36), @intFromEnum(abi.syscall.SyscallNumber.endpoint_receive));
+    try std.testing.expectEqual(@as(u32, 37), @intFromEnum(abi.syscall.SyscallNumber.endpoint_send_capability));
+    try std.testing.expectEqual(@as(u32, 38), @intFromEnum(abi.syscall.SyscallNumber.endpoint_receive_capability));
+    try std.testing.expectEqual(@as(usize, 20), @sizeOf(abi.ipc.TransferSendRequest));
+    try std.testing.expectEqual(@as(usize, 4), @alignOf(abi.ipc.TransferSendRequest));
+    try std.testing.expectEqual(@as(usize, 4), @sizeOf(abi.ipc.TransferReceiveRequest));
     try std.testing.expectEqual(
         abi.syscall.ErrorCode.endpoint_empty,
         abi.syscall.decodeError(abi.syscall.errorResult(.endpoint_empty)).?,
@@ -185,6 +192,9 @@ test "Syscall numbers and structured errors are stable" {
         .internal_failure,
         .endpoint_empty,
         .endpoint_full,
+        .endpoint_canceled,
+        .capability_slot_occupied,
+        .invalid_capability_slot,
     };
     for (codes) |code| {
         const encoded = abi.syscall.errorResult(code);

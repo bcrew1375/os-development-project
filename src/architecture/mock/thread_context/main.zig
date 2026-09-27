@@ -125,6 +125,11 @@ pub fn beginSyscall(
     slot.completed_syscall = null;
 }
 
+pub fn prepareSyscallCompletion(handle: arch.ThreadContextHandle) arch.ThreadContextError!void {
+    const slot = try resolveSlot(handle);
+    if (slot.pending_syscall_frame == null) return error.NoPendingSyscall;
+}
+
 pub fn completeSyscall(
     handle: arch.ThreadContextHandle,
     result: arch.SyscallResultRegisters,

@@ -29,6 +29,8 @@ pub const BlockReason = union(enum) {
     suspended,
     endpoint_send: endpoint.Handle,
     endpoint_receive: endpoint.Handle,
+    endpoint_transfer_send: endpoint.Handle,
+    endpoint_transfer_receive: endpoint.Handle,
 };
 
 pub const UserFaultKind = enum {
@@ -173,7 +175,11 @@ pub fn blockForEndpoint(handle: Handle, reason: BlockReason) Error!void {
     const slot = try resolveMutableSlot(handle);
     if (slot.thread.state != .running) return Error.InvalidStateTransition;
     switch (reason) {
-        .endpoint_send, .endpoint_receive => {},
+        .endpoint_send,
+        .endpoint_receive,
+        .endpoint_transfer_send,
+        .endpoint_transfer_receive,
+        => {},
         .suspended => return Error.InvalidStateTransition,
     }
     slot.thread.state = .blocked;
@@ -340,6 +346,14 @@ fn sameBlockReason(actual: ?BlockReason, expected: BlockReason) bool {
         },
         .endpoint_receive => |handle| switch (expected) {
             .endpoint_receive => |expected_handle| handle == expected_handle,
+            else => false,
+        },
+        .endpoint_transfer_send => |handle| switch (expected) {
+            .endpoint_transfer_send => |expected_handle| handle == expected_handle,
+            else => false,
+        },
+        .endpoint_transfer_receive => |handle| switch (expected) {
+            .endpoint_transfer_receive => |expected_handle| handle == expected_handle,
             else => false,
         },
     };

@@ -39,13 +39,31 @@ pub const SenderWaiter = struct {
     message: abi.ipc.Message,
 };
 
+pub const TransferSenderWaiter = struct {
+    waiter: Waiter,
+    source_authorization: Authorization,
+    source_capability: abi.capability.CapabilityHandle,
+    rights: abi.capability.Rights,
+    message: abi.ipc.Message,
+};
+
+pub const TransferReceiverWaiter = struct {
+    waiter: Waiter,
+    destination_space: u32,
+    destination_slot: u32,
+};
+
 pub const CanceledWaiter = union(enum) {
     sender: SenderWaiter,
     receiver: Waiter,
+    transfer_sender: TransferSenderWaiter,
+    transfer_receiver: TransferReceiverWaiter,
 };
 
 const ReceiverQueue = WaitQueue(Waiter);
 const SenderQueue = WaitQueue(SenderWaiter);
+const TransferSenderQueue = WaitQueue(TransferSenderWaiter);
+const TransferReceiverQueue = WaitQueue(TransferReceiverWaiter);
 
 const Slot = struct {
     generation: u32 = 1,
@@ -54,6 +72,8 @@ const Slot = struct {
     length: usize = 0,
     receivers: ReceiverQueue = .{},
     senders: SenderQueue = .{},
+    transfer_receivers: TransferReceiverQueue = .{},
+    transfer_senders: TransferSenderQueue = .{},
     used: bool = false,
     retired: bool = false,
 };
@@ -69,6 +89,8 @@ pub fn create() Error!Handle {
         slot.length = 0;
         slot.receivers = .{};
         slot.senders = .{};
+        slot.transfer_receivers = .{};
+        slot.transfer_senders = .{};
         return makeHandle(index, slot.generation);
     }
     return error.OutOfEndpoints;
@@ -77,7 +99,9 @@ pub fn create() Error!Handle {
 /// Destroys an empty endpoint and invalidates its generation-checked handle.
 pub fn destroy(handle: Handle) Error!void {
     const slot = try resolve(handle);
-    if (slot.length != 0 or slot.receivers.length != 0 or slot.senders.length != 0) {
+    if (slot.length != 0 or slot.receivers.length != 0 or slot.senders.length != 0 or
+        slot.transfer_receivers.length != 0 or slot.transfer_senders.length != 0)
+    {
         return error.EndpointInUse;
     }
     const generation = slot.generation;
@@ -120,12 +144,32 @@ pub fn enqueueSender(handle: Handle, waiter: SenderWaiter) Error!void {
     try slot.senders.push(waiter);
 }
 
+pub fn enqueueTransferReceiver(handle: Handle, waiter: TransferReceiverWaiter) Error!void {
+    const slot = try resolve(handle);
+    if (containsThread(slot, waiter.waiter.thread_handle)) return error.ThreadAlreadyWaiting;
+    try slot.transfer_receivers.push(waiter);
+}
+
+pub fn enqueueTransferSender(handle: Handle, waiter: TransferSenderWaiter) Error!void {
+    const slot = try resolve(handle);
+    if (containsThread(slot, waiter.waiter.thread_handle)) return error.ThreadAlreadyWaiting;
+    try slot.transfer_senders.push(waiter);
+}
+
 pub fn peekReceiver(handle: Handle) Error!?Waiter {
     return (try resolve(handle)).receivers.peek();
 }
 
 pub fn peekSender(handle: Handle) Error!?SenderWaiter {
     return (try resolve(handle)).senders.peek();
+}
+
+pub fn peekTransferReceiver(handle: Handle) Error!?TransferReceiverWaiter {
+    return (try resolve(handle)).transfer_receivers.peek();
+}
+
+pub fn peekTransferSender(handle: Handle) Error!?TransferSenderWaiter {
+    return (try resolve(handle)).transfer_senders.peek();
 }
 
 pub fn popReceiver(handle: Handle) Error!Waiter {
@@ -136,11 +180,21 @@ pub fn popSender(handle: Handle) Error!SenderWaiter {
     return (try resolve(handle)).senders.pop() orelse error.EndpointWaiterNotFound;
 }
 
+pub fn popTransferReceiver(handle: Handle) Error!TransferReceiverWaiter {
+    return (try resolve(handle)).transfer_receivers.pop() orelse error.EndpointWaiterNotFound;
+}
+
+pub fn popTransferSender(handle: Handle) Error!TransferSenderWaiter {
+    return (try resolve(handle)).transfer_senders.pop() orelse error.EndpointWaiterNotFound;
+}
+
 pub fn cancelThread(thread_handle: u32) bool {
     for (&slots) |*slot| {
         if (!slot.used) continue;
         if (slot.receivers.removeThread(thread_handle)) return true;
         if (slot.senders.removeThread(thread_handle)) return true;
+        if (slot.transfer_receivers.removeThread(thread_handle)) return true;
+        if (slot.transfer_senders.removeThread(thread_handle)) return true;
     }
     return false;
 }
@@ -163,6 +217,18 @@ pub fn findByAuthorization(authorization: Authorization) ?struct {
                 .waiter = .{ .sender = waiter },
             };
         }
+        if (slot.transfer_receivers.findAuthorization(authorization)) |waiter| {
+            return .{
+                .endpoint_handle = makeHandle(index, slot.generation),
+                .waiter = .{ .transfer_receiver = waiter },
+            };
+        }
+        if (slot.transfer_senders.findAuthorization(authorization)) |waiter| {
+            return .{
+                .endpoint_handle = makeHandle(index, slot.generation),
+                .waiter = .{ .transfer_sender = waiter },
+            };
+        }
     }
     return null;
 }
@@ -171,6 +237,8 @@ pub fn findForEndpoint(handle: Handle) Error!?CanceledWaiter {
     const slot = try resolve(handle);
     if (slot.receivers.peek()) |waiter| return .{ .receiver = waiter };
     if (slot.senders.peek()) |waiter| return .{ .sender = waiter };
+    if (slot.transfer_receivers.peek()) |waiter| return .{ .transfer_receiver = waiter };
+    if (slot.transfer_senders.peek()) |waiter| return .{ .transfer_sender = waiter };
     return null;
 }
 
@@ -178,6 +246,8 @@ pub fn removeWaiter(handle: Handle, thread_handle: u32) Error!void {
     const slot = try resolve(handle);
     if (slot.receivers.removeThread(thread_handle)) return;
     if (slot.senders.removeThread(thread_handle)) return;
+    if (slot.transfer_receivers.removeThread(thread_handle)) return;
+    if (slot.transfer_senders.removeThread(thread_handle)) return;
     return error.EndpointWaiterNotFound;
 }
 
@@ -191,6 +261,14 @@ pub fn receiverCount(handle: Handle) Error!usize {
 
 pub fn senderCount(handle: Handle) Error!usize {
     return (try resolve(handle)).senders.length;
+}
+
+pub fn transferReceiverCount(handle: Handle) Error!usize {
+    return (try resolve(handle)).transfer_receivers.length;
+}
+
+pub fn transferSenderCount(handle: Handle) Error!usize {
+    return (try resolve(handle)).transfer_senders.length;
 }
 
 pub fn availableCount() usize {
@@ -221,7 +299,9 @@ fn makeHandle(index: usize, generation: u32) Handle {
 
 fn containsThread(slot: *const Slot, thread_handle: u32) bool {
     return slot.receivers.containsThread(thread_handle) or
-        slot.senders.containsThread(thread_handle);
+        slot.senders.containsThread(thread_handle) or
+        slot.transfer_receivers.containsThread(thread_handle) or
+        slot.transfer_senders.containsThread(thread_handle);
 }
 
 fn WaitQueue(comptime Entry: type) type {
@@ -267,7 +347,7 @@ fn WaitQueue(comptime Entry: type) type {
         fn findAuthorization(self: *const @This(), authorization: Authorization) ?Entry {
             for (0..self.length) |offset| {
                 const entry = self.entries[(self.head + offset) % self.entries.len];
-                if (equalAuthorization(entryAuthorization(entry), authorization)) return entry;
+                if (entryMatchesAuthorization(entry, authorization)) return entry;
             }
             return null;
         }
@@ -286,14 +366,19 @@ fn entryThreadHandle(entry: anytype) u32 {
     return switch (@TypeOf(entry)) {
         Waiter => entry.thread_handle,
         SenderWaiter => entry.waiter.thread_handle,
+        TransferSenderWaiter => entry.waiter.thread_handle,
+        TransferReceiverWaiter => entry.waiter.thread_handle,
         else => @compileError("unsupported endpoint waiter entry"),
     };
 }
 
-fn entryAuthorization(entry: anytype) Authorization {
+fn entryMatchesAuthorization(entry: anytype, authorization: Authorization) bool {
     return switch (@TypeOf(entry)) {
-        Waiter => entry.authorization,
-        SenderWaiter => entry.waiter.authorization,
+        Waiter => equalAuthorization(entry.authorization, authorization),
+        SenderWaiter => equalAuthorization(entry.waiter.authorization, authorization),
+        TransferReceiverWaiter => equalAuthorization(entry.waiter.authorization, authorization),
+        TransferSenderWaiter => equalAuthorization(entry.waiter.authorization, authorization) or
+            equalAuthorization(entry.source_authorization, authorization),
         else => @compileError("unsupported endpoint waiter entry"),
     };
 }

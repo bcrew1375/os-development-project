@@ -17,6 +17,8 @@ pub const CapabilityError = error{
     InsufficientCapabilityRights,
     CapabilityHasDescendants,
     InvalidCapabilityRights,
+    InvalidCapabilitySlot,
+    CapabilitySlotOccupied,
     CapabilitySpaceNotEmpty,
 } || process.ProcessError || space.Error || authority.Error || endpoint.Error || ipc_operations.Error;
 
@@ -55,7 +57,7 @@ pub fn createAddressSpaceCapability(space_handle: space.Handle) CapabilityError!
     const index = freeSlot(table) orelse return error.OutOfCapabilities;
     const object_handle = try process.createAddressSpaceForOwner(space_handle);
     errdefer process.destroyAddressSpace(object_handle) catch {};
-    return initialize(index, &table[index], .{ .manage = true, .read = true, .write = true, .execute = true }, null, .{
+    return initialize(index, &table[index], .{ .manage = true, .read = true, .write = true, .execute = true, .grant = true }, null, .{
         .address_space = object_handle,
     });
 }
@@ -67,7 +69,7 @@ pub fn registerAddressSpaceRootCapability(
     const table = try tableFor(space_handle);
     const index = freeSlot(table) orelse return error.OutOfCapabilities;
     const object_handle = try process.registerAddressSpaceRootForOwner(space_handle, hardware_root);
-    return initialize(index, &table[index], .{ .manage = true, .read = true, .write = true, .execute = true }, null, .{
+    return initialize(index, &table[index], .{ .manage = true, .read = true, .write = true, .execute = true, .grant = true }, null, .{
         .address_space = object_handle,
     });
 }
@@ -105,7 +107,7 @@ pub fn createCapabilitySpaceCapability(
     const index = freeSlot(table) orelse return error.OutOfCapabilities;
     const object_handle = try space.create();
     errdefer space.destroy(object_handle) catch {};
-    return initialize(index, &table[index], .{ .manage = true }, null, .{
+    return initialize(index, &table[index], .{ .manage = true, .grant = true }, null, .{
         .capability_space = object_handle,
     });
 }
@@ -124,6 +126,7 @@ pub fn createThreadCapability(
         .suspend_thread = true,
         .resume_thread = true,
         .terminate = true,
+        .grant = true,
     }, null, .{ .thread = object_handle });
 }
 
@@ -138,6 +141,7 @@ pub fn createEndpointCapability(
         .manage = true,
         .send = true,
         .receive = true,
+        .grant = true,
     }, null, .{ .endpoint = object_handle });
 }
 
@@ -163,6 +167,97 @@ pub fn installCapability(
         ref(source_space, source_capability),
         source.object.?,
     );
+}
+
+/// Validated, non-mutating exact-slot capability installation plan.
+pub const PreparedInstall = struct {
+    target_space: space.Handle,
+    destination_slot: usize,
+    destination_generation: u32,
+    rights: abi.capability.Rights,
+    parent: Reference,
+    object: CapabilityObject,
+};
+
+/// Validates an attenuated derivation into one exact destination slot without mutation.
+pub fn prepareExactInstall(
+    source_space: space.Handle,
+    source_capability: abi.capability.CapabilityHandle,
+    target_space: space.Handle,
+    destination_slot: u32,
+    rights: abi.capability.Rights,
+) CapabilityError!PreparedInstall {
+    if (destination_slot >= MAX_CAPABILITIES) return error.InvalidCapabilitySlot;
+    const source = try resolve(source_space, source_capability, .{ .grant = true });
+    if (!source.rights.contains(rights)) return error.InvalidCapabilityRights;
+    const target_table = try tableFor(target_space);
+    const target = &target_table[destination_slot];
+    if (target.used) return error.CapabilitySlotOccupied;
+    if (target.retired) return error.InvalidCapabilitySlot;
+    return .{
+        .target_space = target_space,
+        .destination_slot = destination_slot,
+        .destination_generation = target.generation,
+        .rights = rights,
+        .parent = ref(source_space, source_capability),
+        .object = source.object.?,
+    };
+}
+
+/// Validates transfer authority and attenuation before a sender may block.
+pub fn validateTransferSource(
+    source_space: space.Handle,
+    source_capability: abi.capability.CapabilityHandle,
+    rights: abi.capability.Rights,
+) CapabilityError!void {
+    const source = try resolve(source_space, source_capability, .{ .grant = true });
+    if (!source.rights.contains(rights)) return error.InvalidCapabilityRights;
+}
+
+/// Validates that one exact destination slot is currently available.
+pub fn validateExactDestination(
+    target_space: space.Handle,
+    destination_slot: u32,
+) CapabilityError!void {
+    if (destination_slot >= MAX_CAPABILITIES) return error.InvalidCapabilitySlot;
+    const table = try tableFor(target_space);
+    const slot = &table[destination_slot];
+    if (slot.used) return error.CapabilitySlotOccupied;
+    if (slot.retired) return error.InvalidCapabilitySlot;
+}
+
+/// Commits a previously validated exact-slot installation without a fallible step.
+pub fn commitExactInstall(prepared: PreparedInstall) abi.capability.CapabilityHandle {
+    const table = tableFor(prepared.target_space) catch unreachable;
+    const slot = &table[prepared.destination_slot];
+    std.debug.assert(!slot.used);
+    std.debug.assert(!slot.retired);
+    std.debug.assert(slot.generation == prepared.destination_generation);
+    return initialize(
+        prepared.destination_slot,
+        slot,
+        prepared.rights,
+        prepared.parent,
+        prepared.object,
+    );
+}
+
+/// Restores an exact-slot installation to its pre-commit state without advancing the generation.
+pub fn rollbackExactInstall(
+    prepared: PreparedInstall,
+    installed: abi.capability.CapabilityHandle,
+) void {
+    const expected = abi.capability.makeCapabilityHandle(
+        @intCast(prepared.destination_slot),
+        prepared.destination_generation,
+    );
+    std.debug.assert(installed == expected);
+    const table = tableFor(prepared.target_space) catch unreachable;
+    const slot = &table[prepared.destination_slot];
+    std.debug.assert(slot.used);
+    std.debug.assert(slot.generation == prepared.destination_generation);
+    std.debug.assert(equalOptional(slot.parent, prepared.parent));
+    slot.* = .{ .generation = prepared.destination_generation };
 }
 
 pub fn deleteCapabilityFromSpace(
@@ -323,7 +418,7 @@ pub fn createUntypedMemoryCapability(
     return initialize(
         index,
         &table[index],
-        .{ .manage = true, .read = true, .write = true, .execute = true },
+        .{ .manage = true, .read = true, .write = true, .execute = true, .grant = true },
         null,
         .{ .untyped_memory = object_handle },
     );
@@ -447,9 +542,34 @@ pub fn revokePhysicalMemoryCapability(
             },
             else => authorityHandle(descendant_slot.object.?) orelse return error.InvalidCapabilityType,
         };
-        try authority.delete(object_handle);
+        const ref_count = countAuthorityReferences(object_handle);
+        if (ref_count == 1) {
+            try authority.delete(object_handle);
+        }
         try clear(descendant);
     }
+}
+
+fn countAuthorityReferences(target_authority: authority.Handle) usize {
+    var count: usize = 0;
+    for (&tables) |*table| {
+        for (table) |slot| {
+            if (!slot.used) continue;
+            const obj = slot.object orelse continue;
+            switch (obj) {
+                .untyped_memory, .physical_frame => |handle| if (handle == target_authority) {
+                    count += 1;
+                },
+                .memory_object => |mo| {
+                    if (process.getMemoryObjectInfo(mo)) |info| {
+                        if (info.authority_handle == target_authority) count += 1;
+                    } else |_| {}
+                },
+                else => {},
+            }
+        }
+    }
+    return count;
 }
 
 pub fn deleteCapability(

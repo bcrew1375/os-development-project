@@ -225,6 +225,7 @@ fn completeSyscall(
         trap_frame.ebx = @truncate(result.words[0]);
         trap_frame.ecx = @truncate(result.words[1]);
         trap_frame.edx = @truncate(result.words[2]);
+        if (result.capability) |installed| trap_frame.esi = @truncate(installed);
         return;
     }
     arch.thread_context.completeSyscall(context_handle.?, result) catch |err| {

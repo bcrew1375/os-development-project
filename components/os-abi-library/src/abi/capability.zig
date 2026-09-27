@@ -95,7 +95,9 @@ pub const Rights = packed struct(u32) {
     send: bool = false,
     /// Allows receiving messages from an endpoint.
     receive: bool = false,
-    _reserved: u21 = 0,
+    /// Allows deriving and transferring an attenuated capability through IPC.
+    grant: bool = false,
+    _reserved: u20 = 0,
 
     /// Returns true when `self` grants every right requested by `required`.
     pub fn contains(self: Rights, required: Rights) bool {
@@ -109,12 +111,13 @@ pub const Rights = packed struct(u32) {
             (!required.resume_thread or self.resume_thread) and
             (!required.terminate or self.terminate) and
             (!required.send or self.send) and
-            (!required.receive or self.receive);
+            (!required.receive or self.receive) and
+            (!required.grant or self.grant);
     }
 };
 
 /// Rights bits accepted by capability-management ABI requests.
-pub const KNOWN_RIGHTS_MASK: u32 = 0x07ff;
+pub const KNOWN_RIGHTS_MASK: u32 = 0x0fff;
 
 /// Encodes capability rights into their stable ABI representation.
 pub fn rightsBits(rights: Rights) u32 {

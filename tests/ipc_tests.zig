@@ -363,3 +363,403 @@ test "IPC cancellation: endpoint destruction completes blocked receiver" {
     );
     try std.testing.expectEqual(kernel.process.thread.State.ready, (try kernel.process.thread.get(receiver)).state);
 }
+
+test "IPC capability transfer: blocked receiver gets attenuated exact-slot capability" {
+    try arch.impl.test_support.initializeDefaultMemoryFixture();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+    resetState();
+    const root_space = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE;
+    const target_space_capability = try kernel.capability.createCapabilitySpaceCapability(root_space);
+    const target_space = try kernel.capability.resolveCapabilitySpace(root_space, target_space_capability, .{});
+    const endpoint_capability = try kernel.capability.createEndpointCapability(root_space);
+    const receive_capability = try kernel.capability.installCapability(
+        root_space,
+        target_space_capability,
+        endpoint_capability,
+        .{ .receive = true },
+    );
+    const endpoint_handle = try kernel.capability.resolveEndpoint(root_space, endpoint_capability, .{});
+    const receiver = try createConfiguredThreadInSpace(9, target_space);
+    const sender = try createConfiguredThread(10);
+    try initializeRunningThread(receiver, sender);
+    const receiver_context = (try kernel.process.thread.get(receiver)).architecture_context_handle;
+    try arch.thread_context.beginSyscall(receiver_context, 0x5000);
+    try std.testing.expectEqual(
+        kernel.ipc.transfer_operations.ReceiveOutcome.blocked,
+        try kernel.ipc.transfer_operations.receive(
+            endpoint_handle,
+            .{ .capability_space_handle = target_space, .capability_handle = receive_capability },
+            target_space,
+            .{ .destination_slot = 20 },
+        ),
+    );
+
+    try std.testing.expectEqual(
+        kernel.ipc.transfer_operations.Outcome.completed,
+        try kernel.ipc.transfer_operations.send(
+            endpoint_handle,
+            .{ .capability_space_handle = root_space, .capability_handle = endpoint_capability },
+            root_space,
+            .{
+                .source_capability = endpoint_capability,
+                .rights_bits = abi.capability.rightsBits(.{ .send = true }),
+                .message = .{ .words = .{ 7, 8, 9 } },
+            },
+        ),
+    );
+    const completed = (try arch.thread_context.getCompletedSyscallForTest(receiver_context)).?;
+    try std.testing.expectEqual([3]u64{ 7, 8, 9 }, completed.words);
+    try std.testing.expectEqual(@as(u32, 20), abi.capability.capabilitySlotIndex(@truncate(completed.capability.?)));
+    _ = try kernel.capability.resolveEndpoint(target_space, @truncate(completed.capability.?), .{ .send = true });
+    try std.testing.expectError(
+        error.InsufficientCapabilityRights,
+        kernel.capability.resolveEndpoint(target_space, @truncate(completed.capability.?), .{ .receive = true }),
+    );
+}
+
+test "IPC capability transfer: blocked sender wakes after direct receive" {
+    try arch.impl.test_support.initializeDefaultMemoryFixture();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+    resetState();
+    const root_space = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE;
+    const target_space_capability = try kernel.capability.createCapabilitySpaceCapability(root_space);
+    const target_space = try kernel.capability.resolveCapabilitySpace(root_space, target_space_capability, .{});
+    const endpoint_capability = try kernel.capability.createEndpointCapability(root_space);
+    const receive_capability = try kernel.capability.installCapability(
+        root_space,
+        target_space_capability,
+        endpoint_capability,
+        .{ .receive = true },
+    );
+    const endpoint_handle = try kernel.capability.resolveEndpoint(root_space, endpoint_capability, .{});
+    const sender = try createConfiguredThread(11);
+    const receiver = try createConfiguredThreadInSpace(12, target_space);
+    try initializeRunningThread(sender, receiver);
+    const sender_context = (try kernel.process.thread.get(sender)).architecture_context_handle;
+    try arch.thread_context.beginSyscall(sender_context, 0x6000);
+    try std.testing.expectEqual(
+        kernel.ipc.transfer_operations.Outcome.blocked,
+        try kernel.ipc.transfer_operations.send(
+            endpoint_handle,
+            .{ .capability_space_handle = root_space, .capability_handle = endpoint_capability },
+            root_space,
+            .{
+                .source_capability = endpoint_capability,
+                .rights_bits = abi.capability.rightsBits(.{ .receive = true }),
+                .message = .{ .words = .{ 10, 11, 12 } },
+            },
+        ),
+    );
+
+    const outcome = try kernel.ipc.transfer_operations.receive(
+        endpoint_handle,
+        .{ .capability_space_handle = target_space, .capability_handle = receive_capability },
+        target_space,
+        .{ .destination_slot = 21 },
+    );
+    const transfer = switch (outcome) {
+        .completed => |completed| completed,
+        .blocked => return error.UnexpectedTransferOutcome,
+    };
+    try std.testing.expectEqual(abi.ipc.Message{ .words = .{ 10, 11, 12 } }, transfer.message);
+    try std.testing.expectEqual(@as(u32, 21), abi.capability.capabilitySlotIndex(transfer.capability));
+    try std.testing.expectEqual(
+        @as(?arch.SyscallResultRegisters, .fromStatus(abi.syscall.SYSCALL_SUCCESS)),
+        try arch.thread_context.getCompletedSyscallForTest(sender_context),
+    );
+}
+
+test "IPC capability transfer: occupied destination preserves blocked receiver and source" {
+    try arch.impl.test_support.initializeDefaultMemoryFixture();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+    resetState();
+    const root_space = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE;
+    const target_space_capability = try kernel.capability.createCapabilitySpaceCapability(root_space);
+    const target_space = try kernel.capability.resolveCapabilitySpace(root_space, target_space_capability, .{});
+    const endpoint_capability = try kernel.capability.createEndpointCapability(root_space);
+    const receive_capability = try kernel.capability.installCapability(
+        root_space,
+        target_space_capability,
+        endpoint_capability,
+        .{ .receive = true },
+    );
+    const endpoint_handle = try kernel.capability.resolveEndpoint(root_space, endpoint_capability, .{});
+    const receiver = try createConfiguredThreadInSpace(13, target_space);
+    const sender = try createConfiguredThread(14);
+    try initializeRunningThread(receiver, sender);
+    const receiver_context = (try kernel.process.thread.get(receiver)).architecture_context_handle;
+    try arch.thread_context.beginSyscall(receiver_context, 0x7000);
+    _ = try kernel.ipc.transfer_operations.receive(
+        endpoint_handle,
+        .{ .capability_space_handle = target_space, .capability_handle = receive_capability },
+        target_space,
+        .{ .destination_slot = 22 },
+    );
+    const occupied = try kernel.capability.prepareExactInstall(
+        root_space,
+        endpoint_capability,
+        target_space,
+        22,
+        .{},
+    );
+    _ = kernel.capability.commitExactInstall(occupied);
+
+    try std.testing.expectError(
+        error.CapabilitySlotOccupied,
+        kernel.ipc.transfer_operations.send(
+            endpoint_handle,
+            .{ .capability_space_handle = root_space, .capability_handle = endpoint_capability },
+            root_space,
+            .{
+                .source_capability = endpoint_capability,
+                .rights_bits = abi.capability.rightsBits(.{ .send = true }),
+                .message = .{ .words = .{ 1, 2, 3 } },
+            },
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 1), try kernel.ipc.endpoint.transferReceiverCount(endpoint_handle));
+    try std.testing.expectEqual(
+        @as(?arch.SyscallResultRegisters, null),
+        try arch.thread_context.getCompletedSyscallForTest(receiver_context),
+    );
+    _ = try kernel.capability.resolveEndpoint(root_space, endpoint_capability, .{ .grant = true });
+}
+
+test "IPC capability transfer: ordinary and transfer waiters do not cross-match" {
+    try arch.impl.test_support.initializeDefaultMemoryFixture();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+    resetState();
+    const first = try createConfiguredThread(15);
+    const second = try createConfiguredThread(16);
+    try initializeRunningThread(first, second);
+    const root_space = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE;
+    const endpoint_capability = try kernel.capability.createEndpointCapability(root_space);
+    const endpoint_handle = try kernel.capability.resolveEndpoint(root_space, endpoint_capability, .{});
+    const first_context = (try kernel.process.thread.get(first)).architecture_context_handle;
+    try arch.thread_context.beginSyscall(first_context, 0x8000);
+    _ = try kernel.ipc.operations.receive(
+        endpoint_handle,
+        .{ .capability_space_handle = root_space, .capability_handle = endpoint_capability },
+    );
+
+    const second_context = (try kernel.process.thread.get(second)).architecture_context_handle;
+    try arch.thread_context.beginSyscall(second_context, 0x9000);
+    try std.testing.expectEqual(
+        kernel.ipc.transfer_operations.Outcome.blocked,
+        try kernel.ipc.transfer_operations.send(
+            endpoint_handle,
+            .{ .capability_space_handle = root_space, .capability_handle = endpoint_capability },
+            root_space,
+            .{
+                .source_capability = endpoint_capability,
+                .rights_bits = abi.capability.rightsBits(.{}),
+                .message = .{ .words = .{ 4, 5, 6 } },
+            },
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 1), try kernel.ipc.endpoint.receiverCount(endpoint_handle));
+    try std.testing.expectEqual(@as(usize, 1), try kernel.ipc.endpoint.transferSenderCount(endpoint_handle));
+}
+
+test "IPC capability transfer: deleting source capability cancels blocked transfer sender" {
+    try arch.impl.test_support.initializeDefaultMemoryFixture();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+    resetState();
+    const root_space = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE;
+    const target_space_capability = try kernel.capability.createCapabilitySpaceCapability(root_space);
+    const target_space = try kernel.capability.resolveCapabilitySpace(root_space, target_space_capability, .{});
+    const endpoint_capability = try kernel.capability.createEndpointCapability(root_space);
+    const endpoint_handle = try kernel.capability.resolveEndpoint(root_space, endpoint_capability, .{});
+    const source = try kernel.capability.createEndpointCapability(target_space);
+    const sender = try createConfiguredThreadInSpace(17, target_space);
+    const survivor = try createConfiguredThread(18);
+    try initializeRunningThread(sender, survivor);
+    const sender_context = (try kernel.process.thread.get(sender)).architecture_context_handle;
+    try arch.thread_context.beginSyscall(sender_context, 0xa000);
+    try std.testing.expectEqual(
+        kernel.ipc.transfer_operations.Outcome.blocked,
+        try kernel.ipc.transfer_operations.send(
+            endpoint_handle,
+            .{ .capability_space_handle = target_space, .capability_handle = endpoint_capability },
+            target_space,
+            .{
+                .source_capability = source,
+                .rights_bits = abi.capability.rightsBits(.{ .send = true }),
+                .message = .{ .words = .{ 1, 2, 3 } },
+            },
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 1), try kernel.ipc.endpoint.transferSenderCount(endpoint_handle));
+
+    try kernel.capability.deleteCapability(target_space, source);
+    try std.testing.expectEqual(@as(usize, 0), try kernel.ipc.endpoint.transferSenderCount(endpoint_handle));
+    try std.testing.expectEqual(
+        @as(?arch.SyscallResultRegisters, .fromStatus(abi.syscall.errorResult(.endpoint_canceled))),
+        try arch.thread_context.getCompletedSyscallForTest(sender_context),
+    );
+    try std.testing.expectEqual(kernel.process.thread.State.ready, (try kernel.process.thread.get(sender)).state);
+}
+
+test "IPC capability transfer: forged stale and ungranted source handles are rejected" {
+    try arch.impl.test_support.initializeDefaultMemoryFixture();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+    resetState();
+    const root_space = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE;
+    const target_space_capability = try kernel.capability.createCapabilitySpaceCapability(root_space);
+    const target_space = try kernel.capability.resolveCapabilitySpace(root_space, target_space_capability, .{});
+    const endpoint_capability = try kernel.capability.createEndpointCapability(root_space);
+    const endpoint_handle = try kernel.capability.resolveEndpoint(root_space, endpoint_capability, .{});
+    const endpoint_authorization = kernel.ipc.endpoint.Authorization{
+        .capability_space_handle = root_space,
+        .capability_handle = endpoint_capability,
+    };
+
+    const forged: abi.capability.CapabilityHandle = 0x0000_dead;
+    try std.testing.expectError(
+        error.InvalidCapability,
+        kernel.ipc.transfer_operations.send(endpoint_handle, endpoint_authorization, root_space, .{
+            .source_capability = forged,
+            .rights_bits = abi.capability.rightsBits(.{}),
+            .message = .{},
+        }),
+    );
+
+    const ungranted = try kernel.capability.installCapability(
+        root_space,
+        target_space_capability,
+        endpoint_capability,
+        .{ .send = true },
+    );
+    try std.testing.expectError(
+        error.InsufficientCapabilityRights,
+        kernel.ipc.transfer_operations.send(endpoint_handle, endpoint_authorization, target_space, .{
+            .source_capability = ungranted,
+            .rights_bits = abi.capability.rightsBits(.{ .send = true }),
+            .message = .{},
+        }),
+    );
+
+    try kernel.capability.deleteCapability(target_space, ungranted);
+    try std.testing.expectError(
+        error.InvalidCapability,
+        kernel.ipc.transfer_operations.send(endpoint_handle, endpoint_authorization, target_space, .{
+            .source_capability = ungranted,
+            .rights_bits = abi.capability.rightsBits(.{}),
+            .message = .{},
+        }),
+    );
+    try std.testing.expectEqual(@as(usize, 0), try kernel.ipc.endpoint.transferReceiverCount(endpoint_handle));
+    try std.testing.expectEqual(@as(usize, 0), try kernel.ipc.endpoint.transferSenderCount(endpoint_handle));
+}
+
+test "IPC capability transfer: revoking memory authority invalidates transferred descendant" {
+    try arch.impl.test_support.initializeDefaultMemoryFixture();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+    resetState();
+    const root_space = kernel.process.capability_spaces.ROOT_CAPABILITY_SPACE_HANDLE;
+    const target_space_capability = try kernel.capability.createCapabilitySpaceCapability(root_space);
+    const target_space = try kernel.capability.resolveCapabilitySpace(root_space, target_space_capability, .{});
+    const endpoint_capability = try kernel.capability.createEndpointCapability(root_space);
+    const endpoint_handle = try kernel.capability.resolveEndpoint(root_space, endpoint_capability, .{});
+    const root_untyped = try kernel.capability.createUntypedMemoryCapability(
+        root_space,
+        0,
+        0x2000,
+        abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM,
+        0x1000,
+    );
+    const root_frame = try kernel.capability.retypeUntypedMemoryCapability(
+        root_space,
+        root_untyped,
+        0,
+        1,
+        .physical_frame,
+        .{ .manage = true, .read = true, .grant = true },
+    );
+    const receiver = try createConfiguredThreadInSpace(19, target_space);
+    const sender = try createConfiguredThread(20);
+    try initializeRunningThread(receiver, sender);
+    const receiver_context = (try kernel.process.thread.get(receiver)).architecture_context_handle;
+    try arch.thread_context.beginSyscall(receiver_context, 0xb000);
+    _ = try kernel.ipc.transfer_operations.receive(
+        endpoint_handle,
+        .{ .capability_space_handle = target_space, .capability_handle = endpoint_capability },
+        target_space,
+        .{ .destination_slot = 30 },
+    );
+    _ = try kernel.ipc.transfer_operations.send(
+        endpoint_handle,
+        .{ .capability_space_handle = root_space, .capability_handle = endpoint_capability },
+        root_space,
+        .{
+            .source_capability = root_frame,
+            .rights_bits = abi.capability.rightsBits(.{ .read = true }),
+            .message = .{ .words = .{ 9, 8, 7 } },
+        },
+    );
+    const completed = (try arch.thread_context.getCompletedSyscallForTest(receiver_context)).?;
+    const transferred_handle: abi.capability.CapabilityHandle = @truncate(completed.capability.?);
+    _ = try kernel.capability.resolvePhysicalFrame(target_space, transferred_handle, .{ .read = true });
+
+    try kernel.capability.revokePhysicalMemoryCapability(root_space, root_untyped);
+    try std.testing.expectError(
+        error.InvalidCapability,
+        kernel.capability.resolvePhysicalFrame(target_space, transferred_handle, .{}),
+    );
+}
+
+test "IPC capability transfer: production syscall copies requests and writes back 4 registers" {
+    try arch.impl.test_support.initializeDefaultMemoryFixture();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+    resetState();
+    const receiver = try createConfiguredThread(21);
+    const sender = try createConfiguredThread(22);
+    try initializeRunningThread(receiver, sender);
+    const endpoint_capability = switch (kernel.syscall.dispatchFromCurrentContext(
+        request(.create_endpoint, .{ 0, 0, 0, 0, 0 }),
+    )) {
+        .returned => |handle| handle,
+        else => return error.UnexpectedSyscallResult,
+    };
+
+    const root = (try kernel.process.thread.get(receiver)).address_space_handle;
+    const root_mmu = try kernel.process.getAddressSpaceRoot(root);
+    try arch.mmu.mapTableInAddressSpace(root_mmu, 0x0040_0000, 0, .{ .user = true, .write = true });
+    try arch.mmu.mapPageInAddressSpace(root_mmu, 0x0040_0000, 0x1000, .{ .user = true, .write = true });
+    // Production request decoding copies from the currently active user address
+    // space, so activate the receiver's root before dispatching its syscall.
+    arch.mmu.switchAddressSpaceRoot(root_mmu);
+
+    const recv_request = abi.ipc.TransferReceiveRequest{ .destination_slot = 44 };
+    try arch.impl.mmu.writePhysicalMemoryForTest(0x1000, std.mem.asBytes(&recv_request));
+    const receiver_context = (try kernel.process.thread.get(receiver)).architecture_context_handle;
+    try arch.thread_context.beginSyscall(receiver_context, 0xc000);
+    switch (kernel.syscall.dispatchFromCurrentContext(
+        request(.endpoint_receive_capability, .{ endpoint_capability, 0x0040_0000, 0, 0, 0 }),
+    )) {
+        .blocked => {},
+        else => return error.UnexpectedSyscallResult,
+    }
+
+    const sender_address_space = (try kernel.process.thread.get(sender)).address_space_handle;
+    const sender_mmu = try kernel.process.getAddressSpaceRoot(sender_address_space);
+    try arch.mmu.mapTableInAddressSpace(sender_mmu, 0x0040_0000, 0, .{ .user = true, .write = true });
+    try arch.mmu.mapPageInAddressSpace(sender_mmu, 0x0040_0000, 0x2000, .{ .user = true, .write = true });
+    const send_request = abi.ipc.TransferSendRequest{
+        .source_capability = endpoint_capability,
+        .rights_bits = abi.capability.rightsBits(.{ .receive = true }),
+        .message = .{ .words = .{ 0xaaaa, 0xbbbb, 0xcccc } },
+    };
+    try arch.impl.mmu.writePhysicalMemoryForTest(0x2000, std.mem.asBytes(&send_request));
+    switch (kernel.syscall.dispatchFromCurrentContext(
+        request(.endpoint_send_capability, .{ endpoint_capability, 0x0040_0000, 0, 0, 0 }),
+    )) {
+        .returned => |status| try std.testing.expectEqual(abi.syscall.SYSCALL_SUCCESS, status),
+        else => return error.UnexpectedSyscallResult,
+    }
+
+    const completed = (try arch.thread_context.getCompletedSyscallForTest(receiver_context)).?;
+    try std.testing.expectEqual(abi.syscall.SYSCALL_SUCCESS, completed.status);
+    try std.testing.expectEqual([3]u64{ 0xaaaa, 0xbbbb, 0xcccc }, completed.words);
+    try std.testing.expectEqual(@as(u32, 44), abi.capability.capabilitySlotIndex(@truncate(completed.capability.?)));
+}
