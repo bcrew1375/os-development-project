@@ -54,6 +54,7 @@ test "ChildStartup ABI layout and values are stable" {
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum(abi.process.ChildStartupMode.invalid_opcode));
     try std.testing.expectEqual(@as(u32, 3), @intFromEnum(abi.process.ChildStartupMode.capability_transfer));
     try std.testing.expectEqual(@as(u32, 4), @intFromEnum(abi.process.ChildStartupMode.managed_lifecycle));
+    try std.testing.expectEqual(@as(u32, 5), @intFromEnum(abi.process.ChildStartupMode.service_echo));
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(abi.process.ManagedChildAction.exit_success));
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum(abi.process.ManagedChildAction.fault_invalid_opcode));
 }
@@ -296,9 +297,9 @@ test "Syscall numbers and structured errors are stable" {
 }
 
 test "system smoke protocol records are complete ordered serial lines" {
-    try std.testing.expectEqual(@as(u32, 8), abi.system_smoke.PROTOCOL_VERSION);
+    try std.testing.expectEqual(@as(u32, 9), abi.system_smoke.PROTOCOL_VERSION);
     try std.testing.expectEqualStrings(
-        "SYSTEM-SMOKE protocol=8\n",
+        "SYSTEM-SMOKE protocol=9\n",
         abi.system_smoke.HEADER,
     );
     try std.testing.expectEqual(
@@ -318,6 +319,19 @@ test "system smoke protocol records are complete ordered serial lines" {
         abi.ipc.Message{ .words = .{ 0x4341_5032, 0, 0 } },
         abi.system_smoke.CAPABILITY_TRANSFER_ACK,
     );
+
+    try std.testing.expectEqual(
+        abi.ipc.Message{ .words = .{ 0x4543_484F, 0x0102_0304, 0x0506_0708 } },
+        abi.system_smoke.ECHO_SERVICE_REQUEST,
+    );
+    try std.testing.expectEqual(
+        abi.ipc.Message{ .words = .{ 0x4543_4852, 0x0102_0304, 0x0506_0708 } },
+        abi.system_smoke.ECHO_SERVICE_REPLY,
+    );
+    try std.testing.expect(abi.system_smoke.ECHO_SERVICE_LIFECYCLE_TOKEN !=
+        abi.process.INVALID_LIFECYCLE_TOKEN);
+    try std.testing.expect(abi.system_smoke.ECHO_SERVICE_RESTART_LIFECYCLE_TOKEN !=
+        abi.system_smoke.ECHO_SERVICE_LIFECYCLE_TOKEN);
 
     const expected = [_][]const u8{
         "SYSTEM-SMOKE milestone=root_process_prepared\n",
@@ -369,6 +383,11 @@ test "system smoke protocol records are complete ordered serial lines" {
         "SYSTEM-SMOKE milestone=timer_notification_received\n",
         "SYSTEM-SMOKE milestone=timer_notification_acknowledged\n",
         "SYSTEM-SMOKE milestone=notification_objects_destroyed\n",
+        "SYSTEM-SMOKE milestone=echo_service_child_started\n",
+        "SYSTEM-SMOKE milestone=echo_service_request_sent\n",
+        "SYSTEM-SMOKE milestone=echo_service_reply_verified\n",
+        "SYSTEM-SMOKE milestone=echo_service_child_destroyed\n",
+        "SYSTEM-SMOKE milestone=echo_service_restarted\n",
     };
     try std.testing.expectEqual(expected.len, abi.system_smoke.ordered_milestones.len);
     for (expected, abi.system_smoke.ordered_milestones) |expected_record, actual_record| {

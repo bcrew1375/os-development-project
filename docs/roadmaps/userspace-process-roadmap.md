@@ -1326,7 +1326,7 @@ process useful in a microkernel system.
 - unauthorized binding and waiting are rejected;
 - PIC behavior remains functional while allowing future APIC routing.
 
-## [ ] U5.7 Introduce the first userspace service split
+## [x] U5.7 Introduce the first userspace service split
 
 **Root-task and component work:**
 
@@ -1345,6 +1345,16 @@ process useful in a microkernel system.
 - client and service communicate only through ABI-defined IPC;
 - restarting or faulting the service does not halt the kernel;
 - authority visible to the service is narrower than root-task authority.
+
+**Implemented (2026-09-27):** the chosen service is a stateless echo service in
+the independent `components/os-echo-service` component. It needs no memory
+authority, so delegation is exactly a receive-only request endpoint and a
+send-only reply endpoint. The root task acts as the initial client: it loads the
+service as the third boot module through the Phase 4 path, runs one
+request/reply exchange, destroys the process, and repeats the cycle against the
+same endpoints to prove restart. Protocol 9 records this on all three production
+smoke paths. A separate client ELF, fault-variant service run, service registry,
+and discovery remain future work.
 
 ## Phase 5 testing
 
@@ -1372,7 +1382,7 @@ process useful in a microkernel system.
 - [x] Blocking IPC integrates with scheduler state safely.
 - [x] Capabilities transfer atomically with rights attenuation.
 - [x] The process manager receives child lifecycle and fault events.
-- [ ] At least one service runs in a separate userspace protection domain.
+- [x] At least one service runs in a separate userspace protection domain.
 - [x] Hardware events can reach an authorized userspace thread through a
       notification object.
 

@@ -2,6 +2,7 @@ const std = @import("std");
 const configuration = @import("configuration.zig");
 
 pub const child_module_name = "child_process.elf";
+pub const echo_service_module_name = "echo_service.elf";
 
 pub fn createChildModule(
     build: *std.Build,
@@ -27,6 +28,33 @@ pub fn createChildModule(
     const output = command.addOutputFileArg(build.fmt("child_process-{s}.elf", .{@tagName(architecture)}));
     command.addArg(build.graph.zig_exe);
     command.addDirectoryArg(build.path("components/os-root-task"));
+    command.addDirectoryArg(build.path("components/os-abi-library"));
+    return output;
+}
+
+pub fn createEchoServiceModule(
+    build: *std.Build,
+    architecture: configuration.Architecture,
+) std.Build.LazyPath {
+    const script =
+        \\set -eu
+        \\architecture="$1"
+        \\output="$2"
+        \\zig_exe="$3"
+        \\service_directory="$4"
+        \\abi_directory="$5"
+        \\cd "$service_directory"
+        \\"$zig_exe" build -Darch="$architecture" \
+        \\    -Dabi-path="$abi_directory/src/abi/main.zig"
+        \\mkdir -p "$(dirname "$output")"
+        \\cp "zig-out/$architecture/bin/echo_service.elf" "$output"
+    ;
+    const command = build.addSystemCommand(&.{ "bash", "-c", script, "build-echo-service" });
+    command.has_side_effects = true;
+    command.addArg(@tagName(architecture));
+    const output = command.addOutputFileArg(build.fmt("echo_service-{s}.elf", .{@tagName(architecture)}));
+    command.addArg(build.graph.zig_exe);
+    command.addDirectoryArg(build.path("components/os-echo-service"));
     command.addDirectoryArg(build.path("components/os-abi-library"));
     return output;
 }

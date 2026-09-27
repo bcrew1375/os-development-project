@@ -232,7 +232,7 @@ a retry without double-unmapping, double-destroying, or double-freeing resources
 
 ## Demonstrated production behavior
 
-Production system-smoke protocol version 8 retains the existing IPC, capability
+Production system-smoke protocol version 9 retains the existing IPC, capability
 transfer, and fault-containment children, then runs two managed children:
 
 1. A managed clean child announces startup, requests a service, receives a
@@ -246,6 +246,12 @@ transfer, and fault-containment children, then runs two managed children:
    source, binds them, and blocks in `notification_wait`. A real PIT interrupt masks
    the source, completes the retained syscall, and wakes the root from idle. The
    root acknowledges and rearms the source, then unbinds and destroys both objects.
+4. Finally the root loads the independent echo service from its own boot module.
+   The service's capability space starts empty and receives exactly two
+   attenuated capabilities: a receive-only request endpoint and a send-only reply
+   endpoint. It serves one three-word request/reply exchange and exits cleanly.
+   The root reclaims the process and repeats the full cycle against the same
+   endpoints, proving the service can be restarted without halting the kernel.
 
 The complete production path has been validated on:
 
@@ -253,10 +259,33 @@ The complete production path has been validated on:
 - x86-32 with direct Multiboot packaging; and
 - x86-64 with Limine packaging.
 
-These runs use independently built root-task and child ELF artifacts, production
-page tables and interrupt paths, the public syscall ABI, and the ordinary
-scheduler. See [Production System Smoke Tests](../testing/system-smoke.md) for the
-ordered protocol and validation commands.
+These runs use independently built root-task, child, and echo-service ELF
+artifacts, production page tables and interrupt paths, the public syscall ABI,
+and the ordinary scheduler. See [Production System
+Smoke Tests](../testing/system-smoke.md) for the ordered protocol and validation
+commands.
+
+## First service split
+
+The echo service lives in the independent `components/os-echo-service`
+component, outside the root-task tree. Its ownership boundary is:
+
+- the service imports only the stable ABI package (`os-abi-library`); it must
+  not import kernel-private modules, root-task implementation modules, or
+  shared loader code;
+- the root task is the client for the initial slice; it loads the service image
+  through the same Phase 4 child-construction path used for every other child;
+- delegated authority is exactly one receive-only request endpoint and one
+  send-only reply endpoint. The service holds no memory-management,
+  thread-management, interrupt, or lifecycle authority, which is strictly
+  narrower than root-task authority; and
+- the component carries its own linker scripts and build file so it can be
+  extracted into a separate repository with only an ABI path override.
+
+The request/reply protocol is a single fixed three-word message pair defined in
+the ABI, so client and service communicate only through ABI-defined IPC. The
+service is stateless, so a faulting or restarting instance cannot corrupt shared
+state; the kernel and root task both survive service exit and restart.
 
 ## Current limitations
 
@@ -285,10 +314,11 @@ process model. Its deliberate limitations include:
 
 These restrictions mean a child can perform isolated computation, communicate
 with its manager, receive one attenuated service capability, and report terminal
-lifecycle state, receive resumable managed faults, and wait for an authorized timer
-notification, but it cannot yet participate in a general multi-service microkernel
-environment. A real service split, richer startup data, broader interrupt routing,
-and broader discovery policy remain future work.
+lifecycle state, receive resumable managed faults, wait for an authorized timer
+notification, and host one independent request/reply service in its own
+protection domain, but it cannot yet participate in a general multi-service
+microkernel environment. Richer startup data, broader interrupt routing, service
+discovery, and broader policy remain future work.
 
 ## Production and test boundaries
 

@@ -25,10 +25,10 @@ The default timeout is 60 seconds. Override it with
 ## Protocol
 
 Production components unconditionally emit complete serial lines using protocol
-version 8. The required order is:
+version 9. The required order is:
 
 ```text
-SYSTEM-SMOKE protocol=8
+SYSTEM-SMOKE protocol=9
 SYSTEM-SMOKE milestone=root_process_prepared
 SYSTEM-SMOKE milestone=kernel_initialized
 SYSTEM-SMOKE milestone=userspace_entered
@@ -80,6 +80,15 @@ SYSTEM-SMOKE milestone=timer_notification_bound
 SYSTEM-SMOKE milestone=timer_notification_received
 SYSTEM-SMOKE milestone=timer_notification_acknowledged
 SYSTEM-SMOKE milestone=notification_objects_destroyed
+SYSTEM-SMOKE milestone=echo_service_child_started
+SYSTEM-SMOKE milestone=echo_service_request_sent
+SYSTEM-SMOKE milestone=echo_service_reply_verified
+SYSTEM-SMOKE milestone=echo_service_child_destroyed
+SYSTEM-SMOKE milestone=echo_service_child_started
+SYSTEM-SMOKE milestone=echo_service_request_sent
+SYSTEM-SMOKE milestone=echo_service_reply_verified
+SYSTEM-SMOKE milestone=echo_service_child_destroyed
+SYSTEM-SMOKE milestone=echo_service_restarted
 SYSTEM-SMOKE EXIT status=0
 ```
 
@@ -113,6 +122,15 @@ timer interrupt then masks the source, completes the wait, receives PIC EOI, and
 switches from the idle kernel continuation back to the root task. The root emits
 the receive milestone only after observing a nonzero count, acknowledges the
 source, and destroys the unbound objects.
+After notification cleanup, the root task loads the independent echo-service
+image from the third boot module and delegates only a receive-only request
+endpoint and a send-only reply endpoint into the service's empty capability
+space. The service receives one three-word request and replies once before
+exiting cleanly; the root task verifies the reply, destroys the service process,
+and repeats the full start/request/reply/destroy cycle against the same
+endpoints to prove restartability. This sequence runs twice per boot, so the
+eight echo milestones appear in two identical groups before the
+`echo_service_restarted` record.
 The kernel emits the terminal record only after accepting the root task's exit
 syscall.
 

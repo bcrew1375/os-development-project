@@ -12,6 +12,7 @@ comptime {
 
 const NativeEnvironment = struct {
     pub const enableChildProcesses = true;
+    pub const enableEchoService = true;
     pub const enableNotificationSmoke = true;
     pub const syscall3 = abi.syscall.syscall3;
     pub const syscall5 = abi.syscall.syscall5;

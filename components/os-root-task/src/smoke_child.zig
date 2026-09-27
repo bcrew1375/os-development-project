@@ -26,10 +26,11 @@ pub export fn _start(startup: *const abi.process.ChildStartup) callconv(.c) nore
             debugWrite(abi.system_smoke.FAULT_CHILD_YIELDING);
         },
         .managed_lifecycle => managedLifecycle(startup),
+        .service_echo => exit(abi.syscall.EXIT_FAILURE),
     }
     switch (startup.mode) {
         .ipc_ping_pong, .capability_transfer => exit(abi.syscall.EXIT_SUCCESS),
-        .managed_lifecycle => unreachable,
+        .managed_lifecycle, .service_echo => unreachable,
         .invalid_opcode => {
             if (abi.syscall.syscall3(@intFromEnum(abi.syscall.SyscallNumber.yield), 0, 0, 0) !=
                 abi.syscall.SYSCALL_SUCCESS)

@@ -2,10 +2,10 @@
 
 const ipc = @import("ipc.zig");
 
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 pub const PREFIX = "SYSTEM-SMOKE";
 
-pub const HEADER = PREFIX ++ " protocol=8\n";
+pub const HEADER = PREFIX ++ " protocol=9\n";
 pub const ROOT_PROCESS_PREPARED = PREFIX ++ " milestone=root_process_prepared\n";
 pub const KERNEL_INITIALIZED = PREFIX ++ " milestone=kernel_initialized\n";
 pub const USERSPACE_ENTERED = PREFIX ++ " milestone=userspace_entered\n";
@@ -71,6 +71,15 @@ pub const MANAGED_FAULT_STARTUP_OBSERVED = PREFIX ++ " milestone=managed_fault_s
 pub const MANAGED_FAULT_SERVICE_TRANSFERRED = PREFIX ++ " milestone=managed_fault_service_transferred\n";
 pub const MANAGED_FAULT_SERVICE_READY = PREFIX ++ " milestone=managed_fault_service_ready\n";
 pub const MANAGED_FAULT_CHILD_DESTROYED = PREFIX ++ " milestone=managed_fault_child_destroyed\n";
+pub const ECHO_SERVICE_REQUEST = ipc.Message{ .words = .{ 0x4543_484F, 0x0102_0304, 0x0506_0708 } };
+pub const ECHO_SERVICE_REPLY = ipc.Message{ .words = .{ 0x4543_4852, 0x0102_0304, 0x0506_0708 } };
+pub const ECHO_SERVICE_LIFECYCLE_TOKEN: u32 = 0xEC40_0001;
+pub const ECHO_SERVICE_RESTART_LIFECYCLE_TOKEN: u32 = 0xEC40_0002;
+pub const ECHO_SERVICE_CHILD_STARTED = PREFIX ++ " milestone=echo_service_child_started\n";
+pub const ECHO_SERVICE_REQUEST_SENT = PREFIX ++ " milestone=echo_service_request_sent\n";
+pub const ECHO_SERVICE_REPLY_VERIFIED = PREFIX ++ " milestone=echo_service_reply_verified\n";
+pub const ECHO_SERVICE_CHILD_DESTROYED = PREFIX ++ " milestone=echo_service_child_destroyed\n";
+pub const ECHO_SERVICE_RESTARTED = PREFIX ++ " milestone=echo_service_restarted\n";
 pub const NOTIFICATION_OBJECTS_CREATED = PREFIX ++ " milestone=notification_objects_created\n";
 pub const TIMER_NOTIFICATION_BOUND = PREFIX ++ " milestone=timer_notification_bound\n";
 pub const TIMER_NOTIFICATION_RECEIVED = PREFIX ++ " milestone=timer_notification_received\n";
@@ -132,4 +141,9 @@ pub const ordered_milestones = [_][]const u8{
     TIMER_NOTIFICATION_RECEIVED,
     TIMER_NOTIFICATION_ACKNOWLEDGED,
     NOTIFICATION_OBJECTS_DESTROYED,
+    ECHO_SERVICE_CHILD_STARTED,
+    ECHO_SERVICE_REQUEST_SENT,
+    ECHO_SERVICE_REPLY_VERIFIED,
+    ECHO_SERVICE_CHILD_DESTROYED,
+    ECHO_SERVICE_RESTARTED,
 };

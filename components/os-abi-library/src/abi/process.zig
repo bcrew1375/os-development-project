@@ -59,6 +59,7 @@ pub const ChildStartupMode = enum(u32) {
     invalid_opcode = 2,
     capability_transfer = 3,
     managed_lifecycle = 4,
+    service_echo = 5,
 };
 
 pub const ManagedChildAction = enum(u32) {

@@ -19,6 +19,10 @@ pub fn addStep(
         build,
         build_configuration.architecture,
     );
+    const echo_service_module = production_boot_modules.createEchoServiceModule(
+        build,
+        build_configuration.architecture,
+    );
     const command = build.addSystemCommand(&.{"python3"});
     command.addFileArg(build.path("tools/system_smoke_runner.py"));
     command.addArgs(&.{
@@ -36,6 +40,8 @@ pub fn addStep(
             command.addFileArg(root_task.path);
             command.addArg("--boot-module");
             command.addFileArg(child_module);
+            command.addArg("--boot-module");
+            command.addFileArg(echo_service_module);
         },
         .limine => {
             const iso = limine.createIso(
@@ -50,6 +56,10 @@ pub fn addStep(
                     .{
                         .source = child_module,
                         .iso_name = production_boot_modules.child_module_name,
+                    },
+                    .{
+                        .source = echo_service_module,
+                        .iso_name = production_boot_modules.echo_service_module_name,
                     },
                 },
                 build.fmt(

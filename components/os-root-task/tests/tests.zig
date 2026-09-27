@@ -339,6 +339,11 @@ var valid_boot_modules = [_]abi.boot_info.BootModuleInfo{
         .virtual_start = 0x0400_0000,
         .size = 0x1000,
     },
+    .{
+        .physical_start = 0x40_0000,
+        .virtual_start = 0x0400_1000,
+        .size = 0x1000,
+    },
 };
 
 fn validBootInfo() abi.boot_info.BootInfo {

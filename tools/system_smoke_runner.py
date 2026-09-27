@@ -12,7 +12,7 @@ import tempfile
 import time
 
 
-PROTOCOL_VERSION = 8
+PROTOCOL_VERSION = 9
 PREFIX = "SYSTEM-SMOKE"
 HEADER = f"{PREFIX} protocol={PROTOCOL_VERSION}"
 MILESTONES = (
@@ -65,6 +65,15 @@ MILESTONES = (
     "timer_notification_received",
     "timer_notification_acknowledged",
     "notification_objects_destroyed",
+    "echo_service_child_started",
+    "echo_service_request_sent",
+    "echo_service_reply_verified",
+    "echo_service_child_destroyed",
+    "echo_service_child_started",
+    "echo_service_request_sent",
+    "echo_service_reply_verified",
+    "echo_service_child_destroyed",
+    "echo_service_restarted",
 )
 MILESTONE_PATTERN = re.compile(r"^SYSTEM-SMOKE milestone=(?P<name>[a-z0-9_]+)$")
 CHILD_EXIT_PATTERN = re.compile(r"^SYSTEM-SMOKE CHILD_EXIT status=(?P<status>\d+)$")

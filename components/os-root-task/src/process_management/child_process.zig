@@ -6,7 +6,6 @@ const memory_management = @import("memory_management");
 const process_management = @import("process_management");
 const shared = @import("shared");
 const std = @import("std");
-
 const elf = shared.executable.elf;
 const MemoryObject = memory_management.operations.MemoryObject;
 const AddressSpace = memory_management.operations.AddressSpace;
@@ -31,6 +30,7 @@ pub const Error = elf.ElfLoadError || memory_management.PhysicalRangeAllocator.E
     EntryPointNotExecutable,
     SegmentOverlapsStack,
     PageAlignedSegmentOverlap,
+    InvalidConfiguration,
     LoaderWindowExhausted,
     MappedAddressUnavailable,
     CleanupFailed,
@@ -333,6 +333,18 @@ pub fn createAndStartManaged(
     const initial_stack_pointer = try writeInitialStack(Environment, stack_mapping, child_startup);
     try unmapLoaderAliases(Environment, &child, root_address_space);
 
+    if (child_startup.mode == .service_echo) {
+        if (child_startup.request_endpoint_capability == abi.capability.INVALID_CAPABILITY or
+            child_startup.reply_endpoint_capability == abi.capability.INVALID_CAPABILITY or
+            child_startup.parent_endpoint_capability != abi.capability.INVALID_CAPABILITY or
+            (lifecycle_endpoint orelse abi.capability.INVALID_CAPABILITY) !=
+                abi.capability.INVALID_CAPABILITY or
+            child_startup.lifecycle_token != abi.process.INVALID_LIFECYCLE_TOKEN)
+        {
+            try child.destroy(Environment, physical_allocator, root_address_space);
+            return error.InvalidConfiguration;
+        }
+    }
     child.thread = try process_manager.createThread();
     const configuration = abi.process.ThreadConfiguration{
         .capability_space = child.capability_space.?.capability,

@@ -7,6 +7,7 @@ const notification = @import("notification");
 const std = @import("std");
 
 const bootstrap_memory = memory_management.bootstrap;
+const child_process = process_management.child_process;
 const memory_manager = memory_management.operations;
 const PhysicalRangeAllocator = memory_management.PhysicalRangeAllocator;
 const RootTaskHeap = memory_management.RootTaskHeap;
@@ -33,7 +34,7 @@ pub fn run(comptime Environment: type, boot_info: *const abi.boot_info.BootInfo)
         Environment.debugWrite("root: invalid boot modules\n");
         return abi.syscall.EXIT_FAILURE;
     };
-    if (modules.len < 2) {
+    if (modules.len < 3) {
         Environment.debugWrite("root: missing delegated boot module\n");
         return abi.syscall.EXIT_FAILURE;
     }
@@ -132,7 +133,79 @@ pub fn run(comptime Environment: type, boot_info: *const abi.boot_info.BootInfo)
             return abi.syscall.EXIT_FAILURE;
         };
     }
+    if (comptime @hasDecl(Environment, "enableEchoService")) {
+        const echo_service_image = bootModuleBytes(Environment, modules[2]) orelse {
+            Environment.debugWrite("root: missing echo service module\n");
+            return abi.syscall.EXIT_FAILURE;
+        };
+        runEchoServiceSmoke(Environment, &physical_allocator, address_space, echo_service_image) catch {
+            Environment.debugWrite("root: echo service smoke failed\n");
+            return abi.syscall.EXIT_FAILURE;
+        };
+    }
     return abi.syscall.EXIT_SUCCESS;
+}
+
+fn runEchoServiceSmoke(
+    comptime Environment: type,
+    allocator: *PhysicalRangeAllocator,
+    root_address_space: memory_management.operations.AddressSpace,
+    image: []const u8,
+) !void {
+    const endpoint_manager = ipc.EndpointManager(Environment);
+    const request_endpoint = try endpoint_manager.createEndpoint();
+    errdefer endpoint_manager.destroyEndpoint(request_endpoint) catch {};
+    const reply_endpoint = try endpoint_manager.createEndpoint();
+    errdefer endpoint_manager.destroyEndpoint(reply_endpoint) catch {};
+    try runEchoServiceInstance(
+        Environment,
+        allocator,
+        root_address_space,
+        image,
+        request_endpoint,
+        reply_endpoint,
+    );
+    try runEchoServiceInstance(
+        Environment,
+        allocator,
+        root_address_space,
+        image,
+        request_endpoint,
+        reply_endpoint,
+    );
+    try endpoint_manager.destroyEndpoint(reply_endpoint);
+    try endpoint_manager.destroyEndpoint(request_endpoint);
+    Environment.debugWrite(abi.system_smoke.ECHO_SERVICE_RESTARTED);
+}
+
+fn runEchoServiceInstance(
+    comptime Environment: type,
+    allocator: *PhysicalRangeAllocator,
+    root_address_space: memory_management.operations.AddressSpace,
+    image: []const u8,
+    request_endpoint: ipc.Endpoint,
+    reply_endpoint: ipc.Endpoint,
+) !void {
+    const endpoint_manager = ipc.EndpointManager(Environment);
+    var service = try child_process.createAndStart(
+        Environment,
+        allocator,
+        root_address_space,
+        image,
+        .{ .mode = .service_echo },
+        request_endpoint.capability,
+        reply_endpoint.capability,
+    );
+    errdefer service.destroy(Environment, allocator, root_address_space) catch {};
+    Environment.debugWrite(abi.system_smoke.ECHO_SERVICE_CHILD_STARTED);
+    try yieldSuccessfully(Environment);
+    try endpoint_manager.send(request_endpoint, abi.system_smoke.ECHO_SERVICE_REQUEST);
+    Environment.debugWrite(abi.system_smoke.ECHO_SERVICE_REQUEST_SENT);
+    const reply = try endpoint_manager.receive(reply_endpoint);
+    if (!std.meta.eql(reply, abi.system_smoke.ECHO_SERVICE_REPLY)) return error.InvalidChildMessage;
+    Environment.debugWrite(abi.system_smoke.ECHO_SERVICE_REPLY_VERIFIED);
+    try service.destroy(Environment, allocator, root_address_space);
+    Environment.debugWrite(abi.system_smoke.ECHO_SERVICE_CHILD_DESTROYED);
 }
 
 fn runNotificationSmoke(comptime Environment: type) !void {
@@ -171,7 +244,6 @@ fn runChildSmoke(
     module: abi.boot_info.BootModuleInfo,
 ) !void {
     const image = bootModuleBytes(Environment, module) orelse return error.InvalidBootModule;
-    const child_process = process_management.child_process;
 
     const endpoint_manager = ipc.EndpointManager(Environment);
     const request_endpoint = try endpoint_manager.createEndpoint();
@@ -295,7 +367,6 @@ fn runCapabilityTransferSmoke(
     root_address_space: memory_manager.AddressSpace,
     image: []const u8,
 ) !void {
-    const child_process = process_management.child_process;
     const endpoint_manager = ipc.EndpointManager(Environment);
     const process_manager = process_management.ProcessManager(Environment);
 
