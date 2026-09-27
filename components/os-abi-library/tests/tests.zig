@@ -152,7 +152,7 @@ test "Fault event and reply ABI records are stable" {
     );
 }
 
-test "Thread lifecycle rights are representable and attenuable" {
+test "Capability rights are representable and attenuable" {
     const all = abi.capability.Rights{
         .configure = true,
         .start = true,
@@ -167,7 +167,16 @@ test "Thread lifecycle rights are representable and attenuable" {
     try std.testing.expect(endpoint.contains(.{ .send = true }));
     try std.testing.expect(endpoint.contains(.{ .receive = true }));
     try std.testing.expect(!endpoint.contains(.{ .write = true }));
-    try std.testing.expectEqual(@as(u32, 0x0fff), abi.capability.KNOWN_RIGHTS_MASK);
+    const notification = abi.capability.Rights{
+        .manage = true,
+        .wait = true,
+        .signal = true,
+        .bind = true,
+        .acknowledge = true,
+    };
+    try std.testing.expect(notification.contains(.{ .wait = true, .signal = true }));
+    try std.testing.expect(!notification.contains(.{ .send = true }));
+    try std.testing.expectEqual(@as(u32, 0xffff), abi.capability.KNOWN_RIGHTS_MASK);
 }
 
 test "Endpoint IPC ABI uses three fixed words and stable syscall values" {
@@ -193,6 +202,19 @@ test "Endpoint IPC ABI uses three fixed words and stable syscall values" {
     try std.testing.expectEqual(
         abi.syscall.ErrorCode.endpoint_canceled,
         abi.syscall.decodeError(abi.syscall.errorResult(.endpoint_canceled)).?,
+    );
+}
+
+test "Notification ABI uses stable object types syscalls and result layout" {
+    try std.testing.expectEqual(@as(u32, 8), @intFromEnum(abi.capability.ObjectType.notification));
+    try std.testing.expectEqual(@as(u32, 9), @intFromEnum(abi.capability.ObjectType.interrupt_source));
+    try std.testing.expectEqual(@as(u32, 40), @intFromEnum(abi.syscall.SyscallNumber.create_notification));
+    try std.testing.expectEqual(@as(u32, 48), @intFromEnum(abi.syscall.SyscallNumber.acknowledge_interrupt_source));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(abi.notification.InterruptSourceKind.timer));
+    try std.testing.expectEqual(@as(usize, 12), @sizeOf(abi.notification.WaitResult));
+    try std.testing.expectEqual(
+        abi.syscall.ErrorCode.notification_canceled,
+        abi.syscall.decodeError(abi.syscall.errorResult(.notification_canceled)).?,
     );
 }
 
@@ -274,9 +296,9 @@ test "Syscall numbers and structured errors are stable" {
 }
 
 test "system smoke protocol records are complete ordered serial lines" {
-    try std.testing.expectEqual(@as(u32, 7), abi.system_smoke.PROTOCOL_VERSION);
+    try std.testing.expectEqual(@as(u32, 8), abi.system_smoke.PROTOCOL_VERSION);
     try std.testing.expectEqualStrings(
-        "SYSTEM-SMOKE protocol=7\n",
+        "SYSTEM-SMOKE protocol=8\n",
         abi.system_smoke.HEADER,
     );
     try std.testing.expectEqual(
@@ -342,6 +364,11 @@ test "system smoke protocol records are complete ordered serial lines" {
         "SYSTEM-SMOKE milestone=managed_fault_service_transferred\n",
         "SYSTEM-SMOKE milestone=managed_fault_service_ready\n",
         "SYSTEM-SMOKE milestone=managed_fault_child_destroyed\n",
+        "SYSTEM-SMOKE milestone=notification_objects_created\n",
+        "SYSTEM-SMOKE milestone=timer_notification_bound\n",
+        "SYSTEM-SMOKE milestone=timer_notification_received\n",
+        "SYSTEM-SMOKE milestone=timer_notification_acknowledged\n",
+        "SYSTEM-SMOKE milestone=notification_objects_destroyed\n",
     };
     try std.testing.expectEqual(expected.len, abi.system_smoke.ordered_milestones.len);
     for (expected, abi.system_smoke.ordered_milestones) |expected_record, actual_record| {

@@ -25,10 +25,10 @@ The default timeout is 60 seconds. Override it with
 ## Protocol
 
 Production components unconditionally emit complete serial lines using protocol
-version 7. The required order is:
+version 8. The required order is:
 
 ```text
-SYSTEM-SMOKE protocol=7
+SYSTEM-SMOKE protocol=8
 SYSTEM-SMOKE milestone=root_process_prepared
 SYSTEM-SMOKE milestone=kernel_initialized
 SYSTEM-SMOKE milestone=userspace_entered
@@ -75,6 +75,11 @@ SYSTEM-SMOKE milestone=managed_fault_service_transferred
 SYSTEM-SMOKE milestone=managed_fault_service_ready
 SYSTEM-SMOKE CHILD_FAULT kind=invalid_opcode
 SYSTEM-SMOKE milestone=managed_fault_child_destroyed
+SYSTEM-SMOKE milestone=notification_objects_created
+SYSTEM-SMOKE milestone=timer_notification_bound
+SYSTEM-SMOKE milestone=timer_notification_received
+SYSTEM-SMOKE milestone=timer_notification_acknowledged
+SYSTEM-SMOKE milestone=notification_objects_destroyed
 SYSTEM-SMOKE EXIT status=0
 ```
 
@@ -101,6 +106,13 @@ validates the kernel-generated token and terminal value, and only then emits the
 `CHILD_EXIT` or `CHILD_FAULT` evidence. Architecture handlers no longer emit those
 records directly. Child terminal records remain intermediate events and do not
 terminate host observation.
+After child cleanup, the root creates and binds a timer source to a notification.
+Binding configures the PIT but leaves the source masked. The empty wait retains the
+root syscall, arms the timer, and transitions the scheduler to idle. The required
+timer interrupt then masks the source, completes the wait, receives PIC EOI, and
+switches from the idle kernel continuation back to the root task. The root emits
+the receive milestone only after observing a nonzero count, acknowledges the
+source, and destroys the unbound objects.
 The kernel emits the terminal record only after accepting the root task's exit
 syscall.
 

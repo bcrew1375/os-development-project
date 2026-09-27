@@ -49,6 +49,15 @@ pub const Operation = enum {
     endpoint_receive,
     endpoint_send_capability,
     endpoint_receive_capability,
+    create_notification,
+    destroy_notification,
+    notification_wait,
+    notification_signal,
+    create_interrupt_source,
+    destroy_interrupt_source,
+    bind_interrupt_source,
+    unbind_interrupt_source,
+    acknowledge_interrupt_source,
     convert_argument,
 };
 
@@ -176,8 +185,191 @@ pub fn dispatchWithServices(
             caller_capability_space,
             request.arguments,
         ),
+        .create_notification => createNotification(Services, caller_capability_space),
+        .destroy_notification => destroyNotification(
+            Services,
+            caller_capability_space,
+            request.arguments[0],
+        ),
+        .notification_wait => waitNotification(
+            Services,
+            caller_capability_space,
+            request.arguments[0],
+        ),
+        .notification_signal => signalNotification(
+            Services,
+            caller_capability_space,
+            request.arguments[0],
+        ),
+        .create_interrupt_source => createInterruptSource(
+            Services,
+            caller_capability_space,
+            request.arguments,
+        ),
+        .destroy_interrupt_source => destroyInterruptSource(
+            Services,
+            caller_capability_space,
+            request.arguments[0],
+        ),
+        .bind_interrupt_source => bindInterruptSource(
+            Services,
+            caller_capability_space,
+            request.arguments,
+        ),
+        .unbind_interrupt_source => unbindInterruptSource(
+            Services,
+            caller_capability_space,
+            request.arguments[0],
+        ),
+        .acknowledge_interrupt_source => acknowledgeInterruptSource(
+            Services,
+            caller_capability_space,
+            request.arguments[0],
+        ),
         _ => .{ .returned = abi.syscall.errorResult(.unsupported) },
     };
+}
+
+fn createNotification(comptime Services: type, caller_space: u32) Result {
+    if (!@hasDecl(Services, "createNotificationCapability")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const handle = Services.createNotificationCapability(caller_space) catch |err| {
+        return failure(.create_notification, err);
+    };
+    return .{ .returned = handle };
+}
+
+fn destroyNotification(
+    comptime Services: type,
+    caller_space: u32,
+    capability_value: u64,
+) Result {
+    if (!@hasDecl(Services, "destroyNotificationCapability")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const handle = toU32(capability_value) catch |err| return failure(.convert_argument, err);
+    Services.destroyNotificationCapability(caller_space, handle) catch |err| {
+        return failure(.destroy_notification, err);
+    };
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
+fn waitNotification(
+    comptime Services: type,
+    caller_space: u32,
+    capability_value: u64,
+) Result {
+    if (!@hasDecl(Services, "waitNotification")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const handle = toU32(capability_value) catch |err| return failure(.convert_argument, err);
+    const outcome = Services.waitNotification(caller_space, handle) catch |err| {
+        return failure(.notification_wait, err);
+    };
+    return switch (outcome) {
+        .completed => |pending| .{
+            .returned_registers = ipc.notification_operations.pendingResult(pending),
+        },
+        .blocked => .blocked,
+    };
+}
+
+fn signalNotification(
+    comptime Services: type,
+    caller_space: u32,
+    capability_value: u64,
+) Result {
+    if (!@hasDecl(Services, "signalNotification")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const handle = toU32(capability_value) catch |err| return failure(.convert_argument, err);
+    Services.signalNotification(caller_space, handle) catch |err| {
+        return failure(.notification_signal, err);
+    };
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
+fn createInterruptSource(
+    comptime Services: type,
+    caller_space: u32,
+    arguments: [5]u64,
+) Result {
+    if (!@hasDecl(Services, "createInterruptSourceCapability")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const kind_value = toU32(arguments[0]) catch |err| return failure(.convert_argument, err);
+    const parameter = toU32(arguments[1]) catch |err| return failure(.convert_argument, err);
+    const kind: abi.notification.InterruptSourceKind = @enumFromInt(kind_value);
+    const handle = Services.createInterruptSourceCapability(
+        caller_space,
+        kind,
+        parameter,
+    ) catch |err| return failure(.create_interrupt_source, err);
+    return .{ .returned = handle };
+}
+
+fn destroyInterruptSource(
+    comptime Services: type,
+    caller_space: u32,
+    capability_value: u64,
+) Result {
+    if (!@hasDecl(Services, "destroyInterruptSourceCapability")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const handle = toU32(capability_value) catch |err| return failure(.convert_argument, err);
+    Services.destroyInterruptSourceCapability(caller_space, handle) catch |err| {
+        return failure(.destroy_interrupt_source, err);
+    };
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
+fn bindInterruptSource(
+    comptime Services: type,
+    caller_space: u32,
+    arguments: [5]u64,
+) Result {
+    if (!@hasDecl(Services, "bindInterruptSource")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const source = toU32(arguments[0]) catch |err| return failure(.convert_argument, err);
+    const notification_handle = toU32(arguments[1]) catch |err| {
+        return failure(.convert_argument, err);
+    };
+    Services.bindInterruptSource(caller_space, source, notification_handle) catch |err| {
+        return failure(.bind_interrupt_source, err);
+    };
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
+fn unbindInterruptSource(
+    comptime Services: type,
+    caller_space: u32,
+    capability_value: u64,
+) Result {
+    if (!@hasDecl(Services, "unbindInterruptSource")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const handle = toU32(capability_value) catch |err| return failure(.convert_argument, err);
+    Services.unbindInterruptSource(caller_space, handle) catch |err| {
+        return failure(.unbind_interrupt_source, err);
+    };
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
+}
+
+fn acknowledgeInterruptSource(
+    comptime Services: type,
+    caller_space: u32,
+    capability_value: u64,
+) Result {
+    if (!@hasDecl(Services, "acknowledgeInterruptSource")) {
+        return .{ .returned = abi.syscall.errorResult(.unsupported) };
+    }
+    const handle = toU32(capability_value) catch |err| return failure(.convert_argument, err);
+    Services.acknowledgeInterruptSource(caller_space, handle) catch |err| {
+        return failure(.acknowledge_interrupt_source, err);
+    };
+    return .{ .returned = abi.syscall.SYSCALL_SUCCESS };
 }
 
 fn createEndpoint(comptime Services: type, caller_space: u32) Result {
@@ -734,6 +926,8 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.InvalidAddressSpaceHandle,
         error.InvalidMemoryObjectHandle,
         error.InvalidEndpointHandle,
+        error.InvalidNotificationHandle,
+        error.InvalidInterruptSourceHandle,
         error.ThreadOwnerMismatch,
         => .invalid_capability,
         error.InsufficientCapabilityRights => .insufficient_rights,
@@ -746,6 +940,8 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.OutOfCapabilitySpaces,
         error.OutOfThreadContexts,
         error.OutOfEndpoints,
+        error.OutOfNotifications,
+        error.OutOfInterruptSources,
         error.OutOfVirtualMemoryAreas,
         error.AddressSpaceRootAllocationFailed,
         error.PhysicalMemoryAllocationFailed,
@@ -796,12 +992,22 @@ fn errorCode(err: anyerror) abi.syscall.ErrorCode {
         error.CapabilitySpaceInUse,
         error.CapabilitySpaceNotEmpty,
         error.EndpointInUse,
+        error.NotificationInUse,
+        error.InterruptSourceInUse,
+        error.InterruptSourceUnavailable,
         => .object_in_use,
         error.EndpointEmpty => .endpoint_empty,
         error.EndpointFull => .endpoint_full,
         error.EndpointCanceled => .endpoint_canceled,
+        error.NotificationCanceled => .notification_canceled,
         error.CapabilitySlotOccupied => .capability_slot_occupied,
         error.InvalidCapabilitySlot => .invalid_capability_slot,
+        error.NotificationAlreadyHasWaiter,
+        error.NotificationWaiterNotFound,
+        error.InterruptSourceNotBound,
+        error.InterruptSourceAlreadyAcknowledged,
+        error.InvalidInterruptSourceConfiguration,
+        => .invalid_state,
         error.UserPageNotMapped,
         error.UserAccessDenied,
         error.WriteAccessDenied,
@@ -1040,6 +1246,66 @@ fn productionReceiveEndpointCapability(
     }, caller_space, transfer_request);
 }
 
+fn productionWaitNotification(
+    caller_space: u32,
+    notification_capability: u32,
+) !ipc.notification_operations.WaitOutcome {
+    const handle = try capability.resolveNotification(
+        caller_space,
+        notification_capability,
+        .{ .wait = true },
+    );
+    return ipc.notification_operations.wait(handle, .{
+        .capability_space_handle = caller_space,
+        .capability_handle = notification_capability,
+    });
+}
+
+fn productionSignalNotification(caller_space: u32, notification_capability: u32) !void {
+    const handle = try capability.resolveNotification(
+        caller_space,
+        notification_capability,
+        .{ .signal = true },
+    );
+    try ipc.notification_operations.signal(handle);
+}
+
+fn productionBindInterruptSource(
+    caller_space: u32,
+    source_capability: u32,
+    notification_capability: u32,
+) !void {
+    const source_handle = try capability.resolveInterruptSource(
+        caller_space,
+        source_capability,
+        .{ .bind = true },
+    );
+    const notification_handle = try capability.resolveNotification(
+        caller_space,
+        notification_capability,
+        .{ .bind = true },
+    );
+    try ipc.notification_operations.bind(source_handle, notification_handle);
+}
+
+fn productionUnbindInterruptSource(caller_space: u32, source_capability: u32) !void {
+    const source_handle = try capability.resolveInterruptSource(
+        caller_space,
+        source_capability,
+        .{ .bind = true },
+    );
+    try ipc.notification_operations.unbind(source_handle);
+}
+
+fn productionAcknowledgeInterruptSource(caller_space: u32, source_capability: u32) !void {
+    const source_handle = try capability.resolveInterruptSource(
+        caller_space,
+        source_capability,
+        .{ .acknowledge = true },
+    );
+    try ipc.notification_operations.acknowledge(source_handle);
+}
+
 const ProductionServices = struct {
     pub const currentAddressSpaceHandle = process.execution_context.currentAddressSpaceHandle;
     pub const findAddressSpaceCapability = capability.findAddressSpaceCapability;
@@ -1060,6 +1326,8 @@ const ProductionServices = struct {
     pub const createCapabilitySpaceCapability = capability.createCapabilitySpaceCapability;
     pub const createThreadCapability = capability.createThreadCapability;
     pub const createEndpointCapability = capability.createEndpointCapability;
+    pub const createNotificationCapability = capability.createNotificationCapability;
+    pub const createInterruptSourceCapability = capability.createInterruptSourceCapability;
     pub const configureThreadFromUser = productionConfigureThreadFromUser;
     pub const startThreadCapability = productionStartThreadCapability;
     pub const suspendThreadCapability = productionSuspendThreadCapability;
@@ -1071,8 +1339,15 @@ const ProductionServices = struct {
     pub const destroyCapabilitySpaceCapability = capability.destroyCapabilitySpaceCapability;
     pub const deleteCapabilityFromSpace = capability.deleteCapabilityFromSpace;
     pub const destroyEndpointCapability = capability.destroyEndpointCapability;
+    pub const destroyNotificationCapability = capability.destroyNotificationCapability;
+    pub const destroyInterruptSourceCapability = capability.destroyInterruptSourceCapability;
     pub const sendEndpointMessage = productionSendEndpointMessage;
     pub const receiveEndpointMessage = productionReceiveEndpointMessage;
     pub const sendEndpointCapability = productionSendEndpointCapability;
     pub const receiveEndpointCapability = productionReceiveEndpointCapability;
+    pub const waitNotification = productionWaitNotification;
+    pub const signalNotification = productionSignalNotification;
+    pub const bindInterruptSource = productionBindInterruptSource;
+    pub const unbindInterruptSource = productionUnbindInterruptSource;
+    pub const acknowledgeInterruptSource = productionAcknowledgeInterruptSource;
 };

@@ -175,10 +175,38 @@ The child thread becomes faulted, the kernel publishes the configured coarse fau
 record, and the root task resumes. The fault does not terminate the root task or
 the kernel.
 
-U5.4 lifecycle delivery is terminal notification, not resumable fault IPC. There
-is no exception-handler registration, register or address payload, fault reply,
-automatic restart policy, or resume operation. Those richer mechanisms remain
-U5.5.
+Managed faults may instead use U5.5 resumable fault IPC. The kernel retains the
+user trap frame on the faulting thread's bounded kernel stack and sends four
+three-word records containing the configured token, thread handle, reason, fault
+address, instruction pointer, and architecture data. A manager holding the bound
+endpoint's manage authority and the matching token may resume with the saved state,
+replace only the instruction pointer, or terminate the thread. Missing or unusable
+fault endpoints fall back to terminal containment; kernel-mode faults never route
+through userspace.
+
+## Capability-backed notifications and interrupt delivery
+
+Notifications are distinct kernel objects rather than endpoint variants. Each has
+a saturating `u32` pending count, a sticky overflow flag, and at most one blocked
+waiter. A wait atomically consumes the complete count and overflow state; when no
+state is pending, the syscall frame is retained and the thread blocks. Signaling is
+bounded and allocation-free, either incrementing the count or completing the one
+retained waiter directly.
+
+Interrupt-source capabilities name kernel-created logical sources, not userspace-
+supplied IRQs or vectors. The initial source kind is the PIT-backed timer, configured
+with a nonzero frequency. Binding requires bind authority over both the source and
+notification. An empty wait performs the initial arm, delivery masks the source,
+and explicit acknowledge authority is required to rearm it. Unbinding and source
+destruction leave the hardware source masked.
+
+Common code knows only logical source kinds and mask/unmask operations. The x86
+implementation owns PIC IRQ selection and EOI. Bounded per-thread kernel stacks
+are 16 KiB on x86-32 and 32 KiB on x86-64; the x86-64 interrupt trampoline also
+preserves the SysV 16-byte call alignment. A timer interrupt completes and
+queues the waiter without preempting an ordinary running userspace thread. When the
+reserved idle continuation is active, the handler sends EOI and then switches to
+the waiter through the existing kernel-continuation context-switch path.
 
 ## Transactional ownership and cleanup
 
@@ -204,7 +232,7 @@ a retry without double-unmapping, double-destroying, or double-freeing resources
 
 ## Demonstrated production behavior
 
-Production system-smoke protocol version 7 retains the existing IPC, capability
+Production system-smoke protocol version 8 retains the existing IPC, capability
 transfer, and fault-containment children, then runs two managed children:
 
 1. A managed clean child announces startup, requests a service, receives a
@@ -214,6 +242,10 @@ transfer, and fault-containment children, then runs two managed children:
 2. A managed fault child completes the same startup and service handshake, then
    executes `ud2`. The root validates the kernel's coarse invalid-opcode lifecycle
    event before emitting `CHILD_FAULT` and reclaiming the resources.
+3. After all children are reclaimed, the root creates a notification and timer
+   source, binds them, and blocks in `notification_wait`. A real PIT interrupt masks
+   the source, completes the retained syscall, and wakes the root from idle. The
+   root acknowledges and rearms the source, then unbinds and destroys both objects.
 
 The complete production path has been validated on:
 
@@ -248,12 +280,15 @@ process model. Its deliberate limitations include:
 - an ELF may contain at most eight loadable segments;
 - page-aligned `PT_LOAD` ranges may not overlap; and
 - lifecycle faults expose only a terminal coarse class and cannot be resumed.
+- only the timer is exposed as a logical interrupt source, notifications permit one
+  waiter, and interrupt delivery does not preempt an ordinary running thread.
 
 These restrictions mean a child can perform isolated computation, communicate
 with its manager, receive one attenuated service capability, and report terminal
-lifecycle state, but it cannot yet participate in a general multi-service
-microkernel environment. A real service split, richer startup data, resumable
-fault IPC, notifications, and broader discovery policy remain future work.
+lifecycle state, receive resumable managed faults, and wait for an authorized timer
+notification, but it cannot yet participate in a general multi-service microkernel
+environment. A real service split, richer startup data, broader interrupt routing,
+and broader discovery policy remain future work.
 
 ## Production and test boundaries
 

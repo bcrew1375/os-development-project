@@ -161,6 +161,22 @@ pub fn commitEndpointWake(handle: thread.Handle, expected: thread.BlockReason) E
     try ready_queue.push(handle);
 }
 
+/// Switches from the reserved idle continuation to one ready thread, if available.
+pub fn scheduleFromIdleIfReady() Error!bool {
+    try requireInitialized();
+    if (current_thread_handle != null or current_architecture_context != idle_context_handle) {
+        return false;
+    }
+    const next_handle = ready_queue.pop() orelse return false;
+    const next = try thread.get(next_handle);
+    try thread.startRunning(next_handle);
+    installExecutionContext(next_handle, next);
+    current_thread_handle = next_handle;
+    current_architecture_context = next.architecture_context_handle;
+    try arch.thread_context.switchContext(idle_context_handle, next.architecture_context_handle);
+    return true;
+}
+
 pub fn terminate(handle: thread.Handle, status: u64) Error!void {
     try requireInitialized();
     const object = try thread.get(handle);
@@ -326,6 +342,10 @@ fn blockReasonMatches(actual: ?thread.BlockReason, expected: thread.BlockReason)
         },
         .endpoint_transfer_receive => |handle| switch (expected) {
             .endpoint_transfer_receive => |expected_handle| handle == expected_handle,
+            else => false,
+        },
+        .notification_wait => |handle| switch (expected) {
+            .notification_wait => |expected_handle| handle == expected_handle,
             else => false,
         },
     };

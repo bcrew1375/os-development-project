@@ -8,6 +8,8 @@ pub const boot_info = @import("boot_info.zig");
 pub const capability = @import("capability.zig");
 /// Fixed-register inter-process communication types.
 pub const ipc = @import("ipc.zig");
+/// Counted notifications and logical interrupt-source identifiers.
+pub const notification = @import("notification.zig");
 /// Fixed-layout process and thread management request structures.
 pub const process = @import("process.zig");
 /// Versioned full-system lifecycle records emitted by production components.

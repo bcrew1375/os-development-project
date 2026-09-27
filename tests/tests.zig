@@ -9,6 +9,7 @@ test {
     _ = @import("capability_space_tests.zig");
     _ = @import("syscall_tests.zig");
     _ = @import("ipc_tests.zig");
+    _ = @import("notification_tests.zig");
     _ = @import("coverage_report_tests.zig");
     _ = @import("architecture_points_file_tests.zig");
     _ = @import("architecture_coverage_source_manifest_tests.zig");

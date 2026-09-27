@@ -3,6 +3,7 @@ const boot_modules = @import("boot_modules");
 const memory_management = @import("memory_management");
 const process_management = @import("process_management");
 const ipc = @import("ipc");
+const notification = @import("notification");
 const std = @import("std");
 
 const bootstrap_memory = memory_management.bootstrap;
@@ -125,7 +126,42 @@ pub fn run(comptime Environment: type, boot_info: *const abi.boot_info.BootInfo)
             return abi.syscall.EXIT_FAILURE;
         };
     }
+    if (comptime @hasDecl(Environment, "enableNotificationSmoke")) {
+        runNotificationSmoke(Environment) catch {
+            Environment.debugWrite("root: notification smoke sequence failed\n");
+            return abi.syscall.EXIT_FAILURE;
+        };
+    }
     return abi.syscall.EXIT_SUCCESS;
+}
+
+fn runNotificationSmoke(comptime Environment: type) !void {
+    const manager = notification.NotificationManager(Environment);
+    const object = try manager.createNotification();
+    var object_owned = true;
+    errdefer if (object_owned) manager.destroyNotification(object) catch {};
+    const source = try manager.createInterruptSource(.timer, 1000);
+    var source_owned = true;
+    errdefer if (source_owned) manager.destroyInterruptSource(source) catch {};
+    Environment.debugWrite(abi.system_smoke.NOTIFICATION_OBJECTS_CREATED);
+
+    try manager.bind(source, object);
+    var bound = true;
+    errdefer if (bound) manager.unbind(source) catch {};
+    Environment.debugWrite(abi.system_smoke.TIMER_NOTIFICATION_BOUND);
+    const result = try manager.wait(object);
+    if (result.pending_count == 0) return error.EmptyNotification;
+    Environment.debugWrite(abi.system_smoke.TIMER_NOTIFICATION_RECEIVED);
+
+    try manager.acknowledge(source);
+    Environment.debugWrite(abi.system_smoke.TIMER_NOTIFICATION_ACKNOWLEDGED);
+    try manager.unbind(source);
+    bound = false;
+    try manager.destroyInterruptSource(source);
+    source_owned = false;
+    try manager.destroyNotification(object);
+    object_owned = false;
+    Environment.debugWrite(abi.system_smoke.NOTIFICATION_OBJECTS_DESTROYED);
 }
 
 fn runChildSmoke(

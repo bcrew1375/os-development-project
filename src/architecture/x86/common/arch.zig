@@ -31,6 +31,8 @@ pub fn makeArchitecture(comptime implementation: anytype) type {
             pub const enableInterrupts = implementation.interrupts.enableInterrupts;
             pub const disableInterrupts = implementation.interrupts.disableInterrupts;
             pub const acknowledgeInterrupt = implementation.interrupts.acknowledgeInterrupt;
+            pub const maskInterruptSource = implementation.interrupts.maskInterruptSource;
+            pub const unmaskInterruptSource = implementation.interrupts.unmaskInterruptSource;
         };
 
         pub const mmu = struct {

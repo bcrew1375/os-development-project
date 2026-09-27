@@ -2,6 +2,7 @@
 
 const capability = @import("capability.zig");
 const ipc = @import("ipc.zig");
+const notification = @import("notification.zig");
 
 /// Numeric syscall identifiers placed in the syscall number register.
 pub const SyscallNumber = enum(u32) {
@@ -39,6 +40,15 @@ pub const SyscallNumber = enum(u32) {
     endpoint_send_capability = 37,
     endpoint_receive_capability = 38,
     fault_reply = 39,
+    create_notification = 40,
+    destroy_notification = 41,
+    notification_wait = 42,
+    notification_signal = 43,
+    create_interrupt_source = 44,
+    destroy_interrupt_source = 45,
+    bind_interrupt_source = 46,
+    unbind_interrupt_source = 47,
+    acknowledge_interrupt_source = 48,
     _,
 };
 
@@ -74,6 +84,7 @@ pub const ErrorCode = enum(u32) {
     endpoint_canceled = 15,
     capability_slot_occupied = 16,
     invalid_capability_slot = 17,
+    notification_canceled = 18,
 };
 
 /// Encodes a recoverable ABI error in a syscall return value.
@@ -102,6 +113,7 @@ pub fn decodeError(value: u32) ?ErrorCode {
         @intFromEnum(ErrorCode.endpoint_canceled) => .endpoint_canceled,
         @intFromEnum(ErrorCode.capability_slot_occupied) => .capability_slot_occupied,
         @intFromEnum(ErrorCode.invalid_capability_slot) => .invalid_capability_slot,
+        @intFromEnum(ErrorCode.notification_canceled) => .notification_canceled,
         else => .internal_failure,
     };
 }
@@ -192,6 +204,29 @@ pub fn syscallReceive(number: u32, endpoint: capability.CapabilityHandle) ipc.Re
     return .{
         .status = status,
         .message = .{ .words = .{ @truncate(word0), @truncate(word1), @truncate(word2) } },
+    };
+}
+
+/// Performs a notification wait returning a count and sticky-overflow indication.
+pub fn syscallNotificationWait(
+    number: u32,
+    notification_capability: capability.CapabilityHandle,
+) notification.WaitResult {
+    var status: u32 = undefined;
+    var pending_count: usize = undefined;
+    var overflowed: usize = undefined;
+    asm volatile (
+        \\int $0x80
+        : [status] "={eax}" (status),
+          [pending_count] "={ebx}" (pending_count),
+          [overflowed] "={ecx}" (overflowed),
+        : [number] "{eax}" (number),
+          [notification_capability] "{ebx}" (notification_capability),
+        : .{ .memory = true });
+    return .{
+        .status = status,
+        .pending_count = @truncate(pending_count),
+        .overflowed = overflowed != 0,
     };
 }
 

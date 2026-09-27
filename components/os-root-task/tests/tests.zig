@@ -3,6 +3,7 @@ const boot_modules = @import("boot_modules");
 const memory_management = @import("memory_management");
 const process_management = @import("process_management");
 const ipc = @import("ipc");
+const notification = @import("notification");
 const startup = @import("startup");
 const std = @import("std");
 
@@ -276,6 +277,48 @@ const EndpointRecordingTransport = struct {
     }
 };
 const endpoint_manager = ipc.EndpointManager(EndpointRecordingTransport);
+const NotificationRecordingTransport = struct {
+    var syscall_number: u32 = 0;
+    var arguments: [3]usize = .{ 0, 0, 0 };
+    var scalar_response: u32 = abi.syscall.SYSCALL_SUCCESS;
+    var wait_response: abi.notification.WaitResult = .{
+        .status = abi.syscall.SYSCALL_SUCCESS,
+        .pending_count = 0,
+        .overflowed = false,
+    };
+
+    fn reset() void {
+        syscall_number = 0;
+        arguments = .{ 0, 0, 0 };
+        scalar_response = abi.syscall.SYSCALL_SUCCESS;
+        wait_response = .{
+            .status = abi.syscall.SYSCALL_SUCCESS,
+            .pending_count = 0,
+            .overflowed = false,
+        };
+    }
+
+    pub fn syscall3(
+        number: u32,
+        argument0: usize,
+        argument1: usize,
+        argument2: usize,
+    ) callconv(.c) u32 {
+        syscall_number = number;
+        arguments = .{ argument0, argument1, argument2 };
+        return scalar_response;
+    }
+
+    pub fn syscallNotificationWait(
+        number: u32,
+        notification_capability: abi.capability.CapabilityHandle,
+    ) abi.notification.WaitResult {
+        syscall_number = number;
+        arguments = .{ notification_capability, 0, 0 };
+        return wait_response;
+    }
+};
+const notification_manager = notification.NotificationManager(NotificationRecordingTransport);
 const child_process = process_management.child_process;
 
 var valid_physical_memory = [_]abi.boot_info.PhysicalMemoryInfo{.{
@@ -1102,6 +1145,70 @@ test "endpoint manager emits capability-transfer send and receive syscalls" {
         error.InvalidSlot,
         endpoint_manager.receiveCapability(endpoint, 15),
     );
+}
+
+test "notification manager emits lifecycle wait binding and acknowledgment syscalls" {
+    NotificationRecordingTransport.reset();
+    NotificationRecordingTransport.scalar_response = 81;
+    const object = try notification_manager.createNotification();
+    try std.testing.expectEqual(@as(u32, 81), object.capability);
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.create_notification),
+        NotificationRecordingTransport.syscall_number,
+    );
+
+    NotificationRecordingTransport.scalar_response = 82;
+    const source = try notification_manager.createInterruptSource(.timer, 1000);
+    try std.testing.expectEqual(@as(u32, 82), source.capability);
+    try std.testing.expectEqual(
+        [_]usize{ @intFromEnum(abi.notification.InterruptSourceKind.timer), 1000, 0 },
+        NotificationRecordingTransport.arguments,
+    );
+
+    NotificationRecordingTransport.scalar_response = abi.syscall.SYSCALL_SUCCESS;
+    try notification_manager.bind(source, object);
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.bind_interrupt_source),
+        NotificationRecordingTransport.syscall_number,
+    );
+    try std.testing.expectEqual(
+        [_]usize{ source.capability, object.capability, 0 },
+        NotificationRecordingTransport.arguments,
+    );
+
+    NotificationRecordingTransport.wait_response = .{
+        .status = abi.syscall.SYSCALL_SUCCESS,
+        .pending_count = 3,
+        .overflowed = true,
+    };
+    const pending = try notification_manager.wait(object);
+    try std.testing.expectEqual(@as(u32, 3), pending.pending_count);
+    try std.testing.expect(pending.overflowed);
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.notification_wait),
+        NotificationRecordingTransport.syscall_number,
+    );
+
+    try notification_manager.acknowledge(source);
+    try std.testing.expectEqual(
+        @intFromEnum(abi.syscall.SyscallNumber.acknowledge_interrupt_source),
+        NotificationRecordingTransport.syscall_number,
+    );
+    try notification_manager.unbind(source);
+    try notification_manager.destroyInterruptSource(source);
+    try notification_manager.destroyNotification(object);
+}
+
+test "notification manager decodes cancellation and object-state errors" {
+    const object = notification.Notification{ .capability = 91 };
+    NotificationRecordingTransport.reset();
+    NotificationRecordingTransport.wait_response.status =
+        abi.syscall.errorResult(.notification_canceled);
+    try std.testing.expectError(error.Canceled, notification_manager.wait(object));
+
+    NotificationRecordingTransport.reset();
+    NotificationRecordingTransport.scalar_response = abi.syscall.errorResult(.object_in_use);
+    try std.testing.expectError(error.ObjectInUse, notification_manager.destroyNotification(object));
 }
 
 test "managed process validates startup service transfer and terminal lifecycle" {

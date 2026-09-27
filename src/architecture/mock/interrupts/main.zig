@@ -1,3 +1,5 @@
+const abi = @import("abi");
+
 const MAX_INSTALLED_VECTORS = 256;
 const MAX_ACKNOWLEDGEMENTS = 256;
 
@@ -16,6 +18,9 @@ pub const State = struct {
     disable_count: usize = 0,
     acknowledgements: [MAX_ACKNOWLEDGEMENTS]usize = undefined,
     acknowledgement_count: usize = 0,
+    timer_masked: bool = true,
+    mask_count: usize = 0,
+    unmask_count: usize = 0,
 };
 
 var state = State{};
@@ -52,6 +57,22 @@ pub fn acknowledgeInterrupt(vector: usize) void {
     }
     state.acknowledgements[state.acknowledgement_count] = vector;
     state.acknowledgement_count += 1;
+}
+
+pub fn maskInterruptSource(kind: abi.notification.InterruptSourceKind) void {
+    switch (kind) {
+        .timer => state.timer_masked = true,
+        _ => return,
+    }
+    state.mask_count += 1;
+}
+
+pub fn unmaskInterruptSource(kind: abi.notification.InterruptSourceKind) void {
+    switch (kind) {
+        .timer => state.timer_masked = false,
+        _ => return,
+    }
+    state.unmask_count += 1;
 }
 
 pub fn resetForTest() void {

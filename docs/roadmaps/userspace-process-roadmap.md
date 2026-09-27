@@ -1238,7 +1238,26 @@ process useful in a microkernel system.
 - the process manager observes exit or fault without polling kernel globals;
 - child cleanup reclaims delegated capabilities and process-manager metadata.
 
-## [ ] U5.5 Add fault delivery to userspace
+## [x] U5.5 Add fault delivery to userspace
+
+- Completed: 2026-09-27
+- Implemented: four-record fault messages carrying the fault token, thread handle,
+  coarse reason, fault address, instruction pointer, and architecture error data;
+  optional authorized fault endpoint/token fields in thread configuration; retained
+  x86 trap frames on bounded per-thread kernel stacks; blocking fault-manager state;
+  checked `fault_reply` operations for resume, replacement instruction pointer, and
+  termination; endpoint-and-token authorization; transactional scheduler requeue;
+  and terminal fallback when the fault endpoint is missing, full, destroyed, or
+  otherwise cannot accept the complete fault-message batch.
+- Validation: ABI layout and message-construction tests; native fault delivery,
+  authorization, reply, retained-frame mutation, invalid-state, and fallback tests;
+  physical x86-32 and x86-64 retained-fault-frame and containment tests; production
+  protocol-7 managed-fault smoke on x86-32 Limine, x86-32 Multiboot, and x86-64
+  Limine; `zig build tests`; architecture tests and coverage; production builds;
+  Python smoke-runner tests; `zig fmt`; and `git diff --check`.
+- Limitation: replies may preserve the saved register state, replace only the
+  instruction pointer, or terminate the thread. General register editing and
+  userspace pager policy remain future work.
 
 **Kernel and ABI work:**
 
@@ -1256,7 +1275,38 @@ process useful in a microkernel system.
 - a fault reply can terminate the child cleanly;
 - kernel-originated faults never route through userspace fault IPC.
 
-## [ ] U5.6 Add notification objects for userspace drivers
+## [x] U5.6 Add notification objects for userspace drivers
+
+- Completed: 2026-09-27
+- Implemented: 32 generation-checked notification objects with a saturating `u32`
+  pending count and sticky overflow flag; one retained waiter per notification;
+  separate wait, signal, bind, acknowledge, manage, and grant rights; eight bounded
+  logical interrupt-source slots with a unique kernel-defined timer source; source
+  configuration by timer frequency rather than IRQ/vector number; transactional
+  binding and unbinding; source masking on delivery; explicit capability-authorized
+  acknowledgment and rearming; waiter cancellation on capability deletion,
+  destruction, thread exit, and terminal fault; controller-neutral common policy;
+  x86 PIC-owned mask, unmask, and EOI behavior; and a bounded x86-64 per-thread
+  kernel stack of 32 KiB (x86-32 remains 16 KiB) with SysV-aligned x86-64
+  interrupt-call convention.
+- Scheduling result: an empty wait on a bound source retains the syscall and arms
+  the source before blocking. Interrupt delivery completes and queues the waiter
+  without preempting an ordinary userspace thread. If idle is active, the x86
+  handler issues EOI first and then switches through the existing kernel-continuation
+  context path to the awakened waiter.
+- ABI result: a completed wait returns success with the pending count in result word
+  0 and the sticky-overflow indication in result word 1. A canceled retained wait
+  returns the structured `notification_canceled` error.
+- Validation: ABI object-type, rights, syscall-number, result-layout, and error-code
+  tests; root-task wrapper transport and error tests; native registry exhaustion,
+  stale-handle, saturation, overflow, one-waiter, wakeup, cancellation, rights,
+  binding, masking, acknowledgment, and syscall tests; freestanding x86-32 and
+  x86-64 builds; protocol-8 production timer-notification smoke on x86-32 Limine,
+  x86-32 Multiboot, and x86-64 Limine; architecture tests; Python protocol tests;
+  `zig fmt`; and `git diff --check`.
+- Limitation: the timer is the only logical interrupt source, notifications permit
+  one waiter, delivery does not preempt a running userspace thread, and the legacy
+  PIC/PIT remains the only physical controller/timer implementation.
 
 **Related assessment:** P4.3.
 
@@ -1323,7 +1373,7 @@ process useful in a microkernel system.
 - [x] Capabilities transfer atomically with rights attenuation.
 - [x] The process manager receives child lifecycle and fault events.
 - [ ] At least one service runs in a separate userspace protection domain.
-- [ ] Hardware events can reach an authorized userspace thread through a
+- [x] Hardware events can reach an authorized userspace thread through a
       notification object.
 
 # Post-roadmap work

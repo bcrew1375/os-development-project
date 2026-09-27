@@ -4,7 +4,10 @@ const abi = @import("abi");
 const arch = @import("arch");
 const std = @import("std");
 const endpoint = @import("../ipc/endpoint.zig");
+const interrupt_source = @import("../ipc/interrupt_source.zig");
 const ipc_operations = @import("../ipc/operations.zig");
+const notification = @import("../ipc/notification.zig");
+const notification_operations = @import("../ipc/notification_operations.zig");
 const authority = @import("../memory_management/physical_memory_authority.zig");
 const process = @import("../process/main.zig");
 pub const space = @import("space.zig");
@@ -20,7 +23,9 @@ pub const CapabilityError = error{
     InvalidCapabilitySlot,
     CapabilitySlotOccupied,
     CapabilitySpaceNotEmpty,
-} || process.ProcessError || space.Error || authority.Error || endpoint.Error || ipc_operations.Error;
+} || process.ProcessError || space.Error || authority.Error || endpoint.Error ||
+    ipc_operations.Error || notification.Error || interrupt_source.Error ||
+    notification_operations.Error;
 
 pub const MAX_CAPABILITIES: usize = abi.capability.MAX_CAPABILITY_SLOT_INDEX + 1;
 
@@ -32,6 +37,8 @@ const CapabilityObject = union(enum) {
     thread: process.thread.Handle,
     capability_space: space.Handle,
     endpoint: endpoint.Handle,
+    notification: notification.Handle,
+    interrupt_source: interrupt_source.Handle,
 };
 
 const Reference = struct {
@@ -143,6 +150,39 @@ pub fn createEndpointCapability(
         .receive = true,
         .grant = true,
     }, null, .{ .endpoint = object_handle });
+}
+
+pub fn createNotificationCapability(
+    space_handle: space.Handle,
+) CapabilityError!abi.capability.CapabilityHandle {
+    const table = try tableFor(space_handle);
+    const index = freeSlot(table) orelse return error.OutOfCapabilities;
+    const object_handle = try notification.create();
+    errdefer notification.destroy(object_handle) catch {};
+    return initialize(index, &table[index], .{
+        .manage = true,
+        .wait = true,
+        .signal = true,
+        .bind = true,
+        .grant = true,
+    }, null, .{ .notification = object_handle });
+}
+
+pub fn createInterruptSourceCapability(
+    space_handle: space.Handle,
+    kind: abi.notification.InterruptSourceKind,
+    parameter: u32,
+) CapabilityError!abi.capability.CapabilityHandle {
+    const table = try tableFor(space_handle);
+    const index = freeSlot(table) orelse return error.OutOfCapabilities;
+    const object_handle = try interrupt_source.create(kind, parameter);
+    errdefer interrupt_source.destroy(object_handle) catch {};
+    return initialize(index, &table[index], .{
+        .manage = true,
+        .bind = true,
+        .acknowledge = true,
+        .grant = true,
+    }, null, .{ .interrupt_source = object_handle });
 }
 
 pub fn installCapability(
@@ -306,6 +346,28 @@ pub fn resolveEndpoint(
     };
 }
 
+pub fn resolveNotification(
+    space_handle: space.Handle,
+    capability_handle: abi.capability.CapabilityHandle,
+    required: abi.capability.Rights,
+) CapabilityError!notification.Handle {
+    return switch ((try resolve(space_handle, capability_handle, required)).object.?) {
+        .notification => |handle| handle,
+        else => error.InvalidCapabilityType,
+    };
+}
+
+pub fn resolveInterruptSource(
+    space_handle: space.Handle,
+    capability_handle: abi.capability.CapabilityHandle,
+    required: abi.capability.Rights,
+) CapabilityError!interrupt_source.Handle {
+    return switch ((try resolve(space_handle, capability_handle, required)).object.?) {
+        .interrupt_source => |handle| handle,
+        else => error.InvalidCapabilityType,
+    };
+}
+
 pub fn sendEndpointMessage(
     space_handle: space.Handle,
     capability_handle: abi.capability.CapabilityHandle,
@@ -341,6 +403,38 @@ pub fn destroyEndpointCapability(
     );
     if (hasChild(reference)) return error.CapabilityHasDescendants;
     try ipc_operations.destroy(object_handle);
+    try clear(reference);
+}
+
+pub fn destroyNotificationCapability(
+    space_handle: space.Handle,
+    capability_handle: abi.capability.CapabilityHandle,
+) CapabilityError!void {
+    const reference = ref(space_handle, capability_handle);
+    const object_handle = try resolveNotification(
+        space_handle,
+        capability_handle,
+        .{ .manage = true },
+    );
+    if (hasChild(reference)) return error.CapabilityHasDescendants;
+    try notification_operations.destroyNotification(object_handle);
+    try clear(reference);
+}
+
+pub fn destroyInterruptSourceCapability(
+    space_handle: space.Handle,
+    capability_handle: abi.capability.CapabilityHandle,
+) CapabilityError!void {
+    const reference = ref(space_handle, capability_handle);
+    const object_handle = try resolveInterruptSource(
+        space_handle,
+        capability_handle,
+        .{ .manage = true },
+    );
+    if (hasChild(reference)) return error.CapabilityHasDescendants;
+    const state = try interrupt_source.get(object_handle);
+    arch.interrupts.maskInterruptSource(state.kind);
+    try interrupt_source.destroy(object_handle);
     try clear(reference);
 }
 
@@ -583,6 +677,10 @@ pub fn deleteCapability(
         .capability_space_handle = space_handle,
         .capability_handle = capability_handle,
     });
+    try notification_operations.cancelAuthorization(.{
+        .capability_space_handle = space_handle,
+        .capability_handle = capability_handle,
+    });
     try clear(reference);
 }
 
@@ -621,6 +719,8 @@ pub fn activeCountIn(space_handle: space.Handle) CapabilityError!usize {
 pub fn resetForTest() void {
     tables = [_]Table{[_]Slot{.{}} ** MAX_CAPABILITIES} ** space.MAX_CAPABILITY_SPACES;
     endpoint.resetForTest();
+    notification.resetForTest();
+    interrupt_source.resetForTest();
 }
 
 fn initialize(index: usize, slot: *Slot, rights: abi.capability.Rights, parent: ?Reference, object: CapabilityObject) abi.capability.CapabilityHandle {

@@ -12,7 +12,7 @@ import tempfile
 import time
 
 
-PROTOCOL_VERSION = 7
+PROTOCOL_VERSION = 8
 PREFIX = "SYSTEM-SMOKE"
 HEADER = f"{PREFIX} protocol={PROTOCOL_VERSION}"
 MILESTONES = (
@@ -60,6 +60,11 @@ MILESTONES = (
     "managed_fault_service_transferred",
     "managed_fault_service_ready",
     "managed_fault_child_destroyed",
+    "notification_objects_created",
+    "timer_notification_bound",
+    "timer_notification_received",
+    "timer_notification_acknowledged",
+    "notification_objects_destroyed",
 )
 MILESTONE_PATTERN = re.compile(r"^SYSTEM-SMOKE milestone=(?P<name>[a-z0-9_]+)$")
 CHILD_EXIT_PATTERN = re.compile(r"^SYSTEM-SMOKE CHILD_EXIT status=(?P<status>\d+)$")
@@ -73,6 +78,7 @@ EXPECTED_EVENTS = (
     *(f"milestone={milestone}" for milestone in MILESTONES[39:43]),
     "child_fault=invalid_opcode",
     f"milestone={MILESTONES[43]}",
+    *(f"milestone={milestone}" for milestone in MILESTONES[44:]),
     "root_exit",
 )
 

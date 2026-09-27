@@ -95,6 +95,12 @@ fn addRootTask(
         .optimize = optimize,
     });
     ipc.addImport("abi", abi);
+    const notification = b.createModule(.{
+        .root_source_file = b.path("src/notification/main.zig"),
+        .target = config.target,
+        .optimize = optimize,
+    });
+    notification.addImport("abi", abi);
     process_management.addImport("ipc", ipc);
     const boot_modules = b.createModule(.{
         .root_source_file = b.path("src/boot_modules.zig"),
@@ -119,6 +125,7 @@ fn addRootTask(
     root_task.root_module.addImport("memory_management", memory_management);
     root_task.root_module.addImport("process_management", process_management);
     root_task.root_module.addImport("ipc", ipc);
+    root_task.root_module.addImport("notification", notification);
     root_task.root_module.addImport("boot_modules", boot_modules);
     root_task.setLinkerScript(b.path(config.linker_script));
 
@@ -185,6 +192,12 @@ fn addTests(
         .optimize = optimize,
     });
     ipc.addImport("abi", abi);
+    const notification = b.createModule(.{
+        .root_source_file = b.path("src/notification/main.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    });
+    notification.addImport("abi", abi);
     process_management.addImport("ipc", ipc);
     const boot_modules = b.createModule(.{
         .root_source_file = b.path("src/boot_modules.zig"),
@@ -195,6 +208,7 @@ fn addTests(
     tests.root_module.addImport("boot_modules", boot_modules);
     tests.root_module.addImport("process_management", process_management);
     tests.root_module.addImport("ipc", ipc);
+    tests.root_module.addImport("notification", notification);
     const startup = b.createModule(.{
         .root_source_file = b.path("src/startup.zig"),
         .target = b.graph.host,
@@ -205,6 +219,7 @@ fn addTests(
     startup.addImport("memory_management", memory_management);
     startup.addImport("process_management", process_management);
     startup.addImport("ipc", ipc);
+    startup.addImport("notification", notification);
     tests.root_module.addImport("startup", startup);
 
     const run_tests = b.addRunArtifact(tests);

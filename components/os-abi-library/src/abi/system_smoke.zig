@@ -2,10 +2,10 @@
 
 const ipc = @import("ipc.zig");
 
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 pub const PREFIX = "SYSTEM-SMOKE";
 
-pub const HEADER = PREFIX ++ " protocol=7\n";
+pub const HEADER = PREFIX ++ " protocol=8\n";
 pub const ROOT_PROCESS_PREPARED = PREFIX ++ " milestone=root_process_prepared\n";
 pub const KERNEL_INITIALIZED = PREFIX ++ " milestone=kernel_initialized\n";
 pub const USERSPACE_ENTERED = PREFIX ++ " milestone=userspace_entered\n";
@@ -71,6 +71,13 @@ pub const MANAGED_FAULT_STARTUP_OBSERVED = PREFIX ++ " milestone=managed_fault_s
 pub const MANAGED_FAULT_SERVICE_TRANSFERRED = PREFIX ++ " milestone=managed_fault_service_transferred\n";
 pub const MANAGED_FAULT_SERVICE_READY = PREFIX ++ " milestone=managed_fault_service_ready\n";
 pub const MANAGED_FAULT_CHILD_DESTROYED = PREFIX ++ " milestone=managed_fault_child_destroyed\n";
+pub const NOTIFICATION_OBJECTS_CREATED = PREFIX ++ " milestone=notification_objects_created\n";
+pub const TIMER_NOTIFICATION_BOUND = PREFIX ++ " milestone=timer_notification_bound\n";
+pub const TIMER_NOTIFICATION_RECEIVED = PREFIX ++ " milestone=timer_notification_received\n";
+pub const TIMER_NOTIFICATION_ACKNOWLEDGED =
+    PREFIX ++ " milestone=timer_notification_acknowledged\n";
+pub const NOTIFICATION_OBJECTS_DESTROYED =
+    PREFIX ++ " milestone=notification_objects_destroyed\n";
 pub const CHILD_EXIT_SUCCESS = PREFIX ++ " CHILD_EXIT status=0\n";
 pub const CHILD_FAULT_INVALID_OPCODE = PREFIX ++ " CHILD_FAULT kind=invalid_opcode\n";
 pub const EXIT_FORMAT = PREFIX ++ " EXIT status={d}\n";
@@ -120,4 +127,9 @@ pub const ordered_milestones = [_][]const u8{
     MANAGED_FAULT_SERVICE_TRANSFERRED,
     MANAGED_FAULT_SERVICE_READY,
     MANAGED_FAULT_CHILD_DESTROYED,
+    NOTIFICATION_OBJECTS_CREATED,
+    TIMER_NOTIFICATION_BOUND,
+    TIMER_NOTIFICATION_RECEIVED,
+    TIMER_NOTIFICATION_ACKNOWLEDGED,
+    NOTIFICATION_OBJECTS_DESTROYED,
 };

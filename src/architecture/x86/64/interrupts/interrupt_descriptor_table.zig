@@ -102,7 +102,9 @@ fn makeTrampoline(comptime vector: u32) *const fn () callconv(.naked) void {
                     \\pushq %%r15
                     \\mov %%rsp, %%rsi
                     \\mov %[vector], %%dil
+                    \\subq $8, %%rsp
                     \\call %[interruptHandler:P]
+                    \\addq $8, %%rsp
                     \\popq %%r15
                     \\popq %%r14
                     \\popq %%r13

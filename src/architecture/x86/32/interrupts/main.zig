@@ -28,6 +28,20 @@ pub fn acknowledgeInterrupt(vector: usize) void {
     pic.sendEndOfInterrupt(vector);
 }
 
+pub fn maskInterruptSource(kind: abi.notification.InterruptSourceKind) void {
+    switch (kind) {
+        .timer => pic.setMask(pic.TIMER_IRQ),
+        _ => {},
+    }
+}
+
+pub fn unmaskInterruptSource(kind: abi.notification.InterruptSourceKind) void {
+    switch (kind) {
+        .timer => pic.clearMask(pic.TIMER_IRQ),
+        _ => {},
+    }
+}
+
 pub fn interruptHandler(vector: usize, stack_pointer: usize) callconv(.c) void {
     const trap_frame: *TrapFrame = @ptrFromInt(stack_pointer);
     if (comptime @hasDecl(root, "architectureTestObserveException")) {
@@ -43,6 +57,7 @@ pub fn interruptHandler(vector: usize, stack_pointer: usize) callconv(.c) void {
         arch.platform.writer().print("Interrupt 0x{x}: ", .{vector}) catch {};
     }
 
+    var schedule_from_idle = false;
     switch (vector) {
         vectors.divide_by_zero => handleException(trap_frame, .divide_by_zero, "Divide by zero."),
         vectors.debug_exception => {
@@ -82,6 +97,11 @@ pub fn interruptHandler(vector: usize, stack_pointer: usize) callconv(.c) void {
         0x12...0x1F => {},
         vectors.timer => {
             time.recordInterrupt();
+            kernel_common.ipc.notification_operations.deliverInterrupt(.timer) catch |err| {
+                arch.platform.writer().print("timer notification failed: {s}\n", .{@errorName(err)}) catch {};
+                @panic("timer notification delivery failed");
+            };
+            schedule_from_idle = true;
             if (diagnostic.print) {
                 arch.platform.writer().print("Timer ({d} ticks).\n", .{diagnostic.count}) catch {};
             }
@@ -102,6 +122,14 @@ pub fn interruptHandler(vector: usize, stack_pointer: usize) callconv(.c) void {
     }
 
     acknowledgeInterrupt(vector);
+    if (schedule_from_idle) {
+        _ = kernel_common.process.scheduler.scheduleFromIdleIfReady() catch |err| {
+            if (err != error.SchedulerUninitialized) {
+                arch.platform.writer().print("idle interrupt scheduling failed: {s}\n", .{@errorName(err)}) catch {};
+                @panic("idle interrupt scheduling failed");
+            }
+        };
+    }
 }
 
 fn handlePageFault(trap_frame: *const TrapFrame, diagnostic: diagnostics.Decision) void {

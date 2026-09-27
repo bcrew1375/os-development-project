@@ -8,7 +8,7 @@ const frames = @import("../interrupts/trap_frame.zig");
 const context_switch = @import("switch.zig");
 
 pub const MAX_CONTEXTS: usize = 32;
-pub const KERNEL_STACK_SIZE: usize = 16 * 1024;
+pub const KERNEL_STACK_SIZE: usize = 32 * 1024;
 pub const KERNEL_STACK_ALIGNMENT: usize = 4096;
 pub const KERNEL_CONTEXT_HANDLE: arch.ThreadContextHandle = 0x8000_0001;
 const HANDLE_SLOT_BITS: u32 = 5;

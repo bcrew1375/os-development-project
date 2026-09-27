@@ -263,6 +263,7 @@ pub fn MemoryManager(comptime Transport: type) type {
                 .endpoint_canceled,
                 .capability_slot_occupied,
                 .invalid_capability_slot,
+                .notification_canceled,
                 => Error.InternalFailure,
                 .internal_failure => Error.InternalFailure,
             };

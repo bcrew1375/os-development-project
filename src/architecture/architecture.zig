@@ -5,6 +5,7 @@
 //! concrete hardware implementation.
 
 const builtin = @import("builtin");
+const abi = @import("abi");
 const std = @import("std");
 
 /// Selected architecture implementation. Tests use the mock implementation.
@@ -282,6 +283,8 @@ pub fn validateImpl(comptime T: type) void {
             enableInterrupts: fn () void,
             disableInterrupts: fn () void,
             acknowledgeInterrupt: fn (vector: usize) void,
+            maskInterruptSource: fn (kind: abi.notification.InterruptSourceKind) void,
+            unmaskInterruptSource: fn (kind: abi.notification.InterruptSourceKind) void,
         });
 
         validateInterface(T.platform, struct {

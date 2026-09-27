@@ -68,6 +68,10 @@ pub const ObjectType = enum(u32) {
     capability_space = 6,
     /// Synchronous inter-process communication endpoint.
     endpoint = 7,
+    /// Counted asynchronous notification object.
+    notification = 8,
+    /// Kernel-defined logical interrupt source.
+    interrupt_source = 9,
     _,
 };
 
@@ -97,7 +101,15 @@ pub const Rights = packed struct(u32) {
     receive: bool = false,
     /// Allows deriving and transferring an attenuated capability through IPC.
     grant: bool = false,
-    _reserved: u20 = 0,
+    /// Allows waiting for a notification.
+    wait: bool = false,
+    /// Allows signaling a notification.
+    signal: bool = false,
+    /// Allows binding an interrupt source to a notification.
+    bind: bool = false,
+    /// Allows acknowledging and rearming an interrupt source.
+    acknowledge: bool = false,
+    _reserved: u16 = 0,
 
     /// Returns true when `self` grants every right requested by `required`.
     pub fn contains(self: Rights, required: Rights) bool {
@@ -112,12 +124,16 @@ pub const Rights = packed struct(u32) {
             (!required.terminate or self.terminate) and
             (!required.send or self.send) and
             (!required.receive or self.receive) and
-            (!required.grant or self.grant);
+            (!required.grant or self.grant) and
+            (!required.wait or self.wait) and
+            (!required.signal or self.signal) and
+            (!required.bind or self.bind) and
+            (!required.acknowledge or self.acknowledge);
     }
 };
 
 /// Rights bits accepted by capability-management ABI requests.
-pub const KNOWN_RIGHTS_MASK: u32 = 0x0fff;
+pub const KNOWN_RIGHTS_MASK: u32 = 0xffff;
 
 /// Encodes capability rights into their stable ABI representation.
 pub fn rightsBits(rights: Rights) u32 {

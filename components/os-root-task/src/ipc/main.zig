@@ -121,6 +121,7 @@ pub fn EndpointManager(comptime Transport: type) type {
                 .endpoint_empty => Error.Empty,
                 .endpoint_full => Error.Full,
                 .endpoint_canceled => Error.Canceled,
+                .notification_canceled => Error.InternalFailure,
                 .capability_slot_occupied => Error.SlotOccupied,
                 .invalid_capability_slot => Error.InvalidSlot,
                 .invalid_user_memory => Error.InvalidUserMemory,

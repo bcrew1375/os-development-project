@@ -4,6 +4,7 @@ const std = @import("std");
 const arch = @import("arch");
 const capability_space = @import("../capability/space.zig");
 const endpoint = @import("../ipc/endpoint.zig");
+const notification = @import("../ipc/notification.zig");
 
 pub const MAX_THREADS: usize = 32;
 const HANDLE_SLOT_BITS: u32 = 5;
@@ -32,6 +33,7 @@ pub const BlockReason = union(enum) {
     endpoint_receive: endpoint.Handle,
     endpoint_transfer_send: endpoint.Handle,
     endpoint_transfer_receive: endpoint.Handle,
+    notification_wait: notification.Handle,
 };
 
 pub const UserFaultKind = enum {
@@ -205,6 +207,7 @@ pub fn blockForEndpoint(handle: Handle, reason: BlockReason) Error!void {
         .endpoint_receive,
         .endpoint_transfer_send,
         .endpoint_transfer_receive,
+        .notification_wait,
         => {},
         .suspended, .fault_manager => return Error.InvalidStateTransition,
     }
@@ -218,6 +221,16 @@ pub fn wakeFromEndpoint(handle: Handle, expected: BlockReason) Error!void {
     if (!sameBlockReason(slot.thread.block_reason, expected)) return Error.InvalidStateTransition;
     slot.thread.state = .ready;
     slot.thread.block_reason = null;
+}
+
+pub fn cancelNotificationWait(handle: Handle) bool {
+    const slot = resolveMutableSlot(handle) catch return false;
+    const notification_handle = switch (slot.thread.block_reason orelse return false) {
+        .notification_wait => |value| value,
+        else => return false,
+    };
+    notification.clearWaiter(notification_handle, handle) catch return false;
+    return true;
 }
 
 pub fn suspendReady(handle: Handle) Error!void {
@@ -245,6 +258,7 @@ pub fn exit(handle: Handle, status: u64) Error!void {
     };
     slot.thread.state = .exited;
     _ = endpoint.cancelThread(handle);
+    _ = cancelNotificationWait(handle);
     slot.thread.block_reason = null;
     slot.thread.exit_status = status;
     slot.thread.user_fault = null;
@@ -258,6 +272,7 @@ pub fn recordFault(handle: Handle, fault: UserFault) Error!void {
     }
     slot.thread.state = .faulted;
     _ = endpoint.cancelThread(handle);
+    _ = cancelNotificationWait(handle);
     slot.thread.block_reason = null;
     slot.thread.exit_status = null;
     slot.thread.user_fault = fault;
@@ -444,6 +459,10 @@ fn sameBlockReason(actual: ?BlockReason, expected: BlockReason) bool {
         },
         .endpoint_transfer_receive => |handle| switch (expected) {
             .endpoint_transfer_receive => |expected_handle| handle == expected_handle,
+            else => false,
+        },
+        .notification_wait => |handle| switch (expected) {
+            .notification_wait => |expected_handle| handle == expected_handle,
             else => false,
         },
     };
