@@ -14,6 +14,10 @@ pub export fn _start(startup: *const abi.process.ChildStartup) callconv(.c) nore
             startup.request_endpoint_capability,
             startup.reply_endpoint_capability,
         ),
+        .capability_transfer => receiveTransferredCapability(
+            startup.request_endpoint_capability,
+            startup.reply_endpoint_capability,
+        ),
         .invalid_opcode => {
             if (startup.request_endpoint_capability != abi.capability.INVALID_CAPABILITY or
                 startup.reply_endpoint_capability != abi.capability.INVALID_CAPABILITY)
@@ -24,7 +28,7 @@ pub export fn _start(startup: *const abi.process.ChildStartup) callconv(.c) nore
         },
     }
     switch (startup.mode) {
-        .ipc_ping_pong => exit(abi.syscall.EXIT_SUCCESS),
+        .ipc_ping_pong, .capability_transfer => exit(abi.syscall.EXIT_SUCCESS),
         .invalid_opcode => {
             if (abi.syscall.syscall3(@intFromEnum(abi.syscall.SyscallNumber.yield), 0, 0, 0) !=
                 abi.syscall.SYSCALL_SUCCESS)
@@ -36,6 +40,58 @@ pub export fn _start(startup: *const abi.process.ChildStartup) callconv(.c) nore
         },
     }
     unreachable;
+}
+
+fn receiveTransferredCapability(
+    transfer_endpoint_capability: abi.capability.CapabilityHandle,
+    unused_reply_endpoint_capability: abi.capability.CapabilityHandle,
+) void {
+    if (transfer_endpoint_capability == abi.capability.INVALID_CAPABILITY or
+        unused_reply_endpoint_capability != abi.capability.INVALID_CAPABILITY)
+    {
+        exit(abi.syscall.EXIT_FAILURE);
+    }
+    const request = abi.ipc.TransferReceiveRequest{
+        .destination_slot = abi.system_smoke.CAPABILITY_TRANSFER_DESTINATION_SLOT,
+    };
+    const transfer = abi.syscall.syscallTransferReceive(
+        @intFromEnum(abi.syscall.SyscallNumber.endpoint_receive_capability),
+        transfer_endpoint_capability,
+        &request,
+    );
+    if (transfer.status != abi.syscall.SYSCALL_SUCCESS or
+        abi.capability.capabilitySlotIndex(transfer.capability) != request.destination_slot or
+        !std.meta.eql(transfer.message, abi.system_smoke.CAPABILITY_TRANSFER_MESSAGE))
+    {
+        exit(abi.syscall.EXIT_FAILURE);
+    }
+    debugWrite(abi.system_smoke.CAPABILITY_TRANSFER_RECEIVED);
+
+    const denied_receive = abi.syscall.syscallReceive(
+        @intFromEnum(abi.syscall.SyscallNumber.endpoint_receive),
+        transfer.capability,
+    );
+    if (denied_receive.status != abi.syscall.errorResult(.insufficient_rights)) {
+        exit(abi.syscall.EXIT_FAILURE);
+    }
+    debugWrite(abi.system_smoke.CAPABILITY_TRANSFER_RIGHTS_ATTENUATED);
+
+    const acknowledgment = abi.ipc.Message{ .words = .{
+        abi.system_smoke.CAPABILITY_TRANSFER_ACK.words[0],
+        transfer.capability,
+        abi.system_smoke.CAPABILITY_TRANSFER_ACK.words[2],
+    } };
+    if (abi.syscall.syscall5(
+        @intFromEnum(abi.syscall.SyscallNumber.endpoint_send),
+        transfer.capability,
+        acknowledgment.words[0],
+        acknowledgment.words[1],
+        acknowledgment.words[2],
+        0,
+    ) != abi.syscall.SYSCALL_SUCCESS) {
+        exit(abi.syscall.EXIT_FAILURE);
+    }
+    debugWrite(abi.system_smoke.CAPABILITY_TRANSFER_ACK_SENT);
 }
 
 fn pingPong(

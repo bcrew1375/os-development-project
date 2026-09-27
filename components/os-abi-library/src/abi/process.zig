@@ -13,11 +13,12 @@ pub const ThreadConfiguration = extern struct {
 };
 
 pub const CHILD_STARTUP_MAGIC: u32 = 0x4348_4C44;
-pub const CHILD_STARTUP_VERSION: u32 = 3;
+pub const CHILD_STARTUP_VERSION: u32 = 4;
 
 pub const ChildStartupMode = enum(u32) {
     ipc_ping_pong = 1,
     invalid_opcode = 2,
+    capability_transfer = 3,
 };
 
 /// Fixed-layout startup data copied into a new child process's initial stack.

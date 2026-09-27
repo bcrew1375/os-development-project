@@ -97,6 +97,13 @@ class SystemSmokeRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing SYSTEM-SMOKE record"):
             RUNNER.validate_protocol(transcript)
 
+    def test_protocol_requires_transfer_child_exit(self) -> None:
+        record = f"{RUNNER.PREFIX} CHILD_EXIT status=0\n"
+        before_second, second_and_after = valid_transcript().split(record, 1)
+        second_and_after = second_and_after.replace(record, "", 1)
+        with self.assertRaisesRegex(ValueError, "out-of-order"):
+            RUNNER.validate_protocol(before_second + record + second_and_after)
+
     def test_protocol_rejects_wrong_contained_fault_kind(self) -> None:
         transcript = valid_transcript().replace(
             "CHILD_FAULT kind=invalid_opcode",

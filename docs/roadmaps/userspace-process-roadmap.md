@@ -1073,6 +1073,7 @@ process useful in a microkernel system.
 
 - Started: 2026-09-26
 - Completed: 2026-09-26
+- Production validation extended: 2026-09-27
 - Implemented: three-word fixed-register messages; dedicated endpoint send and
   receive rights; generation-checked endpoint identities; a fixed registry of 32
   endpoints with eight-message FIFO queues; capability-authorized create,
@@ -1168,14 +1169,15 @@ process useful in a microkernel system.
   source, cross-space revocation, and production-syscall copy/writeback tests;
   `zig build tests`; `zig build coverage` at 100% common-code line coverage;
   freestanding x86-32 and x86-64 production builds; architecture tests and
-  architecture coverage on both targets; both production system-smoke tests as
-  regression evidence (they do not yet exercise transfer, as noted below);
+  architecture coverage on both targets; both production system-smoke tests,
+  including a parent-to-child attenuated endpoint transfer used by the child on
+  both targets;
   `zig fmt --check`; and `git diff --check`.
 - Limitation: transfer is a direct sender-to-receiver rendezvous with a single
-  capability per message and exact-slot addressing only; there is no badges,
+  capability per message and exact-slot addressing only; there are no badges,
   multi-level CSpace addressing, bulk transfer, or cross-endpoint capability
-  delivery queue. Root-task wrappers exist but the production child path still
-  installs startup capabilities directly rather than through IPC transfer.
+  delivery queues. Bootstrap still installs the transfer endpoint directly so the
+  child can receive its first dynamically delegated capability.
 
 **Related assessment:** P4.2.
 

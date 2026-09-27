@@ -41,7 +41,7 @@ test "BootModuleInfo ABI layout is stable" {
 }
 
 test "ChildStartup ABI layout and values are stable" {
-    try std.testing.expectEqual(@as(u32, 3), abi.process.CHILD_STARTUP_VERSION);
+    try std.testing.expectEqual(@as(u32, 4), abi.process.CHILD_STARTUP_VERSION);
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(abi.process.ChildStartup));
     try std.testing.expectEqual(@as(usize, 4), @alignOf(abi.process.ChildStartup));
     try std.testing.expectEqual(@as(usize, 8), @offsetOf(abi.process.ChildStartup, "mode"));
@@ -50,6 +50,7 @@ test "ChildStartup ABI layout and values are stable" {
     try std.testing.expectEqual(@as(usize, 20), @offsetOf(abi.process.ChildStartup, "reserved"));
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(abi.process.ChildStartupMode.ipc_ping_pong));
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum(abi.process.ChildStartupMode.invalid_opcode));
+    try std.testing.expectEqual(@as(u32, 3), @intFromEnum(abi.process.ChildStartupMode.capability_transfer));
 }
 
 test "Capability rights containment is explicit" {
@@ -210,9 +211,9 @@ test "Syscall numbers and structured errors are stable" {
 }
 
 test "system smoke protocol records are complete ordered serial lines" {
-    try std.testing.expectEqual(@as(u32, 5), abi.system_smoke.PROTOCOL_VERSION);
+    try std.testing.expectEqual(@as(u32, 6), abi.system_smoke.PROTOCOL_VERSION);
     try std.testing.expectEqualStrings(
-        "SYSTEM-SMOKE protocol=5\n",
+        "SYSTEM-SMOKE protocol=6\n",
         abi.system_smoke.HEADER,
     );
     try std.testing.expectEqual(
@@ -222,6 +223,15 @@ test "system smoke protocol records are complete ordered serial lines" {
     try std.testing.expectEqual(
         abi.ipc.Message{ .words = .{ 0x4950_4332, 0x8765_4321, 0xBEEF_CAFE } },
         abi.system_smoke.IPC_REPLY,
+    );
+    try std.testing.expectEqual(@as(u32, 7), abi.system_smoke.CAPABILITY_TRANSFER_DESTINATION_SLOT);
+    try std.testing.expectEqual(
+        abi.ipc.Message{ .words = .{ 0x4341_5031, 0x1357_9BDF, 0x2468_ACE0 } },
+        abi.system_smoke.CAPABILITY_TRANSFER_MESSAGE,
+    );
+    try std.testing.expectEqual(
+        abi.ipc.Message{ .words = .{ 0x4341_5032, 0, 0 } },
+        abi.system_smoke.CAPABILITY_TRANSFER_ACK,
     );
 
     const expected = [_][]const u8{
@@ -244,6 +254,15 @@ test "system smoke protocol records are complete ordered serial lines" {
         "SYSTEM-SMOKE milestone=ipc_reply_verified\n",
         "SYSTEM-SMOKE milestone=ipc_child_destroyed\n",
         "SYSTEM-SMOKE milestone=ipc_endpoints_destroyed\n",
+        "SYSTEM-SMOKE milestone=capability_transfer_child_started\n",
+        "SYSTEM-SMOKE milestone=root_resumed_after_transfer_child_blocked\n",
+        "SYSTEM-SMOKE milestone=capability_transfer_sent\n",
+        "SYSTEM-SMOKE milestone=capability_transfer_received\n",
+        "SYSTEM-SMOKE milestone=capability_transfer_rights_attenuated\n",
+        "SYSTEM-SMOKE milestone=capability_transfer_ack_sent\n",
+        "SYSTEM-SMOKE milestone=capability_transfer_ack_verified\n",
+        "SYSTEM-SMOKE milestone=capability_transfer_child_destroyed\n",
+        "SYSTEM-SMOKE milestone=capability_transfer_endpoints_destroyed\n",
         "SYSTEM-SMOKE milestone=fault_child_started\n",
         "SYSTEM-SMOKE milestone=fault_child_yielding\n",
         "SYSTEM-SMOKE milestone=root_resumed_after_fault_child_yield\n",

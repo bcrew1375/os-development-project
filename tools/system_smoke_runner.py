@@ -12,7 +12,7 @@ import tempfile
 import time
 
 
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 6
 PREFIX = "SYSTEM-SMOKE"
 HEADER = f"{PREFIX} protocol={PROTOCOL_VERSION}"
 MILESTONES = (
@@ -35,6 +35,15 @@ MILESTONES = (
     "ipc_reply_verified",
     "ipc_child_destroyed",
     "ipc_endpoints_destroyed",
+    "capability_transfer_child_started",
+    "root_resumed_after_transfer_child_blocked",
+    "capability_transfer_sent",
+    "capability_transfer_received",
+    "capability_transfer_rights_attenuated",
+    "capability_transfer_ack_sent",
+    "capability_transfer_ack_verified",
+    "capability_transfer_child_destroyed",
+    "capability_transfer_endpoints_destroyed",
     "fault_child_started",
     "fault_child_yielding",
     "root_resumed_after_fault_child_yield",
@@ -50,9 +59,11 @@ EXIT_PATTERN = re.compile(r"^SYSTEM-SMOKE EXIT status=(?P<status>\d+)$")
 EXPECTED_EVENTS = (
     *(f"milestone={milestone}" for milestone in MILESTONES[:16]),
     "child_exit=0",
-    *(f"milestone={milestone}" for milestone in MILESTONES[16:23]),
+    *(f"milestone={milestone}" for milestone in MILESTONES[16:25]),
+    "child_exit=0",
+    *(f"milestone={milestone}" for milestone in MILESTONES[25:32]),
     "child_fault=invalid_opcode",
-    *(f"milestone={milestone}" for milestone in MILESTONES[23:]),
+    *(f"milestone={milestone}" for milestone in MILESTONES[32:]),
     "root_exit",
 )
 

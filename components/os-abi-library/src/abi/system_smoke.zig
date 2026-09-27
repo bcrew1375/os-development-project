@@ -2,10 +2,10 @@
 
 const ipc = @import("ipc.zig");
 
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 pub const PREFIX = "SYSTEM-SMOKE";
 
-pub const HEADER = PREFIX ++ " protocol=5\n";
+pub const HEADER = PREFIX ++ " protocol=6\n";
 pub const ROOT_PROCESS_PREPARED = PREFIX ++ " milestone=root_process_prepared\n";
 pub const KERNEL_INITIALIZED = PREFIX ++ " milestone=kernel_initialized\n";
 pub const USERSPACE_ENTERED = PREFIX ++ " milestone=userspace_entered\n";
@@ -31,6 +31,28 @@ pub const IPC_REPLY_VERIFIED = PREFIX ++ " milestone=ipc_reply_verified\n";
 pub const CHILD_EXIT_FORMAT = PREFIX ++ " CHILD_EXIT status={d}\n";
 pub const IPC_CHILD_DESTROYED = PREFIX ++ " milestone=ipc_child_destroyed\n";
 pub const IPC_ENDPOINTS_DESTROYED = PREFIX ++ " milestone=ipc_endpoints_destroyed\n";
+pub const CAPABILITY_TRANSFER_DESTINATION_SLOT: u32 = 7;
+pub const CAPABILITY_TRANSFER_MESSAGE = ipc.Message{
+    .words = .{ 0x4341_5031, 0x1357_9BDF, 0x2468_ACE0 },
+};
+pub const CAPABILITY_TRANSFER_ACK = ipc.Message{
+    .words = .{ 0x4341_5032, 0, 0 },
+};
+pub const CAPABILITY_TRANSFER_CHILD_STARTED =
+    PREFIX ++ " milestone=capability_transfer_child_started\n";
+pub const ROOT_RESUMED_AFTER_TRANSFER_CHILD_BLOCKED =
+    PREFIX ++ " milestone=root_resumed_after_transfer_child_blocked\n";
+pub const CAPABILITY_TRANSFER_SENT = PREFIX ++ " milestone=capability_transfer_sent\n";
+pub const CAPABILITY_TRANSFER_RECEIVED = PREFIX ++ " milestone=capability_transfer_received\n";
+pub const CAPABILITY_TRANSFER_RIGHTS_ATTENUATED =
+    PREFIX ++ " milestone=capability_transfer_rights_attenuated\n";
+pub const CAPABILITY_TRANSFER_ACK_SENT = PREFIX ++ " milestone=capability_transfer_ack_sent\n";
+pub const CAPABILITY_TRANSFER_ACK_VERIFIED =
+    PREFIX ++ " milestone=capability_transfer_ack_verified\n";
+pub const CAPABILITY_TRANSFER_CHILD_DESTROYED =
+    PREFIX ++ " milestone=capability_transfer_child_destroyed\n";
+pub const CAPABILITY_TRANSFER_ENDPOINTS_DESTROYED =
+    PREFIX ++ " milestone=capability_transfer_endpoints_destroyed\n";
 pub const FAULT_CHILD_STARTED = PREFIX ++ " milestone=fault_child_started\n";
 pub const FAULT_CHILD_YIELDING = PREFIX ++ " milestone=fault_child_yielding\n";
 pub const ROOT_RESUMED_AFTER_FAULT_CHILD_YIELD =
@@ -61,6 +83,15 @@ pub const ordered_milestones = [_][]const u8{
     IPC_REPLY_VERIFIED,
     IPC_CHILD_DESTROYED,
     IPC_ENDPOINTS_DESTROYED,
+    CAPABILITY_TRANSFER_CHILD_STARTED,
+    ROOT_RESUMED_AFTER_TRANSFER_CHILD_BLOCKED,
+    CAPABILITY_TRANSFER_SENT,
+    CAPABILITY_TRANSFER_RECEIVED,
+    CAPABILITY_TRANSFER_RIGHTS_ATTENUATED,
+    CAPABILITY_TRANSFER_ACK_SENT,
+    CAPABILITY_TRANSFER_ACK_VERIFIED,
+    CAPABILITY_TRANSFER_CHILD_DESTROYED,
+    CAPABILITY_TRANSFER_ENDPOINTS_DESTROYED,
     FAULT_CHILD_STARTED,
     FAULT_CHILD_YIELDING,
     ROOT_RESUMED_AFTER_FAULT_CHILD_YIELD,

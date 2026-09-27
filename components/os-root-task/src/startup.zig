@@ -170,6 +170,8 @@ fn runChildSmoke(
     request_endpoint_owned = false;
     Environment.debugWrite(abi.system_smoke.IPC_ENDPOINTS_DESTROYED);
 
+    try runCapabilityTransferSmoke(Environment, allocator, root_address_space, image);
+
     var fault_child = try child_process.createAndStart(
         Environment,
         allocator,
@@ -186,6 +188,78 @@ fn runChildSmoke(
     try fault_child.destroy(Environment, allocator, root_address_space);
     Environment.debugWrite(abi.system_smoke.FAULT_CHILD_DESTROYED);
     Environment.debugWrite(abi.system_smoke.ROOT_RESUMED_AFTER_CHILDREN);
+}
+
+fn runCapabilityTransferSmoke(
+    comptime Environment: type,
+    allocator: *PhysicalRangeAllocator,
+    root_address_space: memory_manager.AddressSpace,
+    image: []const u8,
+) !void {
+    const child_process = process_management.child_process;
+    const endpoint_manager = ipc.EndpointManager(Environment);
+    const process_manager = process_management.ProcessManager(Environment);
+
+    const transfer_endpoint = try endpoint_manager.createEndpoint();
+    var transfer_endpoint_owned = true;
+    errdefer if (transfer_endpoint_owned) endpoint_manager.destroyEndpoint(transfer_endpoint) catch {};
+    const acknowledgment_endpoint = try endpoint_manager.createEndpoint();
+    var acknowledgment_endpoint_owned = true;
+    errdefer if (acknowledgment_endpoint_owned) endpoint_manager.destroyEndpoint(acknowledgment_endpoint) catch {};
+    var child = try child_process.createAndStart(
+        Environment,
+        allocator,
+        root_address_space,
+        image,
+        .{ .mode = .capability_transfer },
+        transfer_endpoint.capability,
+        null,
+    );
+    var child_owned = true;
+    errdefer if (child_owned) child.destroy(Environment, allocator, root_address_space) catch {};
+    const child_space = child.capability_space orelse return error.MissingChildCapabilitySpace;
+    // A newly created capability space starts every slot at generation 1. This
+    // mode installs only the receive endpoint in slot 0 before transferring into
+    // the otherwise untouched exact destination slot below.
+    const transferred_capability = abi.capability.makeCapabilityHandle(
+        abi.system_smoke.CAPABILITY_TRANSFER_DESTINATION_SLOT,
+        1,
+    );
+    var transferred_capability_owned = false;
+    errdefer if (transferred_capability_owned) {
+        process_manager.deleteCapability(child_space, transferred_capability) catch {};
+    };
+
+    Environment.debugWrite(abi.system_smoke.CAPABILITY_TRANSFER_CHILD_STARTED);
+    try yieldSuccessfully(Environment);
+    Environment.debugWrite(abi.system_smoke.ROOT_RESUMED_AFTER_TRANSFER_CHILD_BLOCKED);
+    try endpoint_manager.sendCapability(
+        transfer_endpoint,
+        acknowledgment_endpoint.capability,
+        .{ .send = true },
+        abi.system_smoke.CAPABILITY_TRANSFER_MESSAGE,
+    );
+    transferred_capability_owned = true;
+    Environment.debugWrite(abi.system_smoke.CAPABILITY_TRANSFER_SENT);
+    const acknowledgment = try endpoint_manager.receive(acknowledgment_endpoint);
+    if (acknowledgment.words[0] != abi.system_smoke.CAPABILITY_TRANSFER_ACK.words[0] or
+        acknowledgment.words[1] != transferred_capability or
+        acknowledgment.words[2] != abi.system_smoke.CAPABILITY_TRANSFER_ACK.words[2])
+    {
+        return error.InvalidCapabilityTransferAcknowledgment;
+    }
+    Environment.debugWrite(abi.system_smoke.CAPABILITY_TRANSFER_ACK_VERIFIED);
+
+    try process_manager.deleteCapability(child_space, transferred_capability);
+    transferred_capability_owned = false;
+    try child.destroy(Environment, allocator, root_address_space);
+    child_owned = false;
+    Environment.debugWrite(abi.system_smoke.CAPABILITY_TRANSFER_CHILD_DESTROYED);
+    try endpoint_manager.destroyEndpoint(acknowledgment_endpoint);
+    acknowledgment_endpoint_owned = false;
+    try endpoint_manager.destroyEndpoint(transfer_endpoint);
+    transfer_endpoint_owned = false;
+    Environment.debugWrite(abi.system_smoke.CAPABILITY_TRANSFER_ENDPOINTS_DESTROYED);
 }
 
 fn yieldSuccessfully(comptime Environment: type) !void {

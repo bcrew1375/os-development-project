@@ -394,7 +394,7 @@ details.
 | Fault handling | User faults are attributed and contained | Process-manager consumption and richer reporting |
 | IPC | Capability-authorized endpoints with blocking buffered messages and atomic capability transfer | Notifications and userspace driver routing |
 | Memory policy | Bounded root-task physical-range allocator and capability-backed multi-extent userspace heap; no kernel PMM or heap | Capability-funded userspace services and broader reclamation policy |
-| Testing | Native, physical, coverage, and protocol-5 root/child smoke layers | Cover IPC and useful service processes |
+| Testing | Native, physical, coverage, and protocol-6 root/child smoke layers, including attenuated endpoint transfer | Cover useful service processes |
 
 ## Why the repository is shaped this way
 

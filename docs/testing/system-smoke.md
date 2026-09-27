@@ -25,10 +25,10 @@ The default timeout is 60 seconds. Override it with
 ## Protocol
 
 Production components unconditionally emit complete serial lines using protocol
-version 5. The required order is:
+version 6. The required order is:
 
 ```text
-SYSTEM-SMOKE protocol=5
+SYSTEM-SMOKE protocol=6
 SYSTEM-SMOKE milestone=root_process_prepared
 SYSTEM-SMOKE milestone=kernel_initialized
 SYSTEM-SMOKE milestone=userspace_entered
@@ -49,6 +49,16 @@ SYSTEM-SMOKE CHILD_EXIT status=0
 SYSTEM-SMOKE milestone=ipc_reply_verified
 SYSTEM-SMOKE milestone=ipc_child_destroyed
 SYSTEM-SMOKE milestone=ipc_endpoints_destroyed
+SYSTEM-SMOKE milestone=capability_transfer_child_started
+SYSTEM-SMOKE milestone=root_resumed_after_transfer_child_blocked
+SYSTEM-SMOKE milestone=capability_transfer_sent
+SYSTEM-SMOKE milestone=capability_transfer_received
+SYSTEM-SMOKE milestone=capability_transfer_rights_attenuated
+SYSTEM-SMOKE milestone=capability_transfer_ack_sent
+SYSTEM-SMOKE CHILD_EXIT status=0
+SYSTEM-SMOKE milestone=capability_transfer_ack_verified
+SYSTEM-SMOKE milestone=capability_transfer_child_destroyed
+SYSTEM-SMOKE milestone=capability_transfer_endpoints_destroyed
 SYSTEM-SMOKE milestone=fault_child_started
 SYSTEM-SMOKE milestone=fault_child_yielding
 SYSTEM-SMOKE milestone=root_resumed_after_fault_child_yield
@@ -64,11 +74,17 @@ root-process preparation, and records completion of boot finalization and
 interrupt initialization. The root task records user-mode entry, valid boot
 information, delegated boot-module validation, physical-memory allocation,
 capability acquisition, capability-backed memory-object mapping, userspace heap
-verification, cooperative yield completion, and blocking two-endpoint ping/pong.
+verification, cooperative yield completion, blocking two-endpoint ping/pong, and
+an endpoint-capability transfer into a child-selected exact slot.
 The child first blocks with a receive-only request capability; the root wakes it
 by direct handoff, then blocks on the reply endpoint until the child's send-only
-reply capability completes that retained syscall. Child exit and fault records are intermediate events:
-they prove scheduler handoff and containment but do not terminate host observation.
+reply capability completes that retained syscall. A second child then blocks on a
+transfer receive, receives an attenuated send-only endpoint capability in slot 7,
+proves receive authority was not transferred, and sends an acknowledgment through
+the transferred capability. The root validates the returned slot-local handle,
+deletes it from the child capability space, and destroys all transfer resources.
+Child exit and fault records are intermediate events: they prove scheduler handoff
+and containment but do not terminate host observation.
 The kernel emits the terminal record only after accepting the root task's exit
 syscall.
 
