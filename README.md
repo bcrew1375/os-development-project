@@ -3,17 +3,19 @@
 An early x86 microkernel project written in Zig. The repository currently boots
 on x86-32 and x86-64, loads an independently built root task, enters user mode,
 constructs isolated child processes, and exercises a capability-shaped syscall
-ABI under QEMU. Root and child threads use scheduler-integrated blocking IPC for
-a bounded request/reply exchange and can transfer an attenuated capability into
-an exact destination slot.
+ABI under QEMU. Root and child threads use scheduler-integrated blocking IPC,
+transfer attenuated capabilities, deliver managed lifecycle and fault events,
+wait on timer notifications, and run an independently built restartable echo
+service.
 
 The project is intentionally **not described as a complete microkernel yet**.
 Its current object registries, capability checks, physical-memory delegation,
 architecture-neutral thread lifecycle, low-level x86 context switching, bounded
 cooperative scheduling, process construction, fault containment, capability
-spaces, buffered IPC, and atomic capability transfer establish useful boundaries.
-Userspace fault delivery, notifications, and userspace service extraction remain
-future work.
+spaces, buffered IPC, atomic capability transfer, userspace lifecycle delivery,
+notifications, and service extraction establish useful boundaries. Timer
+preemption, modern interrupt routing, scalable object storage, and a general
+userspace service environment remain future work.
 
 ## Design direction
 
@@ -24,7 +26,8 @@ The kernel is moving toward a small, policy-light trusted core inspired by seL4:
 - the root task owns process construction, physical-memory allocation policy,
   executable loading, userspace heaps, and service orchestration;
 - architecture-independent policy stays separate from physical x86 mechanisms;
-- the shared ABI and root task remain independently buildable components.
+- the shared ABI, root task, and echo service remain independently buildable
+  components.
 
 Start with [Current Kernel Structure and Rationale](docs/architecture/current-state.md)
 for the implemented architecture and the reasons behind it. The
@@ -39,6 +42,7 @@ development guides, testing guides, roadmaps, and background references.
 build/                     Zig build orchestration
 components/os-abi-library  Cross-domain ABI and shared ELF parser
 components/os-root-task    Independently built initial userspace task
+components/os-echo-service First independently split userspace service
 src/common                 Architecture-independent kernel mechanisms
 src/architecture           Mock, x86-32, x86-64, and shared x86 mechanisms
 tests                      Native and physical architecture tests
@@ -51,6 +55,9 @@ docs                       Architecture, workflow, testing, and roadmap docs
 ```sh
 # Native kernel, tooling, ABI, and root-task tests
 zig build tests
+
+# Echo-service component tests (not yet part of the root aggregate)
+cd components/os-echo-service && zig build tests && cd ../..
 
 # Build production artifacts
 zig build -Darch=x86_32
@@ -74,9 +81,9 @@ validation semantics.
 
 ## Current priorities
 
-The current milestone is to turn the transferred endpoint capability into usable
-parent/process-manager communication and userspace fault delivery. The detailed
-sequence is tracked in the
-[userspace process roadmap](docs/roadmaps/userspace-process-roadmap.md), while
-ownership and lifetime rules are defined in the
+The five-phase userspace-process roadmap is complete. The current priority is safe
+timer preemption, followed by modern interrupt-controller support, broader
+userspace service discovery, and scalable resource-lifetime semantics. The dated
+[current kernel assessment](docs/roadmaps/kernel-assessment.md) records the
+verified baseline and priority order; ownership and lifetime rules remain in the
 [kernel object model](docs/kernel-object-model.md).

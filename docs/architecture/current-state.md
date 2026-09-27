@@ -1,6 +1,6 @@
 # Current Kernel Structure and Rationale
 
-Status date: 2026-09-26
+Status date: 2026-09-27
 
 This document summarizes the kernel as it is implemented now and explains why
 its current boundaries exist. It is the architectural starting point for readers
@@ -8,33 +8,35 @@ who need context before entering the source or the detailed roadmaps.
 
 ## Maturity in one sentence
 
-> The repository is a well-structured x86 kernel bring-up environment with a real
-> userspace transition, cooperative scheduling, root-task child construction,
-> scheduler-integrated buffered IPC, and atomic capability transfer, but it does not
-> yet provide a complete microkernel service model.
+> The repository is a functioning early x86 microkernel prototype with real
+> userspace process construction, cooperative scheduling, blocking IPC, capability
+> transfer, managed faults, notifications, and one independently split service,
+> but it is not yet preemptive, scalable, hardware-general, or production-ready.
 
 The production system can boot on x86-32 and x86-64, load a freestanding root
 ELF, enter ring 3, service system calls, enforce capability-space-local rights,
 contain user faults, construct isolated child processes from packaged ELF
 artifacts, and observe clean child/root exits. The root and child threads are
-enrolled through the normal cooperative scheduler, complete a blocking
-request/reply exchange through capability-authorized endpoints, and can transfer
-an attenuated capability into an exact destination slot. The root task remains
-bootstrap-created, while userspace fault delivery, notifications, and useful
-multi-service orchestration remain future work.
+enrolled through the normal cooperative scheduler, complete blocking
+request/reply exchanges, transfer attenuated capabilities into exact destination
+slots, deliver lifecycle and fault events to a process manager, receive a timer
+notification, and run an independently built restartable echo service. The root
+task remains bootstrap-created, while timer preemption, modern interrupt routing,
+and a general multi-service environment remain future work.
 
 ## System boundary
 
-The repository contains three independently scoped deliverables:
+The repository contains four independently scoped deliverables:
 
 ```text
-                         shared ABI
-                            ^  ^
-                            |  |
-                 +----------+  +----------+
-                 |                        |
-        privileged kernel          userspace root task
-        src/, tests/                components/os-root-task
+                              shared ABI
+                         ^        ^        ^
+                         |        |        |
+              +----------+   +----+----+   +----------+
+              |              |         |              |
+     privileged kernel   userspace root task   userspace echo service
+     src/, tests/         components/           components/
+                         os-root-task           os-echo-service
 ```
 
 ### Privileged kernel
@@ -83,6 +85,15 @@ record transactionally loads native ELF segments and a startup stack from a boot
 module, owns every created resource, and supports retryable destruction. The
 [root-created userspace process](userspace-processes.md) document describes the
 implemented construction and execution boundary in detail.
+
+### Echo service
+
+`components/os-echo-service` is the first service extracted from root-task policy.
+It is an independent freestanding ELF that imports only the stable ABI, receives a
+receive-only request endpoint and send-only reply endpoint, performs one fixed
+three-word exchange, and exits. Production smoke destroys and restarts it against
+the same endpoints, demonstrating narrow delegated authority and service
+restartability without shared implementation state.
 
 ## Kernel source structure
 
@@ -150,12 +161,15 @@ The current production path is:
 11. architecture interrupt code converts registers into a common syscall request;
 12. common syscall policy performs capability and object-registry operations;
 13. the root task constructs and verifies its initial userspace heap extent;
-14. the root task loads and starts a clean child ELF, completes a blocking
-    two-endpoint request/reply exchange, observes its contained exit, and destroys
-    its resources;
-15. the root task repeats construction with a child configured to execute `ud2`,
-    observes contained fault attribution, resumes, and destroys the child;
-16. the root task exits and the production smoke protocol records success.
+14. the root task exercises blocking endpoint request/reply and atomic capability
+    transfer with rights attenuation;
+15. clean and faulting children report lifecycle events through manager-owned
+    endpoints, and the responsible resources are reclaimed;
+16. the root binds the timer to a notification, blocks through the idle
+    continuation, receives the interrupt count, and acknowledges the source;
+17. the root loads the independent echo service, completes request/reply, destroys
+    it, and repeats the cycle to prove restartability;
+18. the root task exits and the production protocol-9 smoke record completes.
 
 This path proves reusable userspace process construction without introducing a
 kernel process bundle. The root task remains a privileged bootstrap policy process,
@@ -300,17 +314,18 @@ copies a fixed 32-byte ABI record through checked user-memory access before reso
 the referenced thread, address-space, and capability-space capabilities.
 
 The ownership, lifetime, authorization, and initial uniprocessor concurrency
-contract for the planned object types is recorded in the [kernel object model](../kernel-object-model.md).
-That contract is design documentation, not evidence that the named objects are
-already implemented.
+contract is recorded in the
+[kernel object model](../kernel-object-model.md). That contract covers implemented
+objects and the rules that must constrain future extensions.
 
 ## Memory-policy direction
 
-The inactive PMM, boundary-tag heap, and global kernel-heap facade under
-`src/common/memory_management` are retained experiments. They are not the target
-steady-state resource policy and should not shape new kernel interfaces.
+The former PMM, boundary-tag kernel heap, and global kernel-heap facade have been
+removed from production common memory management. The active privileged code
+contains physical-range normalization, bounded physical-authority objects, and
+virtual mapping mechanisms, but no general-purpose kernel allocation policy.
 
-The intended model is:
+The implemented model is:
 
 ```text
 boot memory map
@@ -346,15 +361,16 @@ The implemented bootstrap ABI delegates validated normal-RAM ranges together wit
 capabilities. The root task tracks those ranges in sorted bounded free extents and
 active allocation slots, performs checked first-fit allocation against absolute
 physical addresses, and supplies the selected parent capability and relative
-offset to the kernel retype mechanism. Kernel-global anonymous allocation paths
-remain for legacy VMAs until U3.7; they are not used by frame-backed memory objects.
+offset to the kernel retype mechanism. Anonymous VMA requests reserve metadata
+without allocating physical backing; frame-backed mappings require explicit
+delegated authority.
 
 ## Build and component boundaries
 
 The root `build.zig` is an orchestration layer, decomposed by build concern under
 `build/`. It creates shared modules once, builds the kernel for a selected target,
-invokes the root task's independent build, packages root and child ELF boot
-artifacts, and exposes
+invokes independent userspace builds, packages root, smoke-child, and echo-service
+ELF boot artifacts, and exposes
 separate steps for native tests, physical tests, coverage, smoke tests, generated
 documentation, and QEMU execution.
 
@@ -386,15 +402,15 @@ details.
 | Area | Current state | Intended direction |
 | --- | --- | --- |
 | Architectures | x86-32, x86-64, and native mock | More implementations behind the same interface |
-| Userspace | Bootstrapped root plus sequentially constructed isolated child processes | IPC-connected services and broader process policy |
+| Userspace | Bootstrapped root, isolated managed children, timer notification, and restartable echo service | Service discovery, executable storage, and broader process policy |
 | Address spaces | Every registered object owns a hardware root and bounded VMA registry | Thread-driven activation and broader lifecycle integration |
 | Memory objects | Immutable delegated physical backing and transactional explicit-root mapping | Broader object attributes and sharing policy |
 | Capabilities | Bounded generation-checked spaces, local handles, rights attenuation, `grant`-authorized exact-slot transfer, cross-space install/delete, reference-counted physical derivation tracking | Broader object revocation semantics and multi-level addressing |
 | Scheduling | Bounded FIFO cooperative scheduler, reserved idle continuation, root/child yielding, and contained exit/fault handoff | Timer preemption and priority policy |
-| Fault handling | User faults are attributed and contained | Process-manager consumption and richer reporting |
-| IPC | Capability-authorized endpoints with blocking buffered messages and atomic capability transfer | Notifications and userspace driver routing |
+| Fault handling | User faults are attributed, contained, and deliverable to a process manager | Richer reporting, pager policy, and broader resumability |
+| IPC | Blocking buffered endpoints, atomic capability transfer, kernel lifecycle delivery, and counted notifications | Larger payload protocols, service discovery, and broader device routing |
 | Memory policy | Bounded root-task physical-range allocator and capability-backed multi-extent userspace heap; no kernel PMM or heap | Capability-funded userspace services and broader reclamation policy |
-| Testing | Native, physical, coverage, and protocol-6 root/child smoke layers, including attenuated endpoint transfer | Cover useful service processes |
+| Testing | Native, physical, coverage, and protocol-9 production smoke on x86-32 Limine, x86-32 Multiboot, and x86-64 Limine | Increase risk-driven physical coverage and service scenarios |
 
 ## Why the repository is shaped this way
 
@@ -406,9 +422,9 @@ The structure follows five rules:
    be tested once and reused across targets.
 3. **The privileged core owns mechanisms, not broad policy.** Process construction
    and resource allocation are intended for the root task.
-4. **Incomplete semantics are named explicitly.** Registries and capabilities are
-   foundations, not evidence that scheduling, IPC, or complete memory objects
-   already exist.
+4. **Implemented and planned semantics are distinguished explicitly.** Existing
+   scheduling, IPC, notification, and memory-object behavior is documented without
+   implying preemption, scalable storage, or a complete service environment.
 5. **Verification is layered.** Fast host tests, physical mechanism tests, and
    production lifecycle tests complement rather than replace one another.
 
@@ -427,9 +443,9 @@ bootstrap conveniences to become permanent monolithic services.
   not yet been introduced.
 
 The dated [kernel assessment](../roadmaps/kernel-assessment.md) contains the full
-priority critique. The
-[userspace process roadmap](../roadmaps/userspace-process-roadmap.md) turns the
-next architecture milestone into phased work.
+priority critique. The completed
+[userspace process roadmap](../roadmaps/userspace-process-roadmap.md) records how
+the current process and service model was delivered in phases.
 
 ## Reading order for contributors
 

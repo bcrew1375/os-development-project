@@ -1,15 +1,17 @@
 # Kernel Object Model
 
-Status date: 2026-09-25
+Status date: 2026-09-27
 
-This document is the design contract for kernel objects that will support the
-transition from the bootstrapped root task to multiple isolated userspace
-processes. It defines intended ownership and lifetime rules; it does not claim
-that every named object or operation is implemented.
+This document is the design contract for kernel objects supporting the current
+root task, isolated userspace processes, IPC, notifications, and future
+extensions. It defines ownership and lifetime rules; individual sections identify
+where the implementation remains deliberately narrower than the contract.
 
-The implementation roadmap is tracked in the [userspace process roadmap](roadmaps/userspace-process-roadmap.md).
-The current implementation and its deliberate gaps are described in the [current
-kernel structure](architecture/current-state.md) and [kernel assessment](roadmaps/kernel-assessment.md).
+The completed implementation sequence is tracked in the
+[userspace process roadmap](roadmaps/userspace-process-roadmap.md). The current
+implementation and its deliberate gaps are described in the
+[current kernel structure](architecture/current-state.md) and
+[kernel assessment](roadmaps/kernel-assessment.md).
 
 ## Design boundary
 
@@ -352,18 +354,15 @@ define interrupt-save behavior, lock primitives, ownership boundaries, and a glo
 lock order. CPU-local current-thread state replaces the initial uniprocessor
 accessor before multiple CPUs execute kernel code.
 
-## First implementation slice
+## Implemented first slice and next concurrency boundary
 
-The first child-process milestone does not require every object above. The minimum
-vertical slice is:
+The first child-process slice is complete. It includes explicit execution context,
+checked user copies, contained faults and exits, hardware-root address spaces,
+cooperative thread switching, delegated frame-backed memory, root-task child ELF
+construction, blocking endpoints, capability transfer, managed lifecycle delivery,
+notifications, and one independently split service.
 
-1. explicit current execution context;
-2. safe checked user-memory copying;
-3. contained user faults and non-halting child exit;
-4. address-space objects with hardware roots;
-5. one thread object and cooperative context switching;
-6. real frame-backed memory objects funded by root-task authority;
-7. root-task construction and execution of a child ELF.
-
-IPC endpoints, notifications, capability transfer, timer preemption, and SMP remain
-subsequent milestones unless implementation dependencies require an earlier subset.
+Timer preemption and SMP remain subsequent concurrency milestones. Before either is
+enabled, the kernel must define interrupt-save behavior, CPU-local execution state,
+lock primitives, registry ownership, and a global lock order without weakening the
+existing transactional object-lifetime rules.

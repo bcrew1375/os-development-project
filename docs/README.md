@@ -95,6 +95,7 @@ The independently scoped components retain documentation beside their code:
 
 - [`components/os-abi-library/README.md`](../components/os-abi-library/README.md)
 - [`components/os-root-task/README.md`](../components/os-root-task/README.md)
+- [`components/os-echo-service/README.md`](../components/os-echo-service/README.md)
 
 That placement is deliberate: each component can be extracted into its own
 repository without reconstructing its build or usage documentation.

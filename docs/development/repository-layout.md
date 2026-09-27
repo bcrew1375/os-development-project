@@ -1,6 +1,6 @@
 # Repository Layout
 
-The project is a monorepo containing three independently scoped deliverables:
+The project is a monorepo containing four independently scoped deliverables:
 
 - `src` and `tests`: privileged kernel code, architecture implementations,
   kernel tests, and boot-image packaging.
@@ -8,6 +8,8 @@ The project is a monorepo containing three independently scoped deliverables:
   helpers usable across protection domains.
 - `components/os-root-task`: the initial userspace root task and smoke-child source,
   built as independent freestanding ELF executables.
+- `components/os-echo-service`: the first independently built userspace service,
+  importing only the ABI and receiving narrowly delegated endpoint authority.
 
 The component directories are ordinary tracked source trees, so a clone
 contains everything needed to build and test the project. Each component is
@@ -22,9 +24,9 @@ implementation maturity, known architectural limitations, and the
 priority-ordered roadmap. The [testing roadmap](../roadmaps/testing-roadmap.md)
 tracks phased work to improve test fidelity and expand the behavior that can be
 verified. The
-[userspace process roadmap](../roadmaps/userspace-process-roadmap.md) plans the
-object, memory-authority, scheduling, and IPC work required for multiple isolated
-userspace processes.
+[userspace process roadmap](../roadmaps/userspace-process-roadmap.md) records the
+completed object, memory-authority, scheduling, IPC, notification, and initial
+service phases.
 
 ## Dependency direction
 
@@ -35,22 +37,33 @@ os-abi-library
   +-- kernel
   |
   +-- os-root-task
+  |
+  +-- os-echo-service
 ```
 
-The ABI library must not depend on kernel-private or root-task code. The root
-task must not import kernel-private modules and communicates with the kernel
-only through the ABI.
+The ABI library must not depend on kernel-private or userspace-component code. The
+root task and echo service must not import kernel-private modules and communicate
+with the kernel only through the ABI.
 
-The kernel consumes the root task and initial child executable as ELF runtime
-artifacts. It does not compile or link their source into the kernel. The root-task
+The kernel consumes the root task, smoke child, and echo service as ELF runtime
+artifacts. It does not compile or link their source into the kernel. Each userspace
 component remains independently buildable even while root-level orchestration
-invokes its build and packages both artifacts.
+invokes its build and packages the artifacts.
 
 ## Validation
 
-Run every component's unit tests from the repository root:
+Run the aggregate kernel, tooling, ABI-library, and root-task unit tests from the
+repository root:
 
 ```sh
+zig build tests
+```
+
+The echo-service component has an independent test step that is not yet included
+in the root aggregate:
+
+```sh
+cd components/os-echo-service
 zig build tests
 ```
 
@@ -173,12 +186,12 @@ zig build system-smoke -Darch=x86_32
 zig build system-smoke -Darch=x86_64
 ```
 
-The runner validates the ordered version-4 `SYSTEM-SMOKE` lifecycle protocol,
-including a three-word endpoint exchange through a receive-only delegated child
-capability, child exit, contained invalid-opcode fault, root resumption, and final
-root exit. It requires root-task exit status zero and terminates the halted guest
-through QMP `quit`. x86-32 supports both its default Limine image and the optional
-direct Multiboot path selected with `-Dbootloader=multiboot`. See
+The runner validates the ordered version-9 `SYSTEM-SMOKE` lifecycle protocol,
+including blocking IPC, attenuated capability transfer, managed lifecycle and
+fault delivery, timer notification, echo-service restart, and final root exit. It
+requires root-task exit status zero and terminates the halted guest through QMP
+`quit`. x86-32 supports both its default Limine image and the optional direct
+Multiboot path selected with `-Dbootloader=multiboot`. See
 [Production System Smoke Tests](../testing/system-smoke.md) for protocol ownership, timeout
 configuration, failure behavior, CI integration, and trend reporting.
 
@@ -196,6 +209,11 @@ cd components/os-abi-library
 zig build tests
 
 cd ../os-root-task
+zig build tests
+zig build -Darch=x86_64
+zig build -Darch=x86_32
+
+cd ../os-echo-service
 zig build tests
 zig build -Darch=x86_64
 zig build -Darch=x86_32
@@ -228,8 +246,10 @@ warnings as failures.
 
 - ABI definitions and cross-domain helpers belong in
   `components/os-abi-library`.
-- Root-task policy and userspace mechanisms belong in
+- Root-task policy and process-manager mechanisms belong in
   `components/os-root-task`.
+- Independently isolated service implementation belongs in its own component,
+  currently `components/os-echo-service`.
 - Kernel mechanisms, architecture implementations, and privileged subsystems
   belong in `src`.
 - Cross-boundary interaction uses the ABI or built artifacts, never relative

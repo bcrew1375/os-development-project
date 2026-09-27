@@ -29,28 +29,30 @@ any deliberate limitation.
 
 ## Current baseline
 
-The current system provides the first complete child-process vertical slice. The
-root task is a real initial userspace process and normal schedulable thread, and
-it constructs child protection domains through the public runtime object model.
+The five implementation phases are complete. The root task is a normal
+scheduler-owned userspace thread and constructs isolated child protection domains
+through the public capability and syscall model.
 
-- the kernel loads and enters one freestanding root-task ELF;
-- x86-32 and x86-64 have separate hardware page-table roots for the root task;
-- the shared ABI exposes debug output, exit, address-space creation,
-  memory-object creation, and mapping requests;
-- common syscall policy is architecture independent and host tested;
-- capability handles enforce owner, object-type, rights, generation, and stale-handle checks;
-- native, physical architecture, and production system-smoke tests run in CI.
+- x86-32 and x86-64 use independent hardware roots for root and child address
+  spaces;
+- delegated physical authority funds immutable frame-backed memory objects and the
+  root-task userspace heap;
+- capability spaces use local generation-checked handles, rights attenuation,
+  derivation tracking, exact-slot installation, deletion, and current-path revoke;
+- architecture-neutral threads own bounded architecture contexts and run through a
+  cooperative FIFO scheduler with an idle continuation;
+- blocking buffered endpoints support request/reply and atomic capability transfer;
+- process-manager endpoints receive startup, exit, and fault lifecycle messages;
+- counted notifications deliver an authorized timer event from interrupt context;
+- an independent ABI-only echo service can be started, used, destroyed, and
+  restarted;
+- native, physical architecture, coverage, and protocol-9 production smoke tests
+  verify the implemented path.
 
-The current objects are not sufficient for multiple processes:
-
-- syscall caller identity comes from the scheduler-selected current thread;
-- address-space objects own hardware roots and support explicit-root operations;
-- memory objects have immutable delegated physical backing;
-- capability slots are global and cannot yet be copied, attenuated, or revoked;
-- architecture-neutral threads own bounded architecture contexts and are selected
-  through a fixed-capacity cooperative FIFO scheduler; there are no IPC objects;
-- child exit and attributed user faults stop only the responsible thread; root
-  exit selects the reserved idle continuation.
+The baseline remains deliberately bounded: scheduling is cooperative and
+single-core, IPC messages are three words, capability transfer is exact-slot and
+single-capability, only the timer is exposed as an interrupt source, executables
+come from boot modules, and service discovery is fixed root-task policy.
 
 ## Target process model
 
@@ -114,22 +116,17 @@ Phase 5: IPC and useful process services
 Some implementation work may overlap, but a phase exit gate must be satisfied
 before the next phase is treated as operationally complete.
 
-## Immediate target: the first child process
+## Completed vertical target
 
-The existing root task already demonstrates the first userspace transition. The
-next milestone is the first independently created child process, not another
-bootstrap-only ring-3 transition. The shortest useful vertical slice is:
+The original target—an independently constructed child with explicit identity,
+checked user copies, contained faults, hardware-root address spaces, cooperative
+switching, delegated backing, root-task ELF loading, and non-halting exit—is
+complete. Phase 5 extended it with IPC, capability transfer, process-manager
+communication, notifications, and an independent service.
 
-1. explicit current execution context;
-2. checked userspace copy operations;
-3. user-fault containment;
-4. address-space objects that own hardware roots;
-5. one cooperative thread-switch path;
-6. real backing for the child memory object;
-7. root-task ELF loading and child exit while the root task continues.
-
-SMP, timer preemption, general IPC, and a full userspace service model remain
-later work unless a dependency requires them sooner.
+The remaining follow-on work is tracked in the
+[current kernel assessment](kernel-assessment.md), led by timer preemption,
+interrupt-controller modernization, and a broader userspace service environment.
 
 # Phase 1 — Establish execution identity and authorization
 
