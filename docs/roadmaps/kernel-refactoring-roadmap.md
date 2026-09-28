@@ -15,6 +15,16 @@ by subsystem, keep architecture-independent policy separate from mechanisms,
 preserve explicit ownership, and extract only boundaries with a clear domain
 responsibility.
 
+## Status legend
+
+- `[ ]` — not started
+- `[~]` — in progress
+- `[x]` — complete
+- `[!]` — blocked; the item must name its blocker
+
+When a phase is completed, record its completion date, validation commands, and
+any important result or deliberate limitation.
+
 ## Scope and method
 
 The assessment used direct source inspection plus a repository scan of Zig,
@@ -165,11 +175,36 @@ This rank describes expected maintainability benefit, not implementation order.
 Each phase must remain independently reviewable and leave the full validated
 baseline green. Do not combine these phases into one broad directory rewrite.
 
-### Phase 0: separate test infrastructure and lock down behavior
+### [x] Phase 0: separate test infrastructure and lock down behavior
 
 **Class:** test-infrastructure separation  
 **Risk:** low  
 **Dependencies:** none
+
+**Completed:** 2026-09-28
+
+- Root-task tests are split into subsystem-focused suites, with recording
+  environments, transports, ELF builders, mapped-memory fixtures, diagnostic
+  assertions, and boot fixtures under test support.
+- Syscall tests are split into dispatcher, memory-operation, error-mapping, and
+  production-adapter suites, with shared assertions, service fakes, and
+  production fixtures under test support.
+- Capability tests are split into storage, authority, installation, derivation,
+  lifecycle, and memory-authority suites, with shared fixtures under test
+  support.
+- Physical x86 characterization covers immediate three-register syscall-result
+  writeback through the real `int 0x80` gate on x86-32 and x86-64.
+- Production notification characterization covers deferred interrupt-result
+  writeback, source masking, successful acknowledgement rearming, and repeated
+  acknowledgement error mapping.
+- All 41 root-task, 15 syscall, and 25 capability legacy test names remain
+  present without duplicates.
+
+**Validation results:** `zig fmt --check components/os-root-task/tests tests`;
+`zig build tests`; `zig build coverage` with 1,233 of 1,233 emitted common-code
+lines covered; `zig build architecture-tests -Darch=x86_32`; `zig build
+architecture-tests -Darch=x86_64`; relative roadmap-link validation; legacy
+test-name comparison; `git diff --check`.
 
 1. Split `components/os-root-task/tests/tests.zig` by subsystem: boot/bootstrap,
    physical allocator, heap, syscall managers, child loader, managed process,
@@ -198,7 +233,7 @@ unchanged, and coverage does not lose emitted common-code lines.
 **Validation:** `zig fmt --check` on the affected trees; `zig build tests`;
 `zig build coverage`; `git diff --check`.
 
-### Phase 1: decompose common syscall policy by object family
+### [ ] Phase 1: decompose common syscall policy by object family
 
 **Class:** API extraction  
 **Risk:** medium  
@@ -244,7 +279,7 @@ architecture interrupt implementations, and no error/result mapping changes.
 suites; both production builds; both production system-smoke tests;
 `git diff --check`.
 
-### Phase 2: extract shared x86 interrupt and syscall-result policy
+### [ ] Phase 2: extract shared x86 interrupt and syscall-result policy
 
 **Class:** shared x86 policy extraction  
 **Risk:** high  
@@ -288,7 +323,7 @@ containment from kernel panic behavior.
 both production builds; x86-32 Limine, x86-32 Multiboot, and x86-64 Limine
 system-smoke tests; `zig build tests`; `git diff --check`.
 
-### Phase 3: separate capability storage, derivation, and object adapters
+### [ ] Phase 3: separate capability storage, derivation, and object adapters
 
 **Class:** state-ownership cleanup and API extraction  
 **Risk:** high  
@@ -328,7 +363,7 @@ bypass rights/type checks, and reset/count behavior remains deterministic.
 **Validation:** `zig build tests`; `zig build coverage`; both architecture test
 suites; both production builds and system-smoke tests; `git diff --check`.
 
-### Phase 4: clarify root-process and root-task transactions
+### [ ] Phase 4: clarify root-process and root-task transactions
 
 **Class:** file split only first, followed by state-ownership cleanup  
 **Risk:** medium to high  
@@ -369,7 +404,7 @@ mechanics.
 coverage`; both production builds; all three production system-smoke paths;
 `git diff --check`.
 
-### Phase 5: evaluate process-registry and thread-context follow-ups
+### [ ] Phase 5: evaluate process-registry and thread-context follow-ups
 
 **Class:** state-ownership cleanup and possible shared x86 policy extraction  
 **Risk:** medium to high  
@@ -428,6 +463,16 @@ For documentation-only changes to this roadmap, validate relative Markdown links
 and run `git diff --check`. For source refactors, use the phase-specific commands
 above; architecture-boundary changes require both physical architecture suites
 and all affected production smoke paths.
+
+## Updating this roadmap
+
+- Change `[ ]` to `[~]` when implementation begins.
+- Use `[!]` only when a `Blocked by` line names another roadmap item or an
+  external issue.
+- Change a phase to `[x]` only after its done criteria are satisfied and its full
+  validation matrix passes.
+- Preserve completed phase records as historical evidence; update current
+  limitations separately rather than rewriting completed results.
 
 ## Non-goals
 

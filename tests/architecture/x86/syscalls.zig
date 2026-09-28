@@ -4,20 +4,7 @@ const kernel = @import("kernel_common");
 const framework = @import("../framework.zig");
 
 pub fn interruptGatePreservesRegisterAbi() !void {
-    kernel.capability.resetForTest();
-    kernel.process.resetForTest();
-    kernel.process.execution_context.resetForTest();
-    kernel.memory_management.physical_memory_authority.resetForTest();
-    const active_capability = try kernel.capability.createAddressSpaceCapability(
-        kernel.process.ROOT_PROCESS_HANDLE,
-    );
-    const active_address_space = try kernel.capability.resolveAddressSpace(
-        kernel.process.ROOT_PROCESS_HANDLE,
-        active_capability,
-        .{ .manage = true },
-    );
-    try kernel.process.execution_context.initializeRoot(active_address_space);
-    @call(.never_inline, arch.boot.finishBoot, .{});
+    try initializeSyscallTest();
 
     const address_space_capability = abi.syscall.syscall3(
         @intFromEnum(abi.syscall.SyscallNumber.create_address_space),
@@ -175,4 +162,53 @@ pub fn interruptGatePreservesRegisterAbi() !void {
             0,
         ),
     );
+}
+
+pub fn interruptGateWritesMultiRegisterResults() !void {
+    try initializeSyscallTest();
+
+    const endpoint_capability = abi.syscall.syscall3(
+        @intFromEnum(abi.syscall.SyscallNumber.create_endpoint),
+        0,
+        0,
+        0,
+    );
+    try framework.expect(endpoint_capability != abi.capability.INVALID_CAPABILITY);
+    const endpoint_handle = try kernel.capability.resolveEndpoint(
+        kernel.process.ROOT_PROCESS_HANDLE,
+        endpoint_capability,
+        .{ .receive = true },
+    );
+    const expected_message = abi.ipc.Message{
+        .words = .{ 0x1234_5678, 0x9abc_def0, 0x55aa_33cc },
+    };
+    try kernel.ipc.endpoint.send(endpoint_handle, expected_message);
+
+    const result = abi.syscall.syscallReceive(
+        @intFromEnum(abi.syscall.SyscallNumber.endpoint_receive),
+        endpoint_capability,
+    );
+
+    try framework.expectEqual(abi.syscall.SYSCALL_SUCCESS, result.status);
+    for (expected_message.words, result.message.words) |expected, actual| {
+        try framework.expectEqual(expected, actual);
+    }
+    try framework.expectError(error.EndpointEmpty, kernel.ipc.endpoint.receive(endpoint_handle));
+}
+
+fn initializeSyscallTest() !void {
+    kernel.capability.resetForTest();
+    kernel.process.resetForTest();
+    kernel.process.execution_context.resetForTest();
+    kernel.memory_management.physical_memory_authority.resetForTest();
+    const active_capability = try kernel.capability.createAddressSpaceCapability(
+        kernel.process.ROOT_PROCESS_HANDLE,
+    );
+    const active_address_space = try kernel.capability.resolveAddressSpace(
+        kernel.process.ROOT_PROCESS_HANDLE,
+        active_capability,
+        .{ .manage = true },
+    );
+    try kernel.process.execution_context.initializeRoot(active_address_space);
+    @call(.never_inline, arch.boot.finishBoot, .{});
 }

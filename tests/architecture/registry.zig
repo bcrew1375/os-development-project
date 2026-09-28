@@ -96,6 +96,7 @@ fn testFunction(id: manifest.TestId) framework.TestFunction {
         => timer.interruptsAreDelivered,
         .boot_modules_are_cached_reserved_and_capacity_limited => boot_modules.areCachedReservedAndCapacityLimited,
         .syscall_interrupt_gate_preserves_register_abi => syscalls.interruptGatePreservesRegisterAbi,
+        .syscall_interrupt_gate_writes_multi_register_results => syscalls.interruptGateWritesMultiRegisterResults,
         .user_invalid_opcode_fault_is_contained => containment.invalidOpcodeFaultIsContained,
         .thread_context_initial_state_uses_bounded_kernel_stack => thread_context.initialStateUsesBoundedKernelStack,
         .thread_context_retained_fault_frame_is_validated_mutated_and_cleared => thread_context.retainedFaultFrameIsValidatedMutatedAndCleared,

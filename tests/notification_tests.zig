@@ -256,3 +256,83 @@ test "Notification: production syscalls return counted state and enforce source 
         else => return error.UnexpectedSyscallResult,
     }
 }
+
+test "Notification: production interrupt delivery writes results and acknowledgment rearms source" {
+    try arch.impl.test_support.initializeDefaultMemoryFixture();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+    resetState();
+
+    const waiter = try createConfiguredThread(kernel.process.ROOT_PROCESS_HANDLE);
+    const survivor = try createConfiguredThread(2);
+    try initializeRunningThread(waiter, survivor);
+    const waiter_context = (try kernel.process.thread.get(waiter)).architecture_context_handle;
+    try arch.thread_context.beginSyscall(waiter_context, 0x1000);
+
+    const notification_capability = switch (kernel.syscall.dispatchFromCurrentContext(
+        request(.create_notification, .{ 0, 0, 0, 0, 0 }),
+    )) {
+        .returned => |handle| handle,
+        else => return error.UnexpectedSyscallResult,
+    };
+    const source_capability = switch (kernel.syscall.dispatchFromCurrentContext(
+        request(.create_interrupt_source, .{
+            @intFromEnum(abi.notification.InterruptSourceKind.timer),
+            1000,
+            0,
+            0,
+            0,
+        }),
+    )) {
+        .returned => |handle| handle,
+        else => return error.UnexpectedSyscallResult,
+    };
+    switch (kernel.syscall.dispatchFromCurrentContext(
+        request(.bind_interrupt_source, .{
+            source_capability,
+            notification_capability,
+            0,
+            0,
+            0,
+        }),
+    )) {
+        .returned => |status| try std.testing.expectEqual(abi.syscall.SYSCALL_SUCCESS, status),
+        else => return error.UnexpectedSyscallResult,
+    }
+    switch (kernel.syscall.dispatchFromCurrentContext(
+        request(.notification_wait, .{ notification_capability, 0, 0, 0, 0 }),
+    )) {
+        .blocked => {},
+        else => return error.UnexpectedSyscallResult,
+    }
+
+    try kernel.ipc.notification_operations.deliverInterrupt(.timer);
+    try std.testing.expect(arch.impl.interrupts.getStateForTest().timer_masked);
+    const completed = (try arch.thread_context.getCompletedSyscallForTest(waiter_context)).?;
+    try std.testing.expectEqual(abi.syscall.SYSCALL_SUCCESS, completed.status);
+    try std.testing.expectEqual([3]u64{ 1, 0, 0 }, completed.words);
+
+    switch (kernel.syscall.dispatchFromCurrentContext(
+        request(.acknowledge_interrupt_source, .{ source_capability, 0, 0, 0, 0 }),
+    )) {
+        .returned => |status| try std.testing.expectEqual(abi.syscall.SYSCALL_SUCCESS, status),
+        else => return error.UnexpectedSyscallResult,
+    }
+    try std.testing.expect(!arch.impl.interrupts.getStateForTest().timer_masked);
+
+    switch (kernel.syscall.dispatchFromCurrentContext(
+        request(.acknowledge_interrupt_source, .{ source_capability, 0, 0, 0, 0 }),
+    )) {
+        .failure => |failure| {
+            try std.testing.expectEqual(
+                kernel.syscall.Operation.acknowledge_interrupt_source,
+                failure.operation,
+            );
+            try std.testing.expectEqual(error.InterruptSourceAlreadyAcknowledged, failure.err);
+            try std.testing.expectEqual(
+                abi.syscall.errorResult(.invalid_state),
+                failure.return_value,
+            );
+        },
+        else => return error.UnexpectedSyscallResult,
+    }
+}
