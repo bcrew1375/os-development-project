@@ -233,11 +233,33 @@ unchanged, and coverage does not lose emitted common-code lines.
 **Validation:** `zig fmt --check` on the affected trees; `zig build tests`;
 `zig build coverage`; `git diff --check`.
 
-### [ ] Phase 1: decompose common syscall policy by object family
+### [x] Phase 1: decompose common syscall policy by object family
 
 **Class:** API extraction  
 **Risk:** medium  
 **Dependencies:** Phase 0 syscall characterization
+
+**Completed:** 2026-09-28
+
+- `src/common/syscall/main.zig` remains the stable public facade for `Request`,
+  `Operation`, `Failure`, `Result`, `dispatchFromCurrentContext`, and
+  `dispatchWithServices`.
+- Shared types and error mapping are isolated from memory, process, and IPC
+  object-family policy without introducing runtime dispatch.
+- Production capability, process, IPC, architecture-context, and checked
+  userspace-copy adapters are confined to `production_services.zig`.
+- The centralized syscall-number dispatcher is 71 lines and delegates typed
+  policy to cohesive object-family modules.
+- Object-family modules do not import architecture interrupt implementations,
+  and architecture callers continue to consume the same result variants and
+  register payloads.
+
+**Validation results:** `zig fmt --check src/common/syscall`; `zig build tests`;
+`zig build coverage` with 1,232 of 1,232 emitted common-code lines covered;
+`zig build architecture-tests -Darch=x86_32`; `zig build architecture-tests
+-Darch=x86_64`; `zig build -Darch=x86_32`; `zig build -Darch=x86_64`; `zig
+build system-smoke -Darch=x86_32`; `zig build system-smoke -Darch=x86_64`;
+`git diff --check`.
 
 Keep `src/common/syscall/main.zig` as the stable public facade for `Request`,
 `Operation`, `Failure`, `Result`, `dispatchFromCurrentContext`, and
