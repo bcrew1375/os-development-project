@@ -244,7 +244,9 @@ trustworthy if it is collected with a different compiler version.
 suite, and some architecture context/interrupt modules are large and carry many
 responsibilities. The subsystem directories are sound, but continued feature work
 should split decoding, object-specific syscall operations, registry mechanics, and
-policy helpers before those files become monolithic coordination points.
+policy helpers before those files become monolithic coordination points. The dated
+[Kernel Refactoring Roadmap](kernel-refactoring-roadmap.md) records the measured
+hotspots, dependency guardrails, safe implementation order, and validation gates.
 
 ## Prioritized next work
 

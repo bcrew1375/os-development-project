@@ -71,6 +71,8 @@ zig build serve-docs
 
 - [Current Kernel Assessment](roadmaps/kernel-assessment.md) — dated assessment
   and prioritized backlog.
+- [Kernel Refactoring Roadmap](roadmaps/kernel-refactoring-roadmap.md) — measured
+  maintainability hotspots and a behavior-preserving extraction sequence.
 - [Userspace Process Roadmap](roadmaps/userspace-process-roadmap.md) — phased path
   from one bootstrapped root task to multiple isolated processes.
 - [Testing Roadmap](roadmaps/testing-roadmap.md) — verification milestones and
