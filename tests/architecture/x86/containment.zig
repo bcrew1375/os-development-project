@@ -45,6 +45,57 @@ pub fn invalidOpcodeFaultIsContained() !void {
     );
 }
 
+pub fn unmappedInstructionPageFaultIsContained() !void {
+    kernel.process.resetForTest();
+
+    const address_space = try kernel.process.createAddressSpaceForOwner(owner);
+    const root = try kernel.process.getAddressSpaceRoot(address_space);
+    const address_space_metadata = try kernel.process.getAddressSpace(address_space);
+    try kernel.vmm.map(
+        address_space_metadata,
+        user_code_address,
+        user_code_address + arch.mmu.getPageSize(),
+        .{
+            .readable = true,
+            .writeable = false,
+            .executable = true,
+            .user_accessible = true,
+        },
+    );
+    kernel.vmm.setAddressSpace(address_space_metadata);
+    try mapUserPage(root, user_stack_address, &.{}, .{ .write = true, .user = true });
+
+    const current = try createThread(address_space, 0x0040_1000, validUserStackPointer(0x0080_0000));
+    const faulting = try createThread(
+        address_space,
+        user_code_address,
+        validUserStackPointer(user_stack_address + arch.mmu.getPageSize()),
+    );
+    const current_object = try kernel.process.thread.get(current);
+
+    try kernel.process.scheduler.initialize(root);
+    try kernel.process.thread.makeReady(current);
+    try kernel.process.thread.startRunning(current);
+    try kernel.process.scheduler.setCurrentThreadForTest(current);
+    try kernel.process.scheduler.makeReady(faulting);
+    try arch.thread_context.bindCurrentForTest(current_object.architecture_context_handle);
+    @call(.never_inline, arch.boot.finishBoot, .{});
+
+    try kernel.process.scheduler.yieldCurrent();
+
+    const faulted = try kernel.process.thread.get(faulting);
+    try framework.expectEqual(kernel.process.thread.State.faulted, faulted.state);
+    const fault = faulted.user_fault orelse return framework.TestError.ExpectationFailed;
+    try framework.expectEqual(kernel.process.thread.UserFaultKind.page_fault, fault.kind);
+    try framework.expectEqual(@as(u64, user_code_address), fault.address);
+    try framework.expectEqual(@as(u64, user_code_address), fault.instruction_pointer);
+    try framework.expectEqual(expectedUnmappedInstructionFaultError(), fault.architecture_error);
+    try framework.expectEqual(
+        @as(?kernel.process.thread.Handle, current),
+        kernel.process.scheduler.currentThreadForTest(),
+    );
+}
+
 fn createThread(
     address_space: kernel.process.AddressSpaceHandle,
     entry_point: usize,
@@ -82,6 +133,14 @@ fn validUserStackPointer(stack_top: usize) usize {
     return switch (builtin.cpu.arch) {
         .x86 => stack_top - 4,
         .x86_64 => stack_top - 8,
+        else => @compileError("unsupported architecture"),
+    };
+}
+
+fn expectedUnmappedInstructionFaultError() u64 {
+    return switch (builtin.cpu.arch) {
+        .x86 => 0x04,
+        .x86_64 => 0x14,
         else => @compileError("unsupported architecture"),
     };
 }

@@ -301,12 +301,36 @@ architecture interrupt implementations, and no error/result mapping changes.
 suites; both production builds; both production system-smoke tests;
 `git diff --check`.
 
-### [ ] Phase 2: extract shared x86 interrupt and syscall-result policy
+### [x] Phase 2: extract shared x86 interrupt and syscall-result policy
 
 **Class:** shared x86 policy extraction  
 **Risk:** high  
 **Dependencies:** Phase 1 stable syscall facade and Phase 0 interrupt
 characterization
+
+**Completed:** 2026-09-29
+
+`src/architecture/x86/common/interrupts/policy.zig` now owns the shared dispatcher,
+including expected-fault interception, exception and page-fault routing, timer and
+keyboard policy, PIC acknowledgement ordering, diagnostic state, syscall-result
+handling, and scheduling-from-idle decisions. Width-specific `frame_adapter.zig`
+modules retain trap-frame access, CR2 reads, register extraction, native-width test
+observation values, and syscall-result writeback. Both adapters are checked against
+the same compile-time contract, and each architecture's `interrupts/main.zig` is an
+ABI-preserving 45-line hardware wrapper.
+
+Physical characterization now includes containment of an unmapped user instruction
+page fault on both widths, including the architecture-specific instruction-fetch
+error bit. Architecture coverage inventory tests explicitly require the shared and
+selected width-specific interrupt directories.
+
+**Validation results:** `zig build tests`; `zig build coverage` with 1,233 of
+1,233 emitted common-code lines covered; both architecture test suites; x86-32
+architecture coverage at 191 of 402 coverable lines and x86-64 architecture
+coverage at 457 of 1,102 coverable lines; x86-32 Limine and Multiboot production
+builds; x86-64 production build; x86-32 Limine, x86-32 Multiboot, and x86-64
+Limine system-smoke tests; `zig fmt --check` for changed Zig files; `git diff
+--check`.
 
 Create an x86-common policy module parameterized at compile time by a narrow
 frame/mechanism implementation. Keep these width-specific:
@@ -345,12 +369,40 @@ containment from kernel panic behavior.
 both production builds; x86-32 Limine, x86-32 Multiboot, and x86-64 Limine
 system-smoke tests; `zig build tests`; `git diff --check`.
 
-### [ ] Phase 3: separate capability storage, derivation, and object adapters
+### [x] Phase 3: separate capability storage, derivation, and object adapters
 
 **Class:** state-ownership cleanup and API extraction  
 **Risk:** high  
 **Dependencies:** Phase 0 capability characterization; preferably Phase 1 so
 syscall callers depend only on the stable capability facade
+
+**Completed:** 2026-09-29
+
+`src/common/capability/main.zig` is now a 68-line compatibility facade with the
+same 49 public declarations as before the split. `errors.zig` owns the shared
+error set, `storage.zig` exclusively owns mutable capability slots and exposes
+typed preparation, commit, rollback, resolution, replacement, clearing, counting,
+reset, and bounded read-only scan operations. `derivation.zig` owns installation,
+exact-slot transactions, generation-aware tree traversal, generic deletion, and
+authorization cancellation. Memory, process, and IPC object lifecycle adapters
+are separated into their planned object-family modules, and no internal capability
+module imports the public facade.
+
+Exact-slot rollback still restores the pre-commit slot without consuming a
+generation. Backing objects remain unpublished until their prepared slot commits,
+and traversal remains iterative, bounded, and allocation-free. Test reset clears
+slots in place rather than materializing the full table array on the bounded
+x86-32 kernel stack.
+
+**Validation results:** `zig build tests`; `zig build coverage` with 1,260 of
+1,260 emitted common-code lines covered, including every emitted line in the new
+capability modules; both architecture test suites run serially with a 180-second
+per-image timeout; x86-32 architecture coverage at 191 of 402 coverable lines and
+x86-64 architecture coverage at 457 of 1,102 coverable lines; x86-32 Limine and
+Multiboot production builds; x86-64 production build; x86-32 Limine, x86-32
+Multiboot, and x86-64 Limine system-smoke tests; `zig fmt --check` for changed
+capability files; public-symbol parity and exclusive slot-owner checks; `git diff
+--check`.
 
 Keep `src/common/capability/main.zig` as the public subsystem facade. Introduce
 internal modules with one owner for mutable slot state:
@@ -385,12 +437,58 @@ bypass rights/type checks, and reset/count behavior remains deterministic.
 **Validation:** `zig build tests`; `zig build coverage`; both architecture test
 suites; both production builds and system-smoke tests; `git diff --check`.
 
-### [ ] Phase 4: clarify root-process and root-task transactions
+### [x] Phase 4: clarify root-process and root-task transactions
 
 **Class:** file split only first, followed by state-ownership cleanup  
 **Risk:** medium to high  
 **Dependencies:** Phases 0 and 3; capability ownership should be stable before
 rewriting bootstrap transactions
+
+**Completed:** 2026-09-29
+
+`src/launch_root_process.zig` is now a 43-line facade with the same public surface
+(`RootProcessLayout`, `PreparedRootProcess`, `prepareRootProcess`,
+`enterPreparedRootProcess`, `isRootThreadForSmoke`). Its mechanics moved into
+`src/root_process/`: `layout.zig` and `errors.zig` hold the shared virtual-address
+map and error union, `user_memory.zig`, `executable_loading.zig`,
+`initial_stack.zig`, `boot_modules.zig`, and `boot_info.zig` hold one mechanism
+each, and `preparation.zig` owns `PreparedRootProcess`, `PreparationTransaction`,
+and the ordered preparation flow. `PreparationTransaction` transitions the raw
+address-space root into the registered capability and clears the superseded field,
+so rollback destroys whichever form is currently owned and never releases the same
+resource twice. A characterization test asserts the raw root is still reclaimed
+when capability registration is the first step to fail.
+
+The root task reduced `startup.zig` from 510 to 202 lines: `run` keeps its ordered
+boot validation, allocator, address-space, and heap bootstrap sequence and the
+cooperative-yield milestone, and now delegates every smoke scenario to the new
+`smoke/` namespace. `components/os-root-task/src/smoke/main.zig` holds the
+echo-service, notification, and child-process scenarios verbatim.
+`child_process.zig` dropped from 491 to 281 lines, with load planning,
+startup-ABI construction, and the unpublished-resource transaction extracted into
+`load_plan.zig`, `startup_abi.zig`, and `Transaction.zig`.
+
+The kernel-side split was verified as a pure move rather than by inspection alone:
+every moved declaration was compared token-for-token against its pre-refactor text,
+reporting zero missing, zero added, and zero differing declarations. The only
+textual differences are optional trailing commas from re-wrapping long parameter
+lists and call-site module qualification.
+
+**Validation results:** `zig build tests`; root-task component tests in
+`components/os-root-task`; `zig build coverage` with 1,261 of 1,261 emitted
+common-code lines covered, including all 11 root-process tests; both architecture
+test suites, each running 17 images with 0 failures (27 checks on x86-64, 25 on
+x86-32); x86-64, x86-32 Limine, and x86-32 Multiboot production builds; all three
+production system-smoke paths, each reporting `SYSTEM-SMOKE EXIT status=0` across
+62 protocol milestones including echo-service request, verified reply, child
+destruction, and service restart; `zig fmt --check`; `git diff --check`.
+
+Deliberate limitations: non-root boot-module mappings are not tracked by
+`PreparationTransaction`; they are released by `mapNonRootBootModules`'s own
+`errdefer` while mapping, and any later failure reclaims them with the address-space
+root that rollback destroys. `smoke/` remains production validation policy reachable
+only when the environment declares the corresponding capabilities, so it is compiled
+into the production root task rather than a test-only build.
 
 For `src/launch_root_process.zig`, preserve `PreparedRootProcess` and the public
 prepare/enter API while moving cohesive mechanics into:

@@ -3,7 +3,10 @@
 Root-process preparation turns boot module zero into a protected userspace
 execution image. The operation is transactional where practical: capability and
 physical-memory delegation created during preparation is rolled back if a later
-stage fails.
+stage fails. `src/launch_root_process.zig` is the public facade; the mechanics live
+in `src/root_process/`, where one module owns each mechanism and
+`preparation.zig` owns the single `PreparedRootProcess` transaction, so every
+unpublished resource has one owner and rollback order is local to it.
 
 ```mermaid
 flowchart TD
@@ -15,7 +18,8 @@ flowchart TD
     module --> elf[Parse root-task ELF]
     elf --> segments[Map, copy, zero, and protect loadable segments]
     segments --> stack[Map initial userspace stack]
-    stack --> bootPage[Map boot-info page]
+    stack --> modules[Map non-root boot modules read-only]
+    modules --> bootPage[Map boot-info page]
     bootPage --> collect[Normalize memory and create untyped capabilities]
     collect --> write[Write boot info and descriptors into userspace]
     write --> frame[Write architecture-compatible initial call frame]
@@ -72,6 +76,13 @@ transition.
 ## Implementation authority
 
 - `src/launch_root_process.zig`
+- `src/root_process/preparation.zig` (ownership transaction)
+- `src/root_process/executable_loading.zig`
+- `src/root_process/initial_stack.zig`
+- `src/root_process/boot_info.zig`
+- `src/root_process/boot_modules.zig`
+- `src/root_process/user_memory.zig`
+- `src/root_process/layout.zig`
 - `src/common/memory_management/vmm.zig`
 - `src/common/memory_management/physical_memory_bootstrap.zig`
 - `src/common/memory_management/physical_memory_authority.zig`

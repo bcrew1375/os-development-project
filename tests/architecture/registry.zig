@@ -98,6 +98,7 @@ fn testFunction(id: manifest.TestId) framework.TestFunction {
         .syscall_interrupt_gate_preserves_register_abi => syscalls.interruptGatePreservesRegisterAbi,
         .syscall_interrupt_gate_writes_multi_register_results => syscalls.interruptGateWritesMultiRegisterResults,
         .user_invalid_opcode_fault_is_contained => containment.invalidOpcodeFaultIsContained,
+        .user_unmapped_instruction_page_fault_is_contained => containment.unmappedInstructionPageFaultIsContained,
         .thread_context_initial_state_uses_bounded_kernel_stack => thread_context.initialStateUsesBoundedKernelStack,
         .thread_context_retained_fault_frame_is_validated_mutated_and_cleared => thread_context.retainedFaultFrameIsValidatedMutatedAndCleared,
         .thread_context_switch_round_trip_restores_architecture_state => thread_context.switchRoundTripRestoresAddressSpaceAndPrivilegeStack,

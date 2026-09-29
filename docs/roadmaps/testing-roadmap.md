@@ -501,7 +501,8 @@ user address space.
 
 **New file:** `tests/root_process_tests.zig`
 
-**Production file under test:** `src/launch_root_process.zig`
+**Production file under test:** `src/launch_root_process.zig` and its
+`src/root_process/` mechanics modules
 
 **Coverage:**
 

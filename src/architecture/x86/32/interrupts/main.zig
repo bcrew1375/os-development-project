@@ -1,31 +1,29 @@
-const arch = @import("arch");
-const root = @import("root");
-const kernel_common = @import("kernel_common");
 const abi = @import("abi");
 
-const diagnostics = @import("../../common/interrupts/diagnostics.zig");
-const vectors = @import("../../common/interrupts/vectors.zig");
-const time = @import("../../common/platform/time/main.zig");
+const frame_adapter = @import("frame_adapter.zig");
+const policy = @import("../../common/interrupts/policy.zig");
+
 pub const idt = @import("interrupt_descriptor_table.zig");
 pub const pic = @import("../../common/interrupts/pic.zig");
-const keyboard = @import("../../common/platform/io/keyboard.zig");
-const TrapFrame = @import("trap_frame.zig").TrapFrame;
-var diagnostic_state: diagnostics.State = .{};
+
+const Mechanisms = struct {
+    pub fn acknowledgeInterrupt(vector: usize) void {
+        pic.sendEndOfInterrupt(vector);
+    }
+};
+
+const dispatcher = policy.Dispatcher(frame_adapter, Mechanisms);
 
 pub fn enableInterrupts() void {
-    asm volatile (
-        \\sti
-    );
+    asm volatile ("sti");
 }
 
 pub fn disableInterrupts() void {
-    asm volatile (
-        \\cli
-    );
+    asm volatile ("cli");
 }
 
 pub fn acknowledgeInterrupt(vector: usize) void {
-    pic.sendEndOfInterrupt(vector);
+    Mechanisms.acknowledgeInterrupt(vector);
 }
 
 pub fn maskInterruptSource(kind: abi.notification.InterruptSourceKind) void {
@@ -43,286 +41,5 @@ pub fn unmaskInterruptSource(kind: abi.notification.InterruptSourceKind) void {
 }
 
 pub fn interruptHandler(vector: usize, stack_pointer: usize) callconv(.c) void {
-    const trap_frame: *TrapFrame = @ptrFromInt(stack_pointer);
-    if (comptime @hasDecl(root, "architectureTestObserveException")) {
-        if (root.architectureTestObserveException(
-            vector,
-            trap_frame.error_code,
-            trap_frame.instruction_pointer,
-            readCr2(),
-        )) return;
-    }
-    const diagnostic = diagnostic_state.recordInterrupt(vector);
-    if (diagnostic.print) {
-        arch.platform.writer().print("Interrupt 0x{x}: ", .{vector}) catch {};
-    }
-
-    var schedule_from_idle = false;
-    switch (vector) {
-        vectors.divide_by_zero => handleException(trap_frame, .divide_by_zero, "Divide by zero."),
-        vectors.debug_exception => {
-            arch.platform.writer().writeAll("Debug exception.\n") catch {};
-        },
-        0x02...0x05 => {},
-        vectors.invalid_opcode => handleException(trap_frame, .invalid_opcode, "Invalid opcode."),
-        0x07 => {},
-        vectors.double_fault => {
-            arch.platform.writer().writeAll("Double fault.\n") catch {};
-        },
-        0x09 => {},
-        vectors.invalid_tss => {
-            arch.platform.writer().writeAll("Invalid TSS.\n") catch {};
-        },
-        0x0B => {},
-        vectors.stack_segment_fault => {
-            arch.platform.writer().writeAll("Stack segment fault.\n") catch {};
-        },
-        vectors.general_protection_fault => {
-            const interrupted_frame = readInterruptedFrame(trap_frame);
-            arch.platform.writer().writeAll("General protection fault.\n") catch {};
-            arch.platform.writer().print(" EIP: 0x{x}, CS: 0x{x}, error: 0x{x}\n", .{ interrupted_frame.instruction_pointer, interrupted_frame.code_selector, interrupted_frame.error_code }) catch {};
-            if (interrupted_frame.user_mode) {
-                containUserFault(trap_frame, .{
-                    .kind = .general_protection,
-                    .instruction_pointer = interrupted_frame.instruction_pointer,
-                    .architecture_error = interrupted_frame.error_code,
-                });
-            }
-            @panic("kernel general protection fault");
-        },
-        vectors.page_fault => handlePageFault(trap_frame, diagnostic),
-        0x0F => {},
-        0x10 => {},
-        vectors.alignment_check => handleException(trap_frame, .alignment_check, "Alignment check."),
-        0x12...0x1F => {},
-        vectors.timer => {
-            time.recordInterrupt();
-            kernel_common.ipc.notification_operations.deliverInterrupt(.timer) catch |err| {
-                arch.platform.writer().print("timer notification failed: {s}\n", .{@errorName(err)}) catch {};
-                @panic("timer notification delivery failed");
-            };
-            schedule_from_idle = true;
-            if (diagnostic.print) {
-                arch.platform.writer().print("Timer ({d} ticks).\n", .{diagnostic.count}) catch {};
-            }
-        },
-        vectors.keyboard => {
-            if (diagnostic.print) {
-                arch.platform.writer().writeAll("Keyboard pressed.\n") catch {};
-            }
-            keyboard.clearKeyboard();
-        },
-        0x22...0x7F => {},
-        vectors.syscall => handleSyscall(trap_frame),
-        0x81...0xFFFFFFFF => {},
-    }
-
-    if (diagnostic.print) {
-        arch.platform.writer().print(" --- Stack Index: {x}\n", .{stack_pointer}) catch {};
-    }
-
-    acknowledgeInterrupt(vector);
-    if (schedule_from_idle) {
-        _ = kernel_common.process.scheduler.scheduleFromIdleIfReady() catch |err| {
-            if (err != error.SchedulerUninitialized) {
-                arch.platform.writer().print("idle interrupt scheduling failed: {s}\n", .{@errorName(err)}) catch {};
-                @panic("idle interrupt scheduling failed");
-            }
-        };
-    }
-}
-
-fn handlePageFault(trap_frame: *const TrapFrame, diagnostic: diagnostics.Decision) void {
-    const fault_info = readPageFaultInfo(trap_frame);
-    if (diagnostic.print) {
-        arch.platform.writer().print(
-            "Page fault address=0x{x} present={} write={} user={} execute={}\n",
-            .{
-                fault_info.address,
-                fault_info.present,
-                fault_info.write,
-                fault_info.user,
-                fault_info.instruction_fetch,
-            },
-        ) catch {};
-    }
-    kernel_common.vmm.resolveFault(fault_info) catch |err| {
-        if (isUserMode(trap_frame)) {
-            arch.platform.writer().print("Unresolved user page fault: {s}\n", .{@errorName(err)}) catch {};
-            containUserFault(trap_frame, .{
-                .kind = .page_fault,
-                .instruction_pointer = trap_frame.instruction_pointer,
-                .address = fault_info.address,
-                .architecture_error = trap_frame.error_code,
-            });
-        }
-        kernel_common.vmm.faultHandler(fault_info);
-    };
-    if (diagnostic.print) {
-        arch.platform.writer().writeAll("Page fault.\n") catch {};
-    }
-}
-
-fn handleSyscall(trap_frame: *TrapFrame) void {
-    const context_handle = beginSyscall(trap_frame);
-    const result = kernel_common.syscall.dispatchFromCurrentContext(
-        .{
-            .number = trap_frame.eax,
-            .arguments = .{
-                trap_frame.ebx,
-                trap_frame.ecx,
-                trap_frame.edx,
-                trap_frame.esi,
-                trap_frame.edi,
-            },
-        },
-    );
-    handleSyscallResult(context_handle, trap_frame, result);
-}
-
-fn beginSyscall(trap_frame: *TrapFrame) ?arch.ThreadContextHandle {
-    const context_handle = kernel_common.process.scheduler.currentArchitectureContextHandle() catch |err| {
-        if (@hasDecl(root, "architectureTestObserveException") and err == error.SchedulerUninitialized) {
-            return null;
-        }
-        arch.platform.writer().print("resolve syscall context failed: {s}\n", .{@errorName(err)}) catch {};
-        @panic("syscall has no current architecture context");
-    };
-    arch.thread_context.beginSyscall(context_handle, @intFromPtr(trap_frame)) catch |err| {
-        arch.platform.writer().print("begin syscall failed: {s}\n", .{@errorName(err)}) catch {};
-        @panic("failed to retain syscall trap frame");
-    };
-    return context_handle;
-}
-
-fn handleSyscallResult(
-    context_handle: ?arch.ThreadContextHandle,
-    trap_frame: *TrapFrame,
-    result: kernel_common.syscall.Result,
-) void {
-    switch (result) {
-        .returned => |status| completeSyscall(context_handle, trap_frame, .fromStatus(status)),
-        .returned_registers => |registers| completeSyscall(context_handle, trap_frame, registers),
-        .blocked => {},
-        .yield => {
-            kernel_common.process.scheduler.yieldCurrent() catch |err| {
-                arch.platform.writer().print("yield failed: {s}\n", .{@errorName(err)}) catch {};
-                @panic("cooperative scheduler yield failed");
-            };
-            completeSyscall(context_handle, trap_frame, .fromStatus(abi.syscall.SYSCALL_SUCCESS));
-        },
-        .debug_write => |write| {
-            var message: [kernel_common.user_memory.MAX_COPY_BYTES]u8 = undefined;
-            kernel_common.user_memory.copyFromUser(&message, write.address, write.length) catch |err| {
-                arch.platform.writer().print("debug_write failed: {s}\n", .{@errorName(err)}) catch {};
-                completeSyscall(context_handle, trap_frame, .fromStatus(abi.syscall.SYSCALL_FAILURE));
-                return;
-            };
-            arch.platform.writer().writeAll(message[0..@intCast(write.length)]) catch {};
-            completeSyscall(context_handle, trap_frame, .fromStatus(abi.syscall.SYSCALL_SUCCESS));
-        },
-        .exit => |exit| {
-            if (@hasDecl(root, "isRootThreadForSmoke") and root.isRootThreadForSmoke()) {
-                arch.platform.writer().print(abi.system_smoke.EXIT_FORMAT, .{exit.status}) catch {};
-            }
-            arch.platform.writer().print("User process exited with status {d}.\n", .{exit.status}) catch {};
-            kernel_common.process.lifecycle.exitCurrent(exit.status) catch |err| {
-                arch.platform.writer().print("thread exit failed: {s}\n", .{@errorName(err)}) catch {};
-                @panic("current thread exit failed");
-            };
-        },
-        .failure => |failure_result| {
-            arch.platform.writer().print("{s} failed: {s}\n", .{
-                @tagName(failure_result.operation),
-                @errorName(failure_result.err),
-            }) catch {};
-            completeSyscall(context_handle, trap_frame, .fromStatus(failure_result.return_value));
-        },
-    }
-}
-
-fn completeSyscall(
-    context_handle: ?arch.ThreadContextHandle,
-    trap_frame: *TrapFrame,
-    result: arch.SyscallResultRegisters,
-) void {
-    if (context_handle == null) {
-        trap_frame.eax = result.status;
-        trap_frame.ebx = @truncate(result.words[0]);
-        trap_frame.ecx = @truncate(result.words[1]);
-        trap_frame.edx = @truncate(result.words[2]);
-        if (result.capability) |installed| trap_frame.esi = @truncate(installed);
-        return;
-    }
-    arch.thread_context.completeSyscall(context_handle.?, result) catch |err| {
-        arch.platform.writer().print("complete syscall failed: {s}\n", .{@errorName(err)}) catch {};
-        @panic("failed to write syscall result");
-    };
-}
-
-fn handleException(
-    trap_frame: *const TrapFrame,
-    kind: kernel_common.process.thread.UserFaultKind,
-    message: []const u8,
-) void {
-    arch.platform.writer().print("{s}\n", .{message}) catch {};
-    if (isUserMode(trap_frame)) {
-        containUserFault(trap_frame, .{
-            .kind = kind,
-            .instruction_pointer = trap_frame.instruction_pointer,
-            .architecture_error = trap_frame.error_code,
-        });
-    }
-    @panic(message);
-}
-
-fn containUserFault(
-    trap_frame: *const TrapFrame,
-    fault: kernel_common.process.thread.UserFault,
-) void {
-    kernel_common.process.lifecycle.faultCurrentFromFrame(
-        fault,
-        @intFromPtr(trap_frame),
-    ) catch |err| {
-        arch.platform.writer().print("user fault containment failed: {s}\n", .{@errorName(err)}) catch {};
-        @panic("user fault containment failed");
-    };
-}
-
-fn isUserMode(trap_frame: *const TrapFrame) bool {
-    return (trap_frame.code_selector & 0x3) == 0x3;
-}
-
-fn readPageFaultInfo(trap_frame: *const TrapFrame) arch.FaultInfo {
-    const error_code: usize = @intCast(trap_frame.error_code);
-
-    return .{
-        .address = readCr2(),
-        .present = (error_code & 0x1) != 0,
-        .write = (error_code & 0x2) != 0,
-        .user = (error_code & 0x4) != 0,
-        .instruction_fetch = (error_code & 0x10) != 0,
-    };
-}
-
-fn readCr2() usize {
-    return asm volatile ("mov %%cr2, %[out]"
-        : [out] "=r" (-> u32),
-    );
-}
-
-const InterruptedFrame = struct {
-    error_code: u32,
-    instruction_pointer: u32,
-    code_selector: u32,
-    user_mode: bool,
-};
-
-fn readInterruptedFrame(trap_frame: *const TrapFrame) InterruptedFrame {
-    return .{
-        .error_code = trap_frame.error_code,
-        .instruction_pointer = trap_frame.instruction_pointer,
-        .code_selector = trap_frame.code_selector,
-        .user_mode = isUserMode(trap_frame),
-    };
+    dispatcher.dispatch(vector, stack_pointer);
 }

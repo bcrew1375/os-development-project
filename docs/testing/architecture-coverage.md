@@ -56,6 +56,10 @@ unreferenced, or optimized-away source as missing.
 The x86-32 artifact boots through Multiboot, so its report excludes the inactive
 x86-32 and shared Limine source trees. The x86-64 artifact boots through Limine
 and includes both its architecture frontend and the shared Limine implementation.
+Both inventories include `src/architecture/x86/common/interrupts` plus the
+selected width-specific interrupt directory, so the shared dispatcher and its
+frame adapter are measured as one architecture path rather than parallel policy
+implementations.
 
 Tests should validate supported architecture behavior. Production interfaces
 must not expose private implementation hooks solely to make code appear in the

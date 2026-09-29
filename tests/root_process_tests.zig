@@ -82,6 +82,35 @@ test "Root process preparation propagates malformed ELF errors" {
     try std.testing.expectError(error.InvalidElfImage, prepare("not an elf"));
 }
 
+test "Root process preparation releases raw address-space root when registration fails" {
+    try initializeLoaderTest();
+    defer arch.impl.test_support.deinitializeMemoryFixture();
+
+    for (0..kernel_common.capability.MAX_CAPABILITIES) |index| {
+        _ = try kernel_common.capability.createUntypedMemoryCapability(
+            kernel_common.process.ROOT_PROCESS_HANDLE,
+            0x1000_0000 + index * 0x1000,
+            0x1000,
+            abi.boot_info.PHYSICAL_MEMORY_NORMAL_RAM,
+            0x1000,
+        );
+    }
+    const available_frames_before = arch.mmu.getPageTablePoolAvailableFrameCount();
+
+    try std.testing.expectError(
+        error.OutOfCapabilities,
+        launch_root_process.prepareRootProcess(),
+    );
+    try std.testing.expectEqual(
+        available_frames_before,
+        arch.mmu.getPageTablePoolAvailableFrameCount(),
+    );
+    try std.testing.expectEqual(
+        kernel_common.capability.MAX_CAPABILITIES,
+        kernel_common.capability.activeCount(),
+    );
+}
+
 test "Root process preparation loads segments boot info and ABI entry stack" {
     try initializeLoaderTest();
     defer arch.impl.test_support.deinitializeMemoryFixture();

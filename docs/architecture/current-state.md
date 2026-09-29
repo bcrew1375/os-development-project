@@ -1,6 +1,6 @@
 # Current Kernel Structure and Rationale
 
-Status date: 2026-09-27
+Status date: 2026-09-29
 
 This document summarizes the kernel as it is implemented now and explains why
 its current boundaries exist. It is the architectural starting point for readers
@@ -101,7 +101,8 @@ restartability without shared implementation state.
 src/
 ├── kernel.zig                  Privileged entry point and fatal boundary
 ├── kernel_initialization.zig   Testable initialization orchestration
-├── launch_root_process.zig     ELF loading and first userspace construction
+├── launch_root_process.zig     Public first-userspace preparation facade
+├── root_process/               First-userspace preparation mechanics
 ├── kernel_common.zig           Common subsystem facade
 ├── common/                     Architecture-independent mechanisms
 └── architecture/               Hardware interfaces and implementations
@@ -130,6 +131,15 @@ Shared x86 behavior lives under `src/architecture/x86/common`, while word-size o
 page-table-format differences remain under `32` and `64`. This reduces duplicate
 hardware policy without pretending that the two targets are identical.
 
+Interrupt dispatch follows this boundary explicitly. One compile-time-parameterized
+x86 policy owns exception routing, user-fault containment, page-fault resolution,
+timer and keyboard handling, PIC acknowledgement ordering, diagnostics, syscall
+result handling, and idle scheduling decisions. The x86-32 and x86-64 adapters
+retain their trap-frame layouts, CR2 access, selector and register widths, syscall
+argument extraction, result truncation/writeback, and assembly-facing handler
+signatures. Compile-time contract checks reject adapter drift without adding a
+runtime vtable.
+
 ### Why initialization is split from the entry point
 
 `kernelMain()` is the hardware-facing fatal boundary. The sequencing before user
@@ -137,10 +147,16 @@ entry lives in `kernel_initialization.initialize()`, which receives services at
 compile time. This keeps control flow visible while allowing native tests to
 observe initialization order and failures without booting a machine.
 
-`launch_root_process.zig` separately owns the first address-space construction:
-it creates a hardware root, loads ELF segments, writes boot information, creates
-the initial user stack, and returns a prepared transition. Separating preparation
-from the non-returning user-mode entry makes most of the path testable.
+`launch_root_process.zig` is the public facade over `src/root_process/`, which owns
+the first address-space construction: it creates a hardware root, loads ELF
+segments, writes boot information, creates the initial user stack, and returns a
+prepared transition. Separating preparation from the non-returning user-mode entry
+makes most of the path testable. Within the namespace, `layout.zig` and
+`errors.zig` hold the shared virtual-address map and error set; `user_memory.zig`,
+`executable_loading.zig`, `initial_stack.zig`, `boot_modules.zig`, and
+`boot_info.zig` hold one mechanism each; and `preparation.zig` owns the single
+preparation transaction, so every unpublished resource has one owner and rollback
+order is local to it.
 
 ## Active boot and userspace path
 
@@ -279,6 +295,14 @@ objects, each with 128 fixed-capacity slots. The shared local capability handle 
 zero remains invalid. Slot and capability-space reuse advance generations, stale
 handles are rejected, and exhaustion is explicit.
 
+The subsystem has one mutable slot owner. `storage.zig` contains the bounded tables,
+generation and retirement state, typed slot transactions, resolution, counting,
+and in-place test reset. `derivation.zig` contains cross-space parent traversal,
+installation, exact-slot commit and rollback, generic deletion, and authorization
+cancellation. Memory, process, and IPC capability adapters own backing-object
+lifecycle until slot installation commits. `main.zig` remains the source-compatible
+public facade; internal modules do not import it.
+
 Production authorization selects the current thread's capability space, so a local
 handle from one space does not resolve in another. Slots record object identity,
 rights, and an optional cross-space parent reference. Userspace may install an
@@ -288,7 +312,9 @@ slot. Physical-memory revocation follows derivation references across spaces.
 Endpoint capability transfer uses a separate transactional exact-slot path. A
 `grant` right is required to derive or transfer, attenuation is validated before
 mutation, an occupied or retired destination is rejected explicitly, and the
-installation is rolled back if delivery fails. Revocation of a physical parent
+installation is rolled back without advancing its generation if delivery fails.
+Traversal is iterative, bounded by the fixed slot capacities, and allocation-free.
+Revocation of a physical parent
 counts remaining authority references, so a revoked derivation invalidates
 transferred descendants without destroying authority still referenced elsewhere.
 Thread and capability-space objects are first-class capability targets with explicit
@@ -452,8 +478,8 @@ the current process and service model was delivered in phases.
 1. this document for the system model;
 2. [Repository Layout](../development/repository-layout.md) for ownership and
    validation commands;
-3. `src/kernel_initialization.zig` and `src/launch_root_process.zig` for the active
-   boot path;
+3. `src/kernel_initialization.zig`, `src/launch_root_process.zig`, and its
+   `src/root_process/` mechanics for the active boot path;
 4. `src/architecture/architecture.zig` for the hardware abstraction contract;
 5. `src/common/syscall`, `capability`, and `process` for current object policy;
 6. the [kernel object model](../kernel-object-model.md) before changing object

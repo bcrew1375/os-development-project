@@ -22,7 +22,11 @@ flowchart TD
     memory --> address[Acquire current address-space capability]
     address --> heap[Create initial capability-backed heap extent]
     heap --> verify[Allocate, verify, and free test block]
-    verify --> success[Exit success]
+    verify --> yield[Complete cooperative-yield milestone]
+    yield --> children[Run child-process scenario]
+    children --> notify[Run notification scenario]
+    notify --> echo[Run echo-service scenario]
+    echo --> success[Exit success]
 
     classDef failure fill:#7f1d1d,color:#ffffff,stroke:#ef4444;
     class fail failure;
@@ -42,10 +46,17 @@ convention.
 ## Root-task startup
 
 The root-task `_start` function delegates to `startup.run`, then invokes the
-`exit` syscall with the returned status. The current root task validates the
-boot-info ABI, initializes its delegated physical-range allocator, acquires its
-address-space capability, creates a capability-backed heap extent, verifies one
-allocation lifecycle, and exits successfully.
+`exit` syscall with the returned status. `startup.run` validates the boot-info ABI,
+initializes its delegated physical-range allocator, acquires its address-space
+capability, creates a capability-backed heap extent, verifies one allocation
+lifecycle, completes a cooperative-yield milestone, then delegates every smoke
+scenario to the `smoke/` namespace.
+
+Each smoke scenario is compiled in only when the environment declares the
+corresponding capability, so the production root task keeps its validation policy
+in one readable namespace instead of in the bootstrap sequence. The echo-service
+scenario additionally exercises child-process creation, startup, teardown, and
+restart through the extracted child-process transaction.
 
 This startup behavior is the current production root task, not a general
 scheduler-managed process lifecycle. A successful exit is observed by the
@@ -54,9 +65,12 @@ system-smoke protocol; the kernel does not launch another task afterward.
 ## Implementation authority
 
 - `src/launch_root_process.zig`
+- `src/root_process/` (preparation transaction plus ELF, stack, boot-info, and boot-module mechanics)
 - `src/architecture/x86/32/cpu/main.zig`
 - `src/architecture/x86/64/cpu/main.zig`
 - `components/os-root-task/src/main.zig`
 - `components/os-root-task/src/startup.zig`
+- `components/os-root-task/src/smoke/main.zig`
+- `components/os-root-task/src/process_management/child_process/`
 - `components/os-root-task/src/memory_management/`
 - `src/common/syscall/main.zig`
