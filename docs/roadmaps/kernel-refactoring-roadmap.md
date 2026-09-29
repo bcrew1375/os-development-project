@@ -524,11 +524,59 @@ mechanics.
 coverage`; both production builds; all three production system-smoke paths;
 `git diff --check`.
 
-### [ ] Phase 5: evaluate process-registry and thread-context follow-ups
+### [x] Phase 5: evaluate process-registry and thread-context follow-ups
 
 **Class:** state-ownership cleanup and possible shared x86 policy extraction  
 **Risk:** medium to high  
 **Dependencies:** Phases 2 and 3
+
+**Completed:** 2026-09-29
+
+The reassessment confirmed two cohesive extraction boundaries. Shared x86
+thread-context policy now lives in
+`src/architecture/x86/common/thread_context/policy.zig`. It owns the 32
+generation-checked slots, current-context state, kernel-continuation lifecycle,
+syscall and retained-fault-frame policy, and lifecycle-oriented test helpers. The
+x86-32 and x86-64 `thread_context/adapter.zig` files own register-width
+validation, frame layouts, stack construction and storage, CR3 and privilege-stack
+mechanisms, and assembly switching. Both width-specific `main.zig` files are thin
+source-compatible policy instantiations; their public declaration names are
+unchanged.
+
+The architecture coverage inventory now includes the shared thread-context policy
+for both x86 targets and the previously omitted x86-32 thread-context directory.
+End-to-end reports therefore measure shared lifecycle policy and the selected
+width adapter as one architecture path.
+
+`src/common/process/address_space_registry.zig` and
+`memory_object_registry.zig` now exclusively own their fixed-capacity slot arrays
+and next-handle counters. The address-space registry owns local VMM operations and
+bounded mapping lookup; the memory-object registry owns immutable backing metadata
+and mapping-reference accounting. `src/common/process/main.zig` preserves its
+public API and remains the coordinator for thread ownership, current execution
+identity, mapping between the two registries, revocation, and ordered teardown.
+No registry imports the process facade, so the split introduces no circular
+dependency or runtime dispatch.
+
+The conditional thread-storage split was deliberately not performed. Architecture-
+neutral thread slots and lifecycle transitions remain cohesive in `thread.zig`,
+and separating them would not clarify scheduler ownership after the context-policy
+and process-registry boundaries were extracted.
+
+**Validation results:** `zig build tests`; `zig build coverage` with every emitted
+common-code line covered, including 42 of 42 lines in the address-space registry,
+29 of 29 in the memory-object registry, and 79 of 79 in the process facade; x86-32
+and x86-64 production builds; both `architecture-coverage-kernel` builds; both
+physical architecture suites; both end-to-end architecture coverage reports; and
+all three production system-smoke paths (x86-64 Limine, x86-32 Limine, and x86-32
+Multiboot), each reporting `SYSTEM-SMOKE EXIT status=0`. Final checks also included
+public-symbol parity, `zig fmt --check`, and `git diff --check`.
+
+Deliberate limitations: the shared x86 policy remains parameterized over concrete
+compile-time adapters rather than a runtime interface; process mapping and
+revocation remain coordinated by the facade because they inherently span both
+registries; and the registries retain the existing monotonic handle policy rather
+than adding generation encoding as part of this behavior-preserving refactor.
 
 After the earlier patterns are proven, reassess rather than automatically split:
 

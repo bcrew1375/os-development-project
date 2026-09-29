@@ -1,6 +1,6 @@
 # Root-Created Userspace Processes
 
-Status date: 2026-09-27
+Status date: 2026-09-29
 
 The kernel supports meaningful root-created userspace processes, within a
 deliberately limited execution model. A child is a real isolated protection
@@ -34,6 +34,13 @@ The kernel independently tracks the thread's execution state, address space,
 capability space, architecture context, exit status or fault state, and scheduler
 membership. Kernel authority comes from capabilities, not from the userspace
 `ChildProcess` record.
+
+Address-space and memory-object storage are separate bounded kernel registries.
+Each registry exclusively owns its slots and handle counter; the process facade
+coordinates mappings, revocation, thread ownership, and teardown across them.
+Architecture context lifecycle policy is shared across x86 widths, while each
+width adapter retains its concrete frame, stack, CR3, privilege-stack, and assembly
+mechanisms.
 
 The child capability space starts empty. Construction may install only explicitly
 selected startup capabilities. Managed children receive one parent-protocol

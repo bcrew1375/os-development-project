@@ -5,7 +5,9 @@ test "x86-32 coverage inventory selects Multiboot and excludes Limine" {
     const scopes = try source_manifest.scopesForArchitecture("x86_32");
 
     try expectScope(scopes, "src/architecture/x86/common/interrupts", .directory);
+    try expectScope(scopes, "src/architecture/x86/common/thread_context", .directory);
     try expectPathCovered(scopes, "src/architecture/x86/32/interrupts");
+    try expectScope(scopes, "src/architecture/x86/32/thread_context", .directory);
     try expectScope(scopes, "src/architecture/x86/32/boot/multiboot", .directory);
     try expectNoScope(scopes, "src/architecture/x86/32/boot/limine");
     try expectNoScope(scopes, "src/architecture/x86/common/boot/limine");
@@ -15,7 +17,9 @@ test "x86-64 coverage inventory includes its complete Limine path" {
     const scopes = try source_manifest.scopesForArchitecture("x86_64");
 
     try expectScope(scopes, "src/architecture/x86/common/interrupts", .directory);
+    try expectScope(scopes, "src/architecture/x86/common/thread_context", .directory);
     try expectPathCovered(scopes, "src/architecture/x86/64/interrupts");
+    try expectPathCovered(scopes, "src/architecture/x86/64/thread_context");
     try expectScope(scopes, "src/architecture/x86/64", .directory);
     try expectScope(scopes, "src/architecture/x86/common/boot/limine", .directory);
 }

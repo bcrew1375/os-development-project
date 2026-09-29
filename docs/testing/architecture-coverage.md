@@ -59,7 +59,12 @@ and includes both its architecture frontend and the shared Limine implementation
 Both inventories include `src/architecture/x86/common/interrupts` plus the
 selected width-specific interrupt directory, so the shared dispatcher and its
 frame adapter are measured as one architecture path rather than parallel policy
-implementations.
+implementations. They likewise include
+`src/architecture/x86/common/thread_context` plus the selected width-specific
+thread-context directory. The x86-32 inventory names that directory explicitly;
+the x86-64 inventory includes it through the complete x86-64 architecture scope.
+This keeps generation and lifecycle policy in the denominator together with the
+frame, stack, CR3, TSS, and assembly mechanisms that implement it.
 
 Tests should validate supported architecture behavior. Production interfaces
 must not expose private implementation hooks solely to make code appear in the

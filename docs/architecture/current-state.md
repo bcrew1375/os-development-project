@@ -272,9 +272,11 @@ mechanisms are bounded:
 - runtime page-table storage is one 512-frame pool, with at most 64 frames owned by
   one address space;
 - address-space, VMA, thread, memory-object, capability, and physical-authority
-  registries use fixed-capacity arrays with explicit exhaustion;
-- architecture thread contexts use 32 fixed slots with one 16 KiB kernel stack
-  per slot;
+  registries use fixed-capacity arrays with explicit exhaustion; address-space and
+  memory-object slots and counters are owned by separate process-registry modules,
+  while the process facade coordinates cross-registry mapping and teardown;
+- architecture thread contexts use 32 fixed slots with one kernel stack per slot:
+  16 KiB on x86-32 and 32 KiB on x86-64;
 - the scheduler ready queue holds at most 32 thread handles, and idle owns one
   separately reserved page-aligned 16 KiB stack;
 - root ELF segments, the bounded 64 KiB initial stack, and the one-page
@@ -286,6 +288,29 @@ mechanisms are bounded:
 The early allocator remains a monotonic bootstrap reservation mechanism, not a
 runtime physical-memory policy service. Delegable RAM excludes every retained
 reservation before authority reaches userspace.
+
+### Process registries
+
+`src/common/process/address_space_registry.zig` owns the bounded address-space
+slots, VMA backing arrays, and address-space handle counter. It provides local VMM
+operations and bounded mapping lookup without exposing its storage. The sibling
+`memory_object_registry.zig` owns frame-backed object slots, immutable authority
+metadata, its handle counter, and mapping-reference accounting.
+
+`src/common/process/main.zig` remains the public facade and cross-object policy
+owner. It coordinates thread/address-space ownership, current execution identity,
+memory-object mappings, revocation across every address space, and ordered
+address-space teardown. Neither registry imports the facade.
+
+### x86 thread contexts
+
+`src/architecture/x86/common/thread_context/policy.zig` owns shared bounded-slot,
+generation, current-context, syscall-frame, fault-frame, and kernel-continuation
+policy. Each width-specific `thread_context/adapter.zig` owns its trap and switch
+frame layout, stack storage and construction, register-width validation, CR3 and
+privilege-stack mechanisms, and assembly. The width-specific `main.zig` modules
+instantiate and re-export the shared policy, preserving one architecture facade
+without duplicating lifecycle decisions.
 
 ### Capability spaces
 

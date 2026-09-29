@@ -40,6 +40,8 @@ flowchart TD
 The kernel creates a hardware page-table root, registers it through the normal
 address-space object and capability path, resolves manage rights for the root
 process, and makes the corresponding VMM object the active bootstrap target.
+The process facade coordinates this flow while the address-space registry owns the
+bounded slot, VMA backing, and handle counter.
 
 ## ELF loading
 
@@ -87,5 +89,7 @@ transition.
 - `src/common/memory_management/physical_memory_bootstrap.zig`
 - `src/common/memory_management/physical_memory_authority.zig`
 - `src/common/process/main.zig`
+- `src/common/process/address_space_registry.zig`
+- `src/common/process/memory_object_registry.zig`
 - `src/common/capability/main.zig`
 - `components/os-abi-library/src/executable/elf.zig`

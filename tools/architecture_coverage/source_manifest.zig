@@ -11,6 +11,7 @@ const x86_32_scopes = [_]Scope{
     .{ .repository_path = "src/architecture/x86/common/arch.zig", .kind = .file },
     .{ .repository_path = "src/architecture/x86/common/interrupts", .kind = .directory },
     .{ .repository_path = "src/architecture/x86/common/platform", .kind = .directory },
+    .{ .repository_path = "src/architecture/x86/common/thread_context", .kind = .directory },
     .{ .repository_path = "src/architecture/x86/32/arch.zig", .kind = .file },
     .{ .repository_path = "src/architecture/x86/32/boot/main.zig", .kind = .file },
     .{ .repository_path = "src/architecture/x86/32/boot/multiboot", .kind = .directory },
@@ -19,6 +20,7 @@ const x86_32_scopes = [_]Scope{
     .{ .repository_path = "src/architecture/x86/32/interrupts", .kind = .directory },
     .{ .repository_path = "src/architecture/x86/32/mmu", .kind = .directory },
     .{ .repository_path = "src/architecture/x86/32/platform", .kind = .directory },
+    .{ .repository_path = "src/architecture/x86/32/thread_context", .kind = .directory },
 };
 
 const x86_64_scopes = [_]Scope{
@@ -28,6 +30,7 @@ const x86_64_scopes = [_]Scope{
     .{ .repository_path = "src/architecture/x86/common/boot/limine", .kind = .directory },
     .{ .repository_path = "src/architecture/x86/common/interrupts", .kind = .directory },
     .{ .repository_path = "src/architecture/x86/common/platform", .kind = .directory },
+    .{ .repository_path = "src/architecture/x86/common/thread_context", .kind = .directory },
     .{ .repository_path = "src/architecture/x86/64", .kind = .directory },
 };
 
